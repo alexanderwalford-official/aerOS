@@ -88,6 +88,21 @@ recorded in the log too.
 Close the log (`dbclose`) before calling it, and use it on the text screen, not while graphics
 are on. With no disk there are no accounts, so only Y or N is asked.
 
+## Turning it off
+
+`setlogging(false)` turns logging off, and `setlogging(true)` back on, after the same question
+and password as clearing. `islogging()` says whether it is on. It stays the way you set it
+after a restart.
+
+While it is off nothing new goes in the log, but the list of boots is still kept, so AerOS can
+still tell you if it didn't shut down properly. Turning it off and on is itself logged, so the
+log shows where the gap is:
+
+```
+log | logging was turned off by alex, with aerlog.aer
+log | logging was turned on by alex, with aerlog.aer
+```
+
 With no disk (VFS mode) the log is kept in memory like every other file, and is gone when the
 computer is turned off.
 

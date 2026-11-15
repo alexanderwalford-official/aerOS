@@ -1,5 +1,5 @@
-"""The built-in apps: the manual reader, the animation demo, and how built-in apps are installed
-onto a disk and kept up to date (see the top of src/sys/apps.c)."""
+"""The built-in apps: the manual reader, the animation demo, the log viewer (aerlog), and how
+built-in apps are installed onto a disk and kept up to date (see the top of src/sys/apps.c)."""
 
 import hashlib
 import re
@@ -98,4 +98,84 @@ def test_built_in_apps_are_installed(t):
     boot_and_stop(t, disk)
     if read_disk_file(disk, '/bin/viewer.aer') != built_in_viewer:
         raise Failure('a deleted viewer.aer did not come back')
+    t.check_disk(disk)
+
+
+def wait_printed(aeros, text, times, timeout=30):
+    """Wait until `text` has been printed `times` times since boot. The serial log keeps
+    everything, so this works for apps that clear the screen between steps."""
+    start = time.time()
+    while aeros.serial().count(text) < times:
+        if time.time() - start > timeout:
+            aeros.fail(f'waited {timeout}s for {text!r} to have been printed {times} time(s)')
+        time.sleep(0.05)
+
+
+def test_aerlog(t):
+    # aerlog.aer, the log viewer: every option of its menu, in turn
+    disk = t.disk()
+    aeros = t.boot(disk=disk)
+    aeros.first_login()
+    before = aeros.prompts()
+    aeros.ask('aerlog')
+    menu = 'Enter your selection: '
+    pause = 'Press Enter to continue...'
+
+    # 1: the boots
+    wait_printed(aeros, menu, 1)
+    aeros.type('1\n')
+    wait_printed(aeros, pause, 1)
+    aeros.type('\n')
+
+    # 2: the entries
+    wait_printed(aeros, menu, 2)
+    aeros.type('2\n')
+    wait_printed(aeros, pause, 2)
+    aeros.type('\n')
+
+    # 4: turn logging off (AerOS asks, then wants the password)
+    wait_printed(aeros, menu, 3)
+    aeros.type('4\n')
+    wait_printed(aeros, '[ ? ]', 1)
+    aeros.key('y')
+    aeros.answer('secret1')
+    wait_printed(aeros, pause, 3)
+    aeros.type('\n')
+
+    # 3: clear the log, answering no
+    wait_printed(aeros, menu, 4)
+    aeros.type('3\n')
+    wait_printed(aeros, '[ ? ]', 2)
+    aeros.key('n')
+    wait_printed(aeros, pause, 4)
+    aeros.type('\n')
+
+    # a choice that isn't on the menu, then 5: exit
+    wait_printed(aeros, menu, 5)
+    aeros.type('9\n')
+    wait_printed(aeros, pause, 5)
+    aeros.type('\n')
+    wait_printed(aeros, menu, 6)
+    aeros.type('5\n')
+    aeros.wait_prompt(before, 30, what='aerlog')
+
+    aeros.expect_printed(
+        'System logging is currently ENABLED.',
+        'Boot 1  started 20', 'running now',                    # option 1
+        '[warning]  sound  No sound card found',                # option 2
+        "aerlog.aer wants to turn AerOS's logging off",         # option 4
+        'System logging is now DISABLED.',
+        'System logging is currently DISABLED.',
+        "aerlog.aer wants to clear AerOS's log",                # option 3
+        'The logs were left as they are.',
+        'Invalid selection. Please try again.',
+        'Exiting the Aerlog utility.')
+    if 'Error in aerlog.aer' in aeros.serial():
+        aeros.fail('aerlog.aer stopped with an error')
+
+    # and AerOS agrees: logging is off
+    aeros.cls()
+    aeros.run('islogging()')
+    aeros.expect_line('false')
+    aeros.quit()
     t.check_disk(disk)

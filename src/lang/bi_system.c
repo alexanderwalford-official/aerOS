@@ -3,7 +3,8 @@
     AerLang's built-in functions for the system: waiting (sleep), the time, random numbers,
     what AerOS knows about the computer (sysinfo), queueing programs for GO (queue), running a
     terminal command from the prompt (cmd), what app mode did (appmode), adding to AerOS's log
-    (logadd), clearing it after asking (logclear) and ending the program (exit).
+    (logadd), clearing it or turning it off after asking (logclear, setlogging, islogging) and
+    ending the program (exit).
 
     Which built-ins need which part of AerOS, for app mode, is listed next to aer_profile in
     aer_builtins.c.
@@ -15,6 +16,7 @@
 #include "../lib/aer_string.h"
 #include "../lib/aer_stdlib.h"
 #include "../lib/aer_stdio.h"
+#include "../lib/aer_ctype.h"
 #include "../drivers/video/VGA_linear.h"
 #include "../drivers/input/IO.h"
 #include "../sys/sys_clck.h"
@@ -193,35 +195,33 @@ value_t bi_logadd (int argc, value_t* argv, int line) {
     return aer_nil();
 }
 
-// logclear(): clear AerOS's log, after asking. AerOS asks, not the program: first Y or N, then
-// (when there are accounts) the logged in user's password. Only then is the log cleared
-// (syslog_clear in sys/syslog.c), leaving an entry saying who cleared it and with what. Gives
-// back true if it was cleared, false if not.
-// It asks on the text screen, so not while graphics are on, and the program must have closed
-// the log first: clearing it moves its pages, so a copy opened before would read the wrong ones
-value_t bi_logclear (int argc, value_t* argv, int line) {
-    (void)argc;
-    (void)argv;
+// ---- changing AerOS's log: logclear() and setlogging() -------------------------------------------
+//
+// Programs can't change the log (sys/syslog.h). These two built-ins are the only ways, and AerOS
+// asks the person at the keyboard first, not the program: Y or N, then (when there are accounts)
+// the logged in user's password. Both ask on the text screen, so not while graphics are on.
+
+// Ask the person at the keyboard whether `what` may happen ("clear AerOS's log"), then for their
+// password. `detail` is added to the question only, not the log ("" for none). True only if they
+// said Y and typed the right password. `with` is set to what is asking: the program's name, or
+// "the prompt". A wrong password is logged
+static bool person_agrees (int line, const char* fn, const char* what, const char* detail, char* with, size_t with_size) {
     if (gfx_width() > 0) {
-        aer_error(line, "logclear() asks for a password on the text screen: call it before gopen() or after gclose()");
-    }
-    if (database_is_open(SYSLOG_FOLDER, SYSLOG_FILE)) {
-        aer_error(line, "logclear(): close the log with dbclose() first (and open it again afterwards)");
+        aer_error(line, "%s() asks for a password on the text screen: call it before gopen() or after gclose()", fn);
     }
 
-    // who wants to clear it: a program, or code typed at the prompt
+    // the question: who wants to do what
     const char* program = perm_program_name();
-    char with[FS_NAME_MAX];
-    char question[FS_NAME_MAX + 80];
+    char question[FS_NAME_MAX + 96];
     if (program[0] != '\0') {
-        scpy(with, program, sizeof(with));
-        sfmt(question, sizeof(question), "%s wants to clear AerOS's log (every entry, and every earlier boot)", program);
+        scpy(with, program, with_size);
+        sfmt(question, sizeof(question), "%s wants to %s%s", program, what, detail);
     } else {
-        scpy(with, "the prompt", sizeof(with));
-        sfmt(question, sizeof(question), "Clear AerOS's log (every entry, and every earlier boot)?");
+        scpy(with, "the prompt", with_size);
+        sfmt(question, sizeof(question), "%c%s%s?", toupper(what[0]), what + 1, detail);   // "Clear AerOS's log ...?"
     }
     if (!perm_confirm(question)) {
-        return aer_bool(false);
+        return false;
     }
 
     // The logged in user's password. With no disk there are no accounts (everyone is "guest"),
@@ -234,13 +234,58 @@ value_t bi_logclear (int argc, value_t* argv, int line) {
         // blank it straight away, so the password isn't left in memory for whatever runs next
         wipe(password, sizeof(password));
         if (!right) {
-            prtf("      Wrong password: the log was left as it is.\n");
-            syslog_add("warning", "log", "a wrong password was typed for %s, trying to clear the log with %s",
-                       auth_user, with);
-            return aer_bool(false);
+            prtf("      Wrong password: nothing was changed.\n");
+            syslog_add("warning", "log", "a wrong password was typed for %s, trying to %s with %s",
+                       auth_user, what, with);
+            return false;
         }
     }
+    return true;
+}
+
+// logclear(): clear AerOS's log, after asking (above). Every entry and every earlier boot go
+// (syslog_clear in sys/syslog.c), leaving one entry saying who cleared it and with what. Gives
+// back true if it was cleared, false if not. The program must have closed the log first:
+// clearing it moves its pages, so a copy opened before would read the wrong ones
+value_t bi_logclear (int argc, value_t* argv, int line) {
+    (void)argc;
+    (void)argv;
+    if (database_is_open(SYSLOG_FOLDER, SYSLOG_FILE)) {
+        aer_error(line, "logclear(): close the log with dbclose() first (and open it again afterwards)");
+    }
+    char with[FS_NAME_MAX];
+    if (!person_agrees(line, "logclear", "clear AerOS's log", " (every entry, and every earlier boot)", with, sizeof(with))) {
+        return aer_bool(false);
+    }
     return aer_bool(syslog_clear(auth_user, with));
+}
+
+// setlogging(on): turn AerOS's logging on (true) or off (false), after asking (above). It stays
+// that way after a restart. Gives back true if logging is now the way asked for (also when it
+// already was: then nothing is asked), false if not
+value_t bi_setlogging (int argc, value_t* argv, int line) {
+    (void)argc;
+    if (argv[0].type != V_BOOL) {
+        aer_error(line, "setlogging() needs true (on) or false (off)");
+    }
+    bool on = argv[0].as.i != 0;
+    if (on == syslog_logging()) {
+        return aer_bool(true);
+    }
+    char with[FS_NAME_MAX];
+    const char* what = on ? "turn AerOS's logging back on" : "turn AerOS's logging off";
+    if (!person_agrees(line, "setlogging", what, "", with, sizeof(with))) {
+        return aer_bool(false);
+    }
+    return aer_bool(syslog_set_logging(on, auth_user, with));
+}
+
+// islogging(): is AerOS's logging on? (true unless setlogging(false) turned it off)
+value_t bi_islogging (int argc, value_t* argv, int line) {
+    (void)argc;
+    (void)argv;
+    (void)line;
+    return aer_bool(syslog_logging());
 }
 
 // exit(): end the program here, quietly

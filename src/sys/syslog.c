@@ -42,6 +42,7 @@ static int waiting_count = 0;
 static int lost_count = 0;        // entries thrown away because `waiting` was full
 static bool started = false;      // has syslog_start run (and the log opened)?
 static int this_boot = 0;         // this boot's number, from syslog_start
+static bool logging_on = true;    // the "logging" setting, read by syslog_start (see syslog_set_logging)
 
 // ---- small helpers ------------------------------------------------------------------------------
 
@@ -170,6 +171,11 @@ static void write_waiting (aerdb_t* db) {
 
 // add an entry, to be written at the next syslog_flush (see syslog.h)
 void syslog_add (const char* kind, const char* source, const char* format, ...) {
+    // Logging turned off: nothing is kept. (Before syslog_start, whether it is off isn't known
+    // yet, so entries wait as usual and syslog_start forgets them if it turns out to be off)
+    if (started && !logging_on) {
+        return;
+    }
     if (waiting_count >= WAITING_MAX) {
         lost_count++;
         return;
@@ -198,6 +204,12 @@ void syslog_start (void) {
     // the tables, the first time
     log_run(db, "CREATE TABLE IF NOT EXISTS boots (boot INTEGER, started TEXT, ended TEXT, clean INTEGER)", NULL, 0);
     log_run(db, "CREATE TABLE IF NOT EXISTS log (boot INTEGER, time TEXT, kind TEXT, source TEXT, message TEXT)", NULL, 0);
+    log_run(db, "CREATE TABLE IF NOT EXISTS settings (name TEXT, value INTEGER)", NULL, 0);
+
+    // Is logging turned off? (No row means it has never been changed: on)
+    first_row_t setting;
+    log_first_row(db, "SELECT value FROM settings WHERE name = 'logging'", &setting);
+    logging_on = !(setting.found && setting.number == 0);
 
     // A boot whose `clean` is still NULL never got to syslog_stop: AerOS stopped without OFF or
     // RBT (the power went, or it crashed). Mark it with clean = 0, and say so below
@@ -231,6 +243,13 @@ void syslog_start (void) {
              (int)crashed.number, crashed.text);
         syslog_add("warning", "power", "boot %d (started %s) didn't shut down properly: the power "
                    "went, or AerOS stopped", (int)crashed.number, crashed.text);
+    }
+    // With logging off, the entries that waited for the log to open aren't kept either. The
+    // boot itself is still in `boots`, so crashes are still noticed
+    if (!logging_on) {
+        TRACE("logging is turned off: %d waiting entr%s not kept", waiting_count, waiting_count == 1 ? "y" : "ies");
+        waiting_count = 0;
+        lost_count = 0;
     }
     write_waiting(db);
     close_log(db);
@@ -289,6 +308,47 @@ bool syslog_clear (const char* user, const char* with) {
         syslog_flush();
     }
     return cleared;
+}
+
+// Turn logging on or off (see syslog.h). The change is recorded either way: turning off, the
+// entry is written while logging is still on; turning on, straight after
+bool syslog_set_logging (bool on, const char* user, const char* with) {
+    if (!started) {
+        return false;
+    }
+    if (on == logging_on) {
+        return true; // already that way
+    }
+    if (!on) {
+        syslog_add("warning", "log", "logging was turned off by %s, with %s", user, with);
+        syslog_flush();
+    }
+
+    // the setting: one row in the settings table, 1 for on and 0 for off
+    aerdb_t* db = open_log();
+    if (db == NULL) {
+        return false;
+    }
+    db_value_t value[1] = { number_value(on ? 1 : 0) };
+    bool saved = log_run(db, "DELETE FROM settings WHERE name = 'logging'", NULL, 0)
+                 && log_run(db, "INSERT INTO settings VALUES ('logging', ?)", value, 1);
+    close_log(db);
+    if (!saved) {
+        return false;
+    }
+    logging_on = on;
+    TRACE("logging is now %s", on ? "on" : "off");
+
+    if (on) {
+        syslog_add("warning", "log", "logging was turned on by %s, with %s", user, with);
+        syslog_flush();
+    }
+    return true;
+}
+
+// is logging on? (see syslog.h)
+bool syslog_logging (void) {
+    return logging_on;
 }
 
 // this boot's number (see syslog.h)

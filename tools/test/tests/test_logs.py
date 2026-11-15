@@ -140,11 +140,11 @@ def test_clearing(t):
     aeros.key('y')
     aeros.answer('wrong1')
     aeros.wait_prompt(before)
-    aeros.expect('-> yes', 'Wrong password: the log was left as it is.')
+    aeros.expect('-> yes', 'Wrong password: nothing was changed.')
     aeros.expect_line('false')
     aeros.cls()
     aeros.run(LOG + "SELECT message FROM log WHERE source = 'log'")
-    aeros.expect('a wrong password was typed for tester, trying to clear the log with the prompt')
+    aeros.expect("a wrong password was typed for tester, trying to clear AerOS's log")
 
     # not while the log is open: clearing it moves its pages
     aeros.cls()
@@ -178,5 +178,73 @@ def test_clearing(t):
     aeros.key('n')
     aeros.wait_prompt(before)
     aeros.expect_line('false')
+    aeros.quit()
+    t.check_disk(disk)
+
+
+def test_turning_logging_off(t):
+    # setlogging(false): AerOS asks Y / N and the password, then nothing is logged (even after a
+    # restart) until setlogging(true)
+    disk = t.disk()
+    aeros = t.boot(disk=disk)
+    aeros.first_login()
+    aeros.cls()
+    aeros.run('islogging()')
+    aeros.expect_line('true')
+
+    # N: still on
+    aeros.cls()
+    before = aeros.prompts()
+    aeros.ask('setlogging(false)')
+    aeros.wait_for("[ ? ] Turn AerOS's logging off?", 30)
+    aeros.key('n')
+    aeros.wait_prompt(before)
+    aeros.expect_line('false')
+
+    # Y and the password: off, and that much is logged
+    aeros.cls()
+    before = aeros.prompts()
+    aeros.ask('setlogging(false)')
+    aeros.wait_for('[ ? ]', 30)
+    aeros.key('y')
+    aeros.answer('secret1')
+    aeros.wait_prompt(before)
+    aeros.expect_line('true')
+    aeros.run('logadd("not kept")')
+    aeros.cls()
+    aeros.run('islogging()')
+    aeros.expect_line('false')
+    aeros.cls()
+    aeros.run(LOG + "SELECT message FROM log WHERE kind = 'app'")
+    aeros.expect_line('(0 rows)')
+    aeros.cls()
+    aeros.run(LOG + "SELECT message FROM log WHERE source = 'log'")
+    aeros.expect_line('logging was turned off by tester, with the prompt')
+    aeros.quit()
+
+    # still off after a restart: the boot is listed (so crashes are still noticed), but nothing
+    # it did is kept
+    aeros = t.boot(disk=disk)
+    aeros.login()
+    aeros.cls()
+    aeros.run(LOG + 'SELECT boot FROM boots')
+    aeros.expect_line('1', '2', '(2 rows)')
+    aeros.cls()
+    aeros.run(LOG + 'SELECT kind FROM log WHERE boot = 2')
+    aeros.expect_line('(0 rows)')
+
+    # back on: kept again
+    aeros.cls()
+    before = aeros.prompts()
+    aeros.ask('setlogging(true)')
+    aeros.wait_for("[ ? ] Turn AerOS's logging back on?", 30)
+    aeros.key('y')
+    aeros.answer('secret1')
+    aeros.wait_prompt(before)
+    aeros.expect_line('true')
+    aeros.run('logadd("kept again")')
+    aeros.cls()
+    aeros.run(LOG + 'SELECT source, message FROM log WHERE boot = 2')
+    aeros.expect_line('log | logging was turned on by tester, with the prompt', 'prompt | kept again', '(2 rows)')
     aeros.quit()
     t.check_disk(disk)

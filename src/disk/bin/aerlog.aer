@@ -1,0 +1,100 @@
+# This app is part of the operating system's tooling to provide critical functionality to the user.
+# The operting system will automatically restore this file if it is missing, but the user will not be able to view or clear logs until it is restored.
+
+# Alexander Walford 2026
+
+
+func main ()
+
+    cls()
+    color(BRIGHT, BLACK)
+
+    print("Welcome to the Aerlog system logging utility.\n")
+
+    # check if logging is enabled, and display the status to the user
+    let is_logging = islogging()
+    if is_logging then
+        color(GREEN, BLACK)
+        print("[ ! ] System logging is currently ENABLED.\n")
+    else
+        color(RED, BLACK)
+        print("[ ! ] System logging is currently DISABLED.\n")
+    end
+
+    color(BRIGHT, BLACK)
+
+    print("\nPlease select an option:\n")
+    print("1. Display (latest 20) boot logs")
+    print("2. Display event logs")
+    print("3. Clear system logs")
+    print("4. Change logging status (enable/disable)")
+    print("5. Exit\n")
+
+    let choice = input("Enter your selection: ")
+    
+    if choice == "1" then
+        print("Displaying boot logs...\n")
+        let db = dbopen("/sys/logs.db", "read") 
+        let boots = dbquery(db, "SELECT boot, started, clean FROM boots ORDER BY boot DESC LIMIT 20")
+        for row in boots do
+            let how = "running now"
+            if row[2] == 1 then
+                how = "shut down properly"
+            elif row[2] == 0 then
+                how = "DIDN'T shut down properly"
+            end
+            print("Boot " + str(row[0]) + "  started " + row[1] + "  " + how)
+        end
+        input("Press Enter to continue...")
+        dbclose(db)
+    elif choice == "2" then
+        print("Displaying event logs...\n")
+        let db = dbopen("/sys/logs.db", "read") 
+        let events = dbquery(db, "SELECT boot, time, kind, source, message FROM log ORDER BY time DESC")
+        for row in events do
+            print("Boot: " + row[0] + "  at " + row[1] + "  [" + row[2] + "]  " + row[3] + "  " + row[4])
+        end
+        input("Press Enter to continue...")
+        dbclose(db)
+    elif choice == "3" then
+        print("Clearing system logs...\n")
+        if logclear() then
+            print("System logs cleared.")
+        else
+            print("The logs were left as they are.")
+        end
+        input("Press Enter to continue...")
+    elif choice == "4" then
+        print("Changing logging status...\n")
+        let is_logging = islogging()
+        if is_logging then
+            let resp = setlogging(false)
+            if resp then
+                print("System logging is now DISABLED.")
+            else
+                print("Decided not to disable system logging.")
+            end
+        else
+            let resp = setlogging(true)
+            if resp then
+                print("System logging is now ENABLED.")
+            else
+                print("Decided not to enable system logging.")
+            end
+        end
+        input("Press Enter to continue...")
+    elif choice == "5" then
+        print("Exiting the Aerlog utility.\n")
+        running = false
+    else
+        print("Invalid selection. Please try again.\n")
+        input("Press Enter to continue...")
+    end
+end
+
+
+let running = true
+
+while running do
+    main()
+end

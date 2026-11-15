@@ -106,6 +106,8 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("play", bi_play, 1, 1),
     BUILTIN("logadd", bi_logadd, 1, 1),
     BUILTIN("logclear", bi_logclear, 0, 0),
+    BUILTIN("setlogging", bi_setlogging, 1, 1),
+    BUILTIN("islogging", bi_islogging, 0, 0),
     BUILTIN("exit", bi_exit, 0, 0),
     // graphics
     BUILTIN("gopen", bi_gfx_open, 0, 0),

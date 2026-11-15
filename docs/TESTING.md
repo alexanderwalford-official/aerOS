@@ -59,7 +59,7 @@ are skipped rather than failed.
 | `test_input.py` | the mouse in AerLang, and held keys |
 | `test_games.py` | Maze 3D, Snake (and its high scores) and `move.aer`, booted from the ISO in graphics mode |
 | `test_database.py` | AerDB from AerLang (`files/aerdb.aer`: every statement, many pages, reopening, COMPACT), the SQL command, and SHOW on a query |
-| `test_logs.py` | AerOS's log: boots, the boot log's entries, OFF, noticing a boot that didn't end properly, reading it from a program (`files/logs.aer`), that only AerOS can change it, and `logclear()`'s question and password |
+| `test_logs.py` | AerOS's log: boots, the boot log's entries, OFF, noticing a boot that didn't end properly, reading it from a program (`files/logs.aer`), that only AerOS can change it, and clearing it or turning it off (the question and password) |
 | `test_network.py` | the firewall and sealed messages, against `tools/aernet.py` |
 
 Every test that writes to a disk finishes by checking the disk is still a consistent FAT volume:

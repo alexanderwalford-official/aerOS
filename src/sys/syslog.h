@@ -1,7 +1,8 @@
 /*
     syslog.h - AerOS's log: what happened at each boot, kept in a database
 
-    Everything is in one AerDB database (db/aerdb.h), /sys/logs.db, in two tables:
+    Everything is in one AerDB database (db/aerdb.h), /sys/logs.db, in two tables (and a third,
+    `settings`, holding one row: whether logging is on, see syslog_set_logging):
 
         boots:  boot  started              ended                clean
                 41    2026-11-15 09:02:11  2026-11-15 11:40:03  1
@@ -77,6 +78,15 @@ void syslog_stop (bool restarting);
 // "the prompt"). Doesn't ask anyone: lang/bi_system.c's logclear() asks first. False if the
 // log couldn't be opened or changed
 bool syslog_clear (const char* user, const char* with);
+
+// Turn logging on or off. Off, syslog_add keeps nothing (the boots are still listed, so a crash
+// is still noticed). The setting lasts across restarts: it is a row in the log's own settings
+// table. Turning it off or on is itself logged, saying who did it and with what. Doesn't ask
+// anyone: setlogging() in lang/bi_system.c asks first. False if it couldn't be saved
+bool syslog_set_logging (bool on, const char* user, const char* with);
+
+// is logging on? (it is, unless syslog_set_logging turned it off)
+bool syslog_logging (void);
 
 // this boot's number, counting from 1 (0 until syslog_start has run)
 int syslog_boot (void);

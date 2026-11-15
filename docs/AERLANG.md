@@ -68,7 +68,11 @@ coloured in, and a new line keeps the indentation of the one above.
 | arrows, Home, End, Page Up / Down | move around |
 
 Programs can also be written on another computer and copied onto the AerOS disk with
-`make disk-put FILE=myapp.aer` (see `src/README.md`).
+`make disk-put FILE=myapp.aer` (see `src/README.md`). For Visual Studio Code, the
+[AerLang extension](https://github.com/alexanderwalford-official/aerlang-vscode) colours AerLang
+in too, and suggests keywords, built-ins and their arguments as you type. Its README says how to
+install it, and which VS Code and AerOS versions each version of it works with. When a keyword,
+built-in or constant is added to AerLang, add it there as well.
 
 The apps in `src/disk/bin/` are built into AerOS and copied to `/bin/` when it starts.
 

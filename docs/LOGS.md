@@ -56,9 +56,9 @@ AerOS (`doc logs`, from `src/disk/docs/logs.md`).
 | `sys/boot.c` | `boot_report()` prints each boot line and logs it; calls `syslog_start()` |
 | `sys/power.c` | `syslog_stop()` at the start of `sys_reboot()` and `sys_shutdown()` |
 | `sys/terminal/t_int.c` | `syslog_flush()` before each prompt |
-| `lang/bi_system.c` | `logadd(message)` and `logclear()` for AerLang programs |
+| `lang/bi_system.c` | `logadd(message)`, `logclear()`, `setlogging(on)` and `islogging()` for AerLang programs |
 | `sys/f_sys.c` | `read_only_file()`: nothing but syslog.c may change `/sys/logs.db` |
-| `sys/perm.c` | a program asking to change the log is refused without a question; `perm_confirm()` asks the Y / N for `logclear()` |
+| `sys/perm.c` | a program asking to change the log is refused without a question; `perm_confirm()` asks the Y / N for `logclear()` and `setlogging()` |
 | `db/file.c`, `db/run.c` | `aerdb_open_read()`: AerDB's read-only mode |
 | `lang/bi_database.c` | `dbopen(path, "read")` |
 | `sys/terminal/cmd_database.c` | the SQL command opens the log read-only |
@@ -90,6 +90,10 @@ log:    boot  time                 kind     source   message
 | `kind` | `boot`, `warning`, `error`, `shutdown` or `app` (below) |
 | `source` | what it's about: `disk`, `sound`, `network`, `power`, `log`, or a program's name |
 | `message` | up to 127 characters |
+
+A third table, `settings (name TEXT, value INTEGER)`, holds AerOS's own settings for the log.
+It has one row so far, `logging`, which is 0 when logging has been turned off (no row means it
+has never been changed, so it's on). See "Turning logging off" below.
 
 | Kind | Written by | For |
 | --- | --- | --- |
@@ -225,6 +229,41 @@ Why each step:
 - **Text screen only.** The password is typed on the text screen; asking for it over a
   program's graphics isn't supported (yet).
 
+The asking is one function in `bi_system.c`, `person_agrees()`, shared by `logclear()` and
+`setlogging()` below, so both always ask the same way.
+
+### Turning logging off
+
+`setlogging(false)` and `setlogging(true)` ask exactly like `logclear()` (Y / N, then the
+password), then call `syslog_set_logging()`. `islogging()` just says whether it's on, without
+asking anything.
+
+```
+setlogging(false), agreed
+  -> an entry: "logging was turned off by alex, with aerlog.aer"     written while still on
+  -> settings: DELETE the 'logging' row, INSERT ('logging', 0)
+  -> logging_on = false: syslog_add() keeps nothing from now on
+
+next boot: syslog_start() reads the setting before anything is written
+  -> off: the entries that waited for the log to open are forgotten
+  -> the boot still goes in `boots`, and a crash is still noticed and printed
+
+setlogging(true), agreed
+  -> settings: ('logging', 1), logging_on = true
+  -> an entry: "logging was turned on by alex, with aerlog.aer"
+```
+
+Decisions behind it:
+
+- **The setting is in the log's own database**, not a separate file. That file is already
+  protected, so nothing but AerOS can change the setting, and no new rule was needed.
+- **Off stops entries, not the list of boots.** Boot numbers carry on, and AerOS can still say
+  it didn't shut down properly. A boot row says when, not what happened.
+- **The switch is logged on both sides**, so the gap in the log is visible and explained,
+  rather than looking like nothing happened.
+- **It lasts across restarts**, because the boot log is written before anyone could turn it
+  off again: a setting that reset at every boot would log every boot anyway.
+
 ### AerDB's read-only mode
 
 `aerdb_open_read()` opens an existing database (it never makes one) and sets `read_only` in
@@ -306,6 +345,19 @@ else
 end
 ```
 
+### Turning it off or on from AerLang
+
+```
+if islogging() then
+    print("Logging is on.")
+else
+    print("Logging is off.")
+end
+if setlogging(not islogging()) then       # switch it the other way, after asking
+    print("Done.")
+end
+```
+
 
 ## Limits, and things to know
 
@@ -321,11 +373,11 @@ end
 
 ## Ideas for later
 
-- **Turning logging off.** The viewer app's menu wants "stop logging". It could work like
-  `logclear()`: a built-in that asks Y / N and the password, and a setting kept in `/sys/`
-  that `syslog_add()` checks. (Clearing is done: see "Clearing it" above.)
-- **Admin accounts.** Every account is equal today, so any logged in user can clear the log
-  with their own password. If AerOS gets admins, `logclear()` is the place to check for one.
+- **Admin accounts.** Every account is equal today, so any logged in user can clear the log or
+  turn it off with their own password. If AerOS gets admins, `person_agrees()` in
+  `lang/bi_system.c` is the one place to check for one.
+- **More settings.** The `settings` table has room for others: how many boots to keep, or
+  turning off just one kind (say, `app` entries).
 - **WHY after a crash.** `why` at the first prompt after a bad shutdown could explain what the
   log says happened last.
 - **More sources.** Logins and failed passwords (`sys/accounts/`), AerLang errors
@@ -344,3 +396,4 @@ end
 | `test_only_aeros_changes_it` | `files/logs.aer` reads the log from a program without a question, can't open it to change it, and adds an entry with `logadd`; DEL, WR and the SQL command are refused, and WHY explains |
 | `test_in_memory` | with no disk, the log is in memory |
 | `test_clearing` | `logclear()`: N does nothing, A isn't an answer, a wrong password does nothing and is logged, it refuses while the log is open, Y and the right password clear it (leaving this boot and one entry), and the question names the program asking |
+| `test_turning_logging_off` | `setlogging()`: N leaves it on; Y and the password turn it off (and say so in the log); nothing is kept while off, even after a restart, though the boot is still listed; `setlogging(true)` turns it back on |
