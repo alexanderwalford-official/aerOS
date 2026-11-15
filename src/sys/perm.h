@@ -51,6 +51,9 @@ typedef enum {
 void perm_program_started (const char* folder, const char* name, const char* args);
 void perm_program_ended (void);
 
+// the running program's file name ("viewer.aer"), or "" when no program is running
+const char* perm_program_name (void);
+
 // May the running program read (PERM_READ) or change (PERM_CHANGE) the file `name` in
 // `folder`? Asks if it needs to (see above). name is "" when it is about the folder itself
 // (listing it). Always true when no program is running

@@ -78,6 +78,7 @@
 #include "../../lang/aerlang.h"
 #include "../accounts/auth.h"
 #include "../explain.h"
+#include "../syslog.h"
 
 
 // true once the terminal has started. compile() (lib/aer_comp.c) checks it so it never starts
@@ -217,6 +218,9 @@ int cli_init (int ask_login) {
         cli_rend_main();
 
         while (cli_active && cli_logged_in) {
+            // anything added to AerOS's log since the last prompt (by a command, or a
+            // program's logadd) is written now, between commands (sys/syslog.h)
+            syslog_flush();
             cli_prompt();
             // wait for Enter. Tab fills in names (cli_complete), the up and down arrows bring
             // back earlier lines, Page Up and Page Down scroll back through the output.

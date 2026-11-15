@@ -4,7 +4,7 @@
     perm_allows() goes through the rules in order, and stops at the first that decides:
 
         1. no program running (the terminal, code at the prompt)     allowed
-        2. /acc/ (the accounts)                                      refused
+        2. /acc/ (the accounts), or changing AerOS's log             refused
         3. reading the system's files, the program's own, or a
            file named after it on the command line                   allowed
         4. answered already while this program runs (Y or N)         that answer
@@ -27,6 +27,7 @@
 #include "../drivers/input/IO.h"
 #include "../lib/primary_definitions.h"
 #include "trace.h"
+#include "syslog.h"
 
 #define PERM_FILE_FOLDER "/acc/"
 #define PERM_FILE_NAME   "perms"
@@ -64,6 +65,11 @@ void perm_program_ended (void) {
     program.running = false;
     // forget its Y and N answers, so the next program can't use them
     decision_count = 0;
+}
+
+// the running program's file name (see perm.h)
+const char* perm_program_name (void) {
+    return program.running ? program.name : "";
 }
 
 // the words "read" and "change", as they are kept in /acc/perms and shown in questions
@@ -362,6 +368,13 @@ bool perm_allows (const char* folder, const char* name, perm_kind_t kind) {
     // into letting it read password hashes or write itself an "always" in /acc/perms
     if (strncasecmp(folder, PERM_FILE_FOLDER, slen(PERM_FILE_FOLDER)) == 0) {
         TRACE("%s may never touch %s: the accounts are off limits to programs", program.name, folder);
+        return false;
+    }
+    // ...and AerOS's log can be read (rule 3) but never changed, so there's nothing to ask
+    bool is_log = strcasecmp(folder, SYSLOG_FOLDER) == 0 && strcasecmp(name, SYSLOG_FILE) == 0;
+    if (kind == PERM_CHANGE && is_log) {
+        TRACE("%s may not change %s%s: only AerOS adds to its log (dbopen(path, \"read\") reads it)",
+              program.name, folder, name);
         return false;
     }
     // 3. free to read

@@ -29,6 +29,7 @@
 #include "builtins.h"
 #include "../db/aerdb.h"
 #include "../lib/aer_string.h"
+#include "../lib/primary_definitions.h"
 
 #define DATABASES_MAX 8   // databases one program can have open at once
 
@@ -106,12 +107,23 @@ static int params_arg (int argc, value_t* argv, int i, int line, const char* fn,
 }
 
 // dbopen(path): open a database, making an empty one if the file isn't there. A number for it,
-// to give the other db functions, or nil if it can't be opened (it isn't a database, say)
+// to give the other db functions, or nil if it can't be opened (it isn't a database, say).
+// dbopen(path, "read") opens one only to read it: dbquery works, dbrun stops the program, and
+// it only needs permission to read (so the system's databases, like /sys/logs.db, never ask)
 value_t bi_dbopen (int argc, value_t* argv, int line) {
-    (void)argc;
+    bool only_read = false;
+    if (argc > 1) {
+        const char* mode = str_arg(argv, 1, line, "dbopen")->data.chars;
+        if (!seq(mode, "read")) {
+            aer_error(line, "dbopen(): the second value can only be \"read\", not \"%s\"", mode);
+        }
+        only_read = true;
+    }
+
     char folder[FS_PATH_MAX], name[FS_NAME_MAX];
-    // PERM_CHANGE: a program asks before it opens a database of yours, as it may change it
-    if (!file_arg(argv, 0, line, "dbopen", PERM_CHANGE, folder, name)) {
+    // a program asks before it opens a database of yours: to change it, or only to read it
+    perm_kind_t needs = only_read ? PERM_READ : PERM_CHANGE;
+    if (!file_arg(argv, 0, line, "dbopen", needs, folder, name)) {
         return aer_nil();
     }
     // a free place for it
@@ -123,7 +135,11 @@ value_t bi_dbopen (int argc, value_t* argv, int line) {
         aer_error(line, "dbopen(): at most %d databases can be open at once", DATABASES_MAX);
     }
     int result;
-    open_databases[slot] = aerdb_open(folder, name, &result);
+    if (only_read) {
+        open_databases[slot] = aerdb_open_read(folder, name, &result);
+    } else {
+        open_databases[slot] = aerdb_open(folder, name, &result);
+    }
     if (open_databases[slot] == NULL) {
         return aer_nil();
     }

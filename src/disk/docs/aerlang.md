@@ -110,7 +110,7 @@ orange, also called `BROWN`), `BRIGHT`, `DARK_GRAY`, `LIGHT_BLUE`, `LIGHT_GREEN`
 file, and if you say no the function fails as if the file wasn't there. `rdf("notes.txt@2")`
 reads an [old version](versions.md) of a file.
 
-**Databases:** `dbopen(path)`, `dbrun(db, sql, values)`, `dbquery(db, sql, values)` (a list of
+**Databases:** `dbopen(path)` (or `dbopen(path, "read")`, only to read), `dbrun(db, sql, values)`, `dbquery(db, sql, values)` (a list of
 rows) and `dbclose(db)` keep tables of rows in a file, in SQL: see [Databases](database.md).
 
 To change a file a piece at a time (a database's pages, say) rather than all of it:
@@ -126,7 +126,8 @@ The names are built like the terminal's commands: `rd` read, `wr` write, `ap` ap
 `isenc(path)`, `rdenc(path, password)` (nil if the password is wrong).
 
 **System:** `sleep(ms)`, `time()` (ms since start), `random(n)` (0 to n - 1), `beep(hz)`,
-`play(path)`, `video(path)` (an .mpg, full screen: see [Video](video.md)), `exit()`.
+`play(path)`, `video(path)` (an .mpg, full screen: see [Video](video.md)), `logadd(message)`
+(adds to [AerOS's log](logs.md)), `exit()`.
 `args` is the list of words typed after the program's name.
 `sysinfo()` gives everything AerOS knows about the computer as a list of
 `[group, name, value]`, e.g. `["Processor", "Speed", "about 2400 MHz"]`.

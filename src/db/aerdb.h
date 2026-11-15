@@ -85,6 +85,7 @@
 #define AERDB_ERR_UNSUPPORTED -8   // SQL that AerDB doesn't do yet
 #define AERDB_ERR_VALUES      -9   // the wrong number of values (or of ? parameters)
 #define AERDB_ERR_NO_MEMORY  -10
+#define AERDB_ERR_READ_ONLY  -11   // a change to a database opened with aerdb_open_read
 
 // ---- the file format ----------------------------------------------------------------------------
 
@@ -133,6 +134,7 @@ typedef struct {
     char name[FS_NAME_MAX];     // its name, e.g. "shop.db"
     aerdb_header_t header;      // page 1, kept in memory while the database is open
     bool changed;               // has anything been written yet? (a version is kept the first time)
+    bool read_only;             // opened with aerdb_open_read: only SELECT is allowed
     char error[96];             // what went wrong last, in full (see aerdb_error)
     int changes;                // rows the last INSERT, UPDATE or DELETE added, changed or deleted
     // the columns of the last SELECT, so whoever prints the rows can give them a heading
@@ -152,6 +154,10 @@ typedef bool (*aerdb_row_fn)(const db_value_t* values, int count, void* ctx);
 // open a database, making an empty one if the file isn't there. NULL if it can't be opened
 // (*result says why: AERDB_ERR_NOT_DB, AERDB_ERR_IO...)
 aerdb_t* aerdb_open (const char* folder, const char* name, int* result);
+
+// open a database only to read it: SELECT works, anything that would change it fails with
+// AERDB_ERR_READ_ONLY. A missing file isn't made: NULL, with *result AERDB_ERR_NOT_FOUND
+aerdb_t* aerdb_open_read (const char* folder, const char* name, int* result);
 
 // close a database. Everything is written as it happens, so this only frees the memory
 void aerdb_close (aerdb_t* db);

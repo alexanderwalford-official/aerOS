@@ -14,6 +14,8 @@ The other guides go deeper into one area each:
 * [SECURITY.md](SECURITY.md): user accounts, password hashing and file encryption
 * [AUDIO.md](AUDIO.md): the sound card driver, WAV / MP3 playback and the mixer
 * [VIDEO.md](VIDEO.md): playing MPEG-1 videos, and keeping picture and sound together
+* [LOGS.md](LOGS.md): AerOS's log, `/sys/logs.db`: what it records, how a boot's entries get
+  there, how a crash is noticed, and why only AerOS can change it
 
 ## The idea
 
@@ -78,6 +80,7 @@ src/
     source.c              the read-only /src/ folder: AerOS's own source, built into it
     versions.c            old versions of the files in home folders (VERS, UNDO, notes.txt@2)
     perm.c                programs ask before they touch your files (PERM)
+    syslog.c              AerOS's log, /sys/logs.db: every boot, warning and shutdown (an AerDB database)
     net.c                 the network stack: ARP, IPv4, UDP, DNS lookups (NET, MSG, LSN)
     firewall.c            the firewall's rules, everything blocked until FW ALLOW
     netseal.c             sealed messages: the only thing ever sent over the network

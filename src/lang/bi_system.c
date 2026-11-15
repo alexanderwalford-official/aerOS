@@ -2,8 +2,8 @@
     bi_system.c
     AerLang's built-in functions for the system: waiting (sleep), the time, random numbers,
     what AerOS knows about the computer (sysinfo), queueing programs for GO (queue), running a
-    terminal command from the prompt (cmd), what app mode did (appmode) and ending the program
-    (exit).
+    terminal command from the prompt (cmd), what app mode did (appmode), adding to AerOS's log
+    (logadd) and ending the program (exit).
 
     Which built-ins need which part of AerOS, for app mode, is listed next to aer_profile in
     aer_builtins.c.
@@ -21,6 +21,8 @@
 #include "../sys/p_man.h"
 #include "../sys/terminal/t_int.h"
 #include "../sys/appmode.h"
+#include "../sys/syslog.h"
+#include "../sys/f_sys.h"
 
 // sleep(ms): wait that many milliseconds (Ctrl+C still stops the program)
 value_t bi_sleep (int argc, value_t* argv, int line) {
@@ -164,6 +166,27 @@ value_t bi_appmode (int argc, value_t* argv, int line) {
     aer_list_push(result.as.obj, aer_int((int32_t)(mode->freed / 1024)));
     aer_list_push(result.as.obj, aer_int((int32_t)(mode->free / 1024)));
     return result;
+}
+
+// logadd(message): add an entry to AerOS's log (/sys/logs.db, see sys/syslog.h), of kind "app",
+// with the program's name as its source ("snake" for snake.aer). It is written when the
+// program ends, so the program itself won't see it with dbquery
+value_t bi_logadd (int argc, value_t* argv, int line) {
+    (void)argc;
+    const char* message = str_arg(argv, 0, line, "logadd")->data.chars;
+
+    // the program's name without ".aer", or "prompt" for code typed at the prompt
+    char source[FS_NAME_MAX];
+    scpy(source, perm_program_name(), sizeof(source));
+    char* dot = strrchr(source, '.');
+    if (dot != NULL) {
+        *dot = '\0';
+    }
+    if (source[0] == '\0') {
+        scpy(source, "prompt", sizeof(source));
+    }
+    syslog_add("app", source, "%s", message);
+    return aer_nil();
 }
 
 // exit(): end the program here, quietly

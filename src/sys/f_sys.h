@@ -115,6 +115,11 @@ int fs_write_at (const char* f_path, const char* f_name, uint32_t offset, const 
 // make a file `size` bytes long: shorter cuts off its end, longer adds zeros on the end
 int fs_truncate (const char* f_path, const char* f_name, uint32_t size);
 
+// AerOS's log, /sys/logs.db (sys/syslog.h), can't be changed by anyone: every write, truncate or
+// delete of it gets FS_ERR_READ_ONLY, from the terminal or a program alike. syslog.c sets this
+// to true while it writes the log itself, and back to false straight after
+extern bool fs_log_unlocked;
+
 // READING A FILE A PIECE AT A TIME, for files too big to read whole (a video):
 //
 //     fs_file_t file;

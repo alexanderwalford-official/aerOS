@@ -27,6 +27,7 @@ AerOS is written to be read. Every source file starts with an explanation of wha
 - [AerLang](docs/AERLANG.md): the built-in programming language
 - [Security](docs/SECURITY.md): user accounts, password hashing and file encryption, with every algorithm explained
 - [Sound](docs/AUDIO.md): the AC'97 driver and WAV / MP3 playback
+- [The log](docs/LOGS.md): every boot, warning and shutdown kept in a database, how a crash is noticed, and why only AerOS can write to it
 - [Testing](docs/TESTING.md): `make test` boots AerOS in QEMU and checks it works, and how to write a test
 
 ## But why basic C?

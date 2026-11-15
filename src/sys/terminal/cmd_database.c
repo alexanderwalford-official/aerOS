@@ -25,6 +25,7 @@
 #include "../../drivers/video/VGA_linear.h"
 #include "../f_sys.h"
 #include "../../db/aerdb.h"
+#include "../syslog.h"
 
 #define SQL_LINE_MAX 256   // the longest statement typed at the sql> prompt
 
@@ -107,8 +108,16 @@ void cli_sql (char* arguments) {
         prtf("%s isn't a file name.\n", file);
         return;
     }
+    // AerOS's own log can be looked at, but not changed (sys/syslog.h): opened only to read, a
+    // change is turned away with a message that says so, rather than a failed write
+    bool is_log = strcasecmp(folder, SYSLOG_FOLDER) == 0 && strcasecmp(name, SYSLOG_FILE) == 0;
     int result;
-    aerdb_t* db = aerdb_open(folder, name, &result);
+    aerdb_t* db;
+    if (is_log) {
+        db = aerdb_open_read(folder, name, &result);
+    } else {
+        db = aerdb_open(folder, name, &result);
+    }
     if (db == NULL) {
         prtf("Can't open %s: %s.\n", file, aerdb_strerror(result));
         return;

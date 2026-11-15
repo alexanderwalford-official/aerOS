@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include "../drivers/input/GIO.h"
 #include "../drivers/video/VGA_linear.h"
+#include "syslog.h"
 
 // stop the CPU forever, see power.h
 void sys_halt(void) {
@@ -37,6 +38,8 @@ void sys_halt(void) {
 
 // restart the computer, see power.h
 void sys_reboot(void) {
+    // the log's last entries, and this boot marked as having ended properly
+    syslog_stop(true);
     // nothing must interrupt us half way through, and the triple fault trick below relies on it
     interrupts_disable();
 
@@ -64,6 +67,8 @@ void sys_reboot(void) {
 
 // power off the computer, see power.h
 void sys_shutdown(void) {
+    // the log's last entries, and this boot marked as having ended properly
+    syslog_stop(false);
     interrupts_disable();
     // each of these writes the emulator's ACPI "PM1a control" register: bit 13 (0x2000) is
     // SLP_EN, "go to sleep now", and bits 10-12 are the sleep type, which is the soft off (S5)

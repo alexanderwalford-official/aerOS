@@ -41,6 +41,7 @@
 #include "../lib/primary_definitions.h"
 #include "../lib/busy.h"
 #include "trace.h"
+#include "syslog.h"
 
 int fs_mode = FS_MODE_MEMORY;  // VFS until fs_init() finds a disk
 char fs_disk_status[96] = "";  // what happened when looking for a disk, e.g. "no AEROS disk found"
@@ -60,6 +61,25 @@ static struct directory directories[FS_MAX_DIRS];
 // is the disk in use (DISK mode), rather than the temporary file system?
 static bool on_disk (void) {
     return fs_mode == FS_MODE_DISK;
+}
+
+// set by syslog.c while it writes the log (see f_sys.h)
+bool fs_log_unlocked = false;
+
+// Is this a file nothing may change? Two kinds:
+//   - anything inside /src/, AerOS's own source code, built into the kernel
+//   - /sys/logs.db, AerOS's log (sys/syslog.h), unless syslog.c is the one changing it
+static bool read_only_file (const char* folder, const char* name) {
+    if (source_in(folder)) {
+        TRACE("%s%s is inside /src/, which can't be changed", folder, name);
+        return true;
+    }
+    bool is_log = strcasecmp(folder, SYSLOG_FOLDER) == 0 && strcasecmp(name, SYSLOG_FILE) == 0;
+    if (is_log && !fs_log_unlocked) {
+        TRACE("%s%s is AerOS's log: only AerOS itself can add to it", folder, name);
+        return true;
+    }
+    return false;
 }
 
 
@@ -629,8 +649,7 @@ int fs_create_bytes (const char* f_path, const char* f_name, const void* data, u
     if (!fs_valid_name(f_name)) {
         return FS_ERR_BAD_NAME;
     }
-    if (source_in(folder)) {
-        TRACE("%s%s is inside /src/, which can't be changed", folder, f_name);
+    if (read_only_file(folder, f_name)) {
         return FS_ERR_READ_ONLY;
     }
     TRACE("making %s%s, %u bytes, %s", folder, f_name, (unsigned int)length,
@@ -647,7 +666,7 @@ int fs_write_f (const char* f_path, const char* f_name, const char* text, bool a
     if (text == NULL || !fs_resolve_dir(f_path, folder, sizeof(folder))) {
         return FS_ERR_NOT_FOUND;
     }
-    if (source_in(folder)) {
+    if (read_only_file(folder, f_name)) {
         return FS_ERR_READ_ONLY;
     }
     versions_keep(folder, f_name); // the file as it is now, before it changes
@@ -664,7 +683,7 @@ int fs_write_bytes (const char* f_path, const char* f_name, const void* data, ui
     if (data == NULL || !fs_resolve_dir(f_path, folder, sizeof(folder))) {
         return FS_ERR_NOT_FOUND;
     }
-    if (source_in(folder)) {
+    if (read_only_file(folder, f_name)) {
         return FS_ERR_READ_ONLY;
     }
     // Keep the file as it is now, before it changes. Unless the old bytes are being wiped
@@ -691,8 +710,7 @@ int fs_write_at (const char* f_path, const char* f_name, uint32_t offset, const 
     if (!fs_resolve_dir(f_path, folder, sizeof(folder))) {
         return FS_ERR_NOT_FOUND;
     }
-    if (source_in(folder)) {
-        TRACE("%s%s is inside /src/, which can't be changed", folder, f_name);
+    if (read_only_file(folder, f_name)) {
         return FS_ERR_READ_ONLY;
     }
     if (on_disk()) {
@@ -709,8 +727,7 @@ int fs_truncate (const char* f_path, const char* f_name, uint32_t size) {
     if (!fs_resolve_dir(f_path, folder, sizeof(folder))) {
         return FS_ERR_NOT_FOUND;
     }
-    if (source_in(folder)) {
-        TRACE("%s%s is inside /src/, which can't be changed", folder, f_name);
+    if (read_only_file(folder, f_name)) {
         return FS_ERR_READ_ONLY;
     }
     if (on_disk()) {
@@ -866,8 +883,7 @@ int fs_delete_f (const char* f_path, const char* f_name) {
     if (!fs_resolve_dir(f_path, folder, sizeof(folder))) {
         return FS_ERR_NOT_FOUND;
     }
-    if (source_in(folder)) {
-        TRACE("%s%s is inside /src/, which can't be changed", folder, f_name);
+    if (read_only_file(folder, f_name)) {
         return FS_ERR_READ_ONLY;
     }
     versions_keep(folder, f_name); // so UNDO can bring it back

@@ -96,7 +96,7 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("cmd", bi_cmd, 1, 1),
     BUILTIN("nsend", bi_net_send, 3, 3),
     BUILTIN("nrecv", bi_net_receive, 2, 2),
-    BUILTIN("dbopen", bi_dbopen, 1, 1),
+    BUILTIN("dbopen", bi_dbopen, 1, 2),
     BUILTIN("dbrun", bi_dbrun, 2, 3),
     BUILTIN("dbquery", bi_dbquery, 2, 3),
     BUILTIN("dbclose", bi_dbclose, 1, 1),
@@ -104,6 +104,7 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("random", bi_random, 1, 1),
     BUILTIN("beep", bi_beep, 0, 1),
     BUILTIN("play", bi_play, 1, 1),
+    BUILTIN("logadd", bi_logadd, 1, 1),
     BUILTIN("exit", bi_exit, 0, 0),
     // graphics
     BUILTIN("gopen", bi_gfx_open, 0, 0),

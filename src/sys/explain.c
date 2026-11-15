@@ -119,12 +119,15 @@ static const explanation_t explanations[PROBLEM_COUNT] = {
         "malloc", NULL,
     },
     [PROBLEM_READ_ONLY] = {
-        "That is in /src/, AerOS's own source code, which can be read but not changed.",
+        "That can be read but not changed: it is in /src/ (AerOS's own source code), or it is "
+        "/sys/logs.db (AerOS's log).",
         "The files in /src/ are the ones this copy of AerOS was built from, built into AerOS "
         "itself, so they always match the code that is running. They aren't on a disk, so "
-        "there is nowhere a change could be saved.",
-        "Read anything in there with @cli_read_file. To try out a change, copy the file into "
-        "your own folder first, e.g. in AerLang: wrf(\"fat.c\", rdf(\"/src/sys/fat.c\"))",
+        "there is nowhere a change could be saved. /sys/logs.db records every boot, and only "
+        "AerOS adds to it, so what it says can be trusted.",
+        "Read anything in /src/ with @cli_read_file. To try out a change, copy the file into "
+        "your own folder first, e.g. in AerLang: wrf(\"fat.c\", rdf(\"/src/sys/fat.c\")). Read "
+        "the log with @cli_sql /sys/logs.db SELECT * FROM log",
         "fs_create_bytes", NULL,
     },
     [PROBLEM_UNKNOWN_COMMAND] = {

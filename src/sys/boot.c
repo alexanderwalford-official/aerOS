@@ -39,6 +39,9 @@
 #include "../drivers/audio/ac97.h"
 #include "net.h"
 #include "rt.h"
+#include "syslog.h"
+#include "../lib/primary_definitions.h"
+#include <stdarg.h>
 
 // the value a multiboot bootloader leaves in eax (not the same as the 0x1BADB002 in our header)
 #define MULTIBOOT_BOOTLOADER_MAGIC 0x2BADB002
@@ -210,77 +213,114 @@ void boot_parse_multiboot (uint32_t magic, uint32_t info_addr) {
     }
 }
 
+// One line of the boot log: its tag ("[ OK ]", "[WARN]", "[FAIL]" or "[INFO]"), then the message,
+// written like prtf. It also goes in AerOS's log (sys/syslog.h): a [WARN] as a warning, a [FAIL]
+// as an error, and the rest as boot entries. source says what it is about ("sound", "disk")
+static void boot_report (const char* tag, const char* source, const char* format, ...) {
+    char message[128];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+
+    prtf("%s %s\n", tag, message);
+
+    const char* kind = "boot";
+    if (seq(tag, "[WARN]")) {
+        kind = "warning";
+    } else if (seq(tag, "[FAIL]")) {
+        kind = "error";
+    }
+    syslog_add(kind, source, "%s", message);
+}
+
 // the boot log
 // shows whether each part of kernel.c's hardware setup worked, starts the file system and waits
-// BOOT_LOG_DELAY ms so it can be read (skipped on fast boot). Returns 0
+// BOOT_LOG_DELAY ms so it can be read (skipped on fast boot). Each line also goes in AerOS's
+// log, which is written once the file system is up (syslog_start, near the end). Returns 0
 int init_boot (void) {
     // black text on a light grey screen, same as the splash screen
     colour(BLACK, BRIGHT);
     console_clear();
 
     prtf("[E:b1f1] AerOS boot sequence started\n\n");
+    syslog_add("boot", "aeros", "AerOS %s started", AEROS_VERSION);
 
     // each driver sets its *_ready flag at the end of its init function in kernel.c, so a [FAIL]
     // here means that step never ran (handy if someone reorders or removes a line in main())
     if (vga_framebuffer_active()) {
-        prtf("[ OK ] Screen: %ux%u framebuffer, %u bits per pixel\n", boot_framebuffer.width,
-               boot_framebuffer.height, (unsigned int)boot_framebuffer.bpp);
+        boot_report("[ OK ]", "screen", "Screen: %ux%u framebuffer, %u bits per pixel", boot_framebuffer.width,
+                    boot_framebuffer.height, (unsigned int)boot_framebuffer.bpp);
     } else {
-        prtf("[ OK ] Screen: VGA text mode\n");
+        boot_report("[ OK ]", "screen", "Screen: VGA text mode");
     }
-    prtf("%s Descriptor tables & interrupts (GDT / IDT / PIC)\n", interrupts_ready ? "[ OK ]" : "[FAIL]");
+    boot_report(interrupts_ready ? "[ OK ]" : "[FAIL]", "interrupts", "Descriptor tables & interrupts (GDT / IDT / PIC)");
     if (clck_ready) {
-        prtf("[ OK ] System timer at %u Hz\n", (unsigned int)PIT_HZ);
+        boot_report("[ OK ]", "timer", "System timer at %u Hz", (unsigned int)PIT_HZ);
     } else {
-        prtf("[WARN] System timer is not ticking, using busy waits instead\n");
+        boot_report("[WARN]", "timer", "System timer is not ticking, using busy waits instead");
     }
-    prtf("%s PS/2 keyboard\n", keyboard_ready ? "[ OK ]" : "[FAIL]");
+    boot_report(keyboard_ready ? "[ OK ]" : "[FAIL]", "keyboard", "PS/2 keyboard");
     // only a warning, nothing needs the memory size yet (the heap is a fixed size array)
     if (boot_multiboot_valid) {
-        prtf("[ OK ] Memory: %u KB lower, %u KB upper\n", sys_mem_lower_kb, sys_mem_upper_kb);
+        boot_report("[ OK ]", "memory", "Memory: %u KB lower, %u KB upper", sys_mem_lower_kb, sys_mem_upper_kb);
     } else {
-        prtf("[WARN] No memory information from the bootloader\n");
+        boot_report("[WARN]", "memory", "No memory information from the bootloader");
     }
-    prtf("[ OK ] Kernel heap: %u KB\n", (unsigned int)(heap_total() / 1024));
+    boot_report("[ OK ]", "memory", "Kernel heap: %u KB", (unsigned int)(heap_total() / 1024));
 
-    // rtc_datetime() fills in now and returns it, so it can go straight into prtf
+    // rtc_datetime() fills in now and returns it, so it can go straight into the line
     char now[FS_DATETIME_MAX];
-    prtf("[ OK ] Real time clock: %s\n", rtc_datetime(now, sizeof(now)));
+    boot_report("[ OK ]", "clock", "Real time clock: %s", rtc_datetime(now, sizeof(now)));
     // check SHA-256, HMAC, PBKDF2 and AES against published test vectors before trusting them with passwords
-    prtf("%s Crypto self-test (SHA-256, HMAC, PBKDF2, AES-256)\n", crypto_selftest() ? "[ OK ]" : "[FAIL]");
+    boot_report(crypto_selftest() ? "[ OK ]" : "[FAIL]", "crypto", "Crypto self-test (SHA-256, HMAC, PBKDF2, AES-256)");
     // a missing sound card isn't a problem, only PLY needs one
     if (ac97_init()) {
-        prtf("[ OK ] Sound: %s\n", ac97_name());
+        boot_report("[ OK ]", "sound", "Sound: %s", ac97_name());
     } else {
-        prtf("[WARN] No sound card found (AerOS supports AC'97), PLY won't work\n");
+        boot_report("[WARN]", "sound", "No sound card found (AerOS supports AC'97), PLY won't work");
     }
     // the firewall is always on: nothing is sent or let in that a rule (FW ALLOW) doesn't allow
     if (net_init()) {
-        prtf("[ OK ] Network: %s, firewall on\n\n", net_card_name());
+        boot_report("[ OK ]", "network", "Network: %s, firewall on", net_card_name());
     } else {
-        prtf("[INFO] No network card found (AerOS supports the Intel e1000)\n\n");
+        boot_report("[INFO]", "network", "No network card found (AerOS supports the Intel e1000)");
     }
+    prtf("\n");
     // RT mode (picked in the boot options): the real-time tasks start ticking from here
     if (boot_option == BOOT_OPT_RT) {
         rt_start();
-        prtf("[INFO] RT mode (experimental): %d real-time task(s), RT lists them\n\n", rt_count());
+        boot_report("[INFO]", "rt", "RT mode (experimental): %d real-time task(s), RT lists them", rt_count());
+        prtf("\n");
     }
 
     // initialise the file system (the disk, or the temporary one if there is no disk)
     // "n" = normal: mount a FAT disk labelled AEROS if there is one, otherwise use the VFS
     // "d" = demo: go straight to the VFS without probing the disks at all
     fs_init(boot_option == BOOT_OPT_DEMO ? "d" : "n");
+    if (fs_mode == FS_MODE_DISK) {
+        syslog_add("boot", "disk", "AEROS disk found: files are saved on it");
+    } else if (boot_option == BOOT_OPT_DEMO) {
+        syslog_add("boot", "disk", "demo mode: the disks aren't used, files are kept in memory");
+    } else {
+        syslog_add("boot", "disk", "no AEROS disk found: files only last until the computer is turned off");
+    }
 
     // the apps that come with AerOS, copied into /bin/ unless they are already there
     int installed = apps_install();
     if (installed > 0) {
         prtf("< APPS .. > %d built-in file(s) added or updated\n", installed);
+        syslog_add("boot", "apps", "%d built-in file(s) added or updated", installed);
     }
     // a file that couldn't be written is tried again next boot, but say so rather than nothing
     if (apps_failed() > 0) {
         prtf("[ ! ] %d built-in file(s) couldn't be written to the disk (full, or a drive error): "
              "they will be tried again next time\n", apps_failed());
+        syslog_add("error", "apps", "%d built-in file(s) couldn't be written to the disk", apps_failed());
     }
+
+    // AerOS's log: start this boot's entry, and write everything above into it
+    syslog_start();
 
     // beep once
     //beep(0);

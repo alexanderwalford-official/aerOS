@@ -1,0 +1,43 @@
+# Reading AerOS's log from a program, the way a log viewer would: dbopen(path, "read") and
+# dbquery. Each check prints PASS or FAIL, and ALL PASSED at the end. It also adds an entry with
+# logadd, which the test looks for once the program has ended.
+let failures = 0
+func check(name, got, want)
+    if got == want then
+        print("PASS " + name)
+    else
+        print("FAIL " + name + ": got " + str(got) + ", wanted " + str(want))
+        failures = failures + 1
+    end
+end
+
+# read: no question, as /sys/ is the system's own
+let db = dbopen("/sys/logs.db", "read")
+check("opened to read", db != nil, true)
+
+let boots = dbquery(db, "SELECT boot, started, ended, clean FROM boots ORDER BY boot")
+check("one boot so far", len(boots), 1)
+check("it is boot 1", boots[0][0], 1)
+check("still running: no end yet", boots[0][2], nil)
+check("a start time like 2026-11-15 11:41:30", len(boots[0][1]), 19)
+
+let warnings = dbquery(db, "SELECT source, message FROM log WHERE kind = 'warning' AND source = 'sound'")
+check("the missing sound card", len(warnings), 1)
+let first = dbquery(db, "SELECT kind, source, message FROM log ORDER BY time LIMIT 1")
+check("the first entry", first[0][0] + " " + first[0][1], "boot aeros")
+check("everything is from this boot", len(dbquery(db, "SELECT * FROM log WHERE boot != 1")), 0)
+dbclose(db)
+
+# changing it: refused, without asking
+check("can't open it to change it", dbopen("/sys/logs.db"), nil)
+# and a database that isn't there isn't made when it is only read
+check("reading a missing database", dbopen("/sys/nothere.db", "read"), nil)
+check("...didn't make it", isf("/sys/nothere.db"), false)
+
+logadd("hello from the test")
+
+if failures == 0 then
+    print("ALL PASSED")
+else
+    print(str(failures) + " FAILED")
+end

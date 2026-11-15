@@ -488,6 +488,10 @@ int aerdb_exec (aerdb_t* db, const char* sql, const db_value_t* params, int para
     if (words != NULL && s != NULL) {
         int count = sql_words(db, sql, words, SQL_WORDS_MAX);
         result = count < 0 ? count : sql_parse(db, words, count, params, param_count, s);
+        // a database opened only to read (aerdb_open_read) may only be asked questions
+        if (result == AERDB_OK && db->read_only && s->kind != S_SELECT) {
+            result = aerdb_fail(db, AERDB_ERR_READ_ONLY, "%s was opened only to read: it can't be changed", db->name);
+        }
         if (result == AERDB_OK) {
             result = run_statement(db, s, row_out, ctx);
         }

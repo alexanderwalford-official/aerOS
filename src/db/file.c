@@ -47,6 +47,11 @@ bool page_read (aerdb_t* db, uint32_t n, void* buffer) {
 // write page n from buffer, in place. The first change to a database keeps a version of the
 // whole file first, so AerOS's UNDO can still bring it back as it was
 bool page_write (aerdb_t* db, uint32_t n, const void* buffer) {
+    // aerdb_exec turns away changes to a read-only database before they start; this is the
+    // last line of defence, in case something inside AerDB writes anyway
+    if (db->read_only) {
+        return false;
+    }
     if (!db->changed) {
         versions_keep(db->folder, db->name);
         db->changed = true;
@@ -141,6 +146,20 @@ aerdb_t* aerdb_open (const char* folder, const char* name, int* result) {
     return db;
 }
 
+// open a database only to read it (see aerdb.h)
+aerdb_t* aerdb_open_read (const char* folder, const char* name, int* result) {
+    // aerdb_open would make a new file: reading one that isn't there is a mistake instead
+    if (!fs_file_exists(folder, name)) {
+        *result = AERDB_ERR_NOT_FOUND;
+        return NULL;
+    }
+    aerdb_t* db = aerdb_open(folder, name, result);
+    if (db != NULL) {
+        db->read_only = true;
+    }
+    return db;
+}
+
 // close a database: everything is on the disk already, so only the memory goes
 void aerdb_close (aerdb_t* db) {
     free(db);
@@ -177,6 +196,7 @@ const char* aerdb_strerror (int result) {
         case AERDB_ERR_UNSUPPORTED: return "AerDB can't do that yet";
         case AERDB_ERR_VALUES:      return "the wrong number of values";
         case AERDB_ERR_NO_MEMORY:   return "not enough memory";
+        case AERDB_ERR_READ_ONLY:   return "the database was opened only to read";
         default:                    return "something went wrong";
     }
 }
