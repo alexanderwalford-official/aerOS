@@ -1,8 +1,8 @@
 /*
     bi_text.c
-    AerLang's built-in functions for text and numbers: print, write and input, strings (len,
-    sub, find, upper, split, join...), turning one kind of value into another (str, int, float,
-    chr, ord) and maths (sqrt, sin, cos, atan2, floor, round, abs).
+    AerLang's built-in functions for text and numbers: print, write and input, the clipboard
+    (clip, setclip), strings (len, sub, find, upper, split, join...), turning one kind of value
+    into another (str, int, float, chr, ord) and maths (sqrt, sin, cos, atan2, floor, round, abs).
 
     How a built-in works, and how to add one, is at the top of builtins.h.
 */
@@ -15,6 +15,7 @@
 #include "../lib/crypto.h"
 #include "../drivers/video/VGA_linear.h"
 #include "../drivers/input/IO.h"
+#include "../sys/clipboard.h"
 
 // printing and input
 
@@ -73,6 +74,33 @@ value_t bi_input_secret (int argc, value_t* argv, int line) {
     // stack memory for whatever runs next to find
     wipe(buffer, sizeof(buffer));
     return s;
+}
+
+// the clipboard (sys/clipboard.h): shared with the terminal, where selecting text with the mouse
+// copies it and right-click or Ctrl+V pastes it
+
+// clip(): the text on the clipboard ("" when there is none)
+value_t bi_clip (int argc, value_t* argv, int line) {
+    (void)argc;
+    (void)argv;
+    (void)line;
+    const char* text = clipboard_get();
+    return aer_string(text, (uint32_t)slen(text));
+}
+
+// setclip(text): put text on the clipboard, replacing what was there (cut short past
+// CLIPBOARD_MAX - 1 characters). Anything that isn't text is turned into text first, as print does
+value_t bi_setclip (int argc, value_t* argv, int line) {
+    (void)argc;
+    if (argv[0].type == V_STR) {
+        clipboard_set(argv[0].as.obj->data.chars);
+    } else {
+        // str() of it, the same text print would show
+        value_t text = bi_str(1, argv, line);
+        clipboard_set(text.as.obj->data.chars);
+        aer_release(text);
+    }
+    return aer_nil();
 }
 
 // strings and conversions

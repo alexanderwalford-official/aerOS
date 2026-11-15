@@ -80,6 +80,7 @@ src/
     source.c              the read-only /src/ folder: AerOS's own source, built into it
     versions.c            old versions of the files in home folders (VERS, UNDO, notes.txt@2)
     perm.c                programs ask before they touch your files (PERM)
+    clipboard.c           the clipboard: copied text, pasted at the prompt or read with clip()
     syslog.c              AerOS's log, /sys/logs.db: every boot, warning and shutdown (an AerDB database)
     net.c                 the network stack: ARP, IPv4, UDP, DNS lookups (NET, MSG, LSN)
     firewall.c            the firewall's rules, everything blocked until FW ALLOW
@@ -105,7 +106,7 @@ src/
                           _programs (RUN, QUE, GO), _help (DOC, WHY, SRC, SHOW)
     trace.c               notes on what AerOS does, for SHOW (TRACE() in the code)
     terminal/editor.c     the text editor (EDT)
-    terminal/pointer.c    the mouse pointer while the prompt waits (drawn by drivers/video/VGA_linear.c)
+    terminal/pointer.c    the mouse at the prompt: the pointer, selecting, copying, pasting, the wheel
 
   lib/                  the kernel's own small C library
     aer_string.c          memcpy, slen, strtok_r, sdist  aer_stdlib.c  malloc / free, itoa, qsort...

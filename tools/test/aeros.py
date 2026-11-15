@@ -221,6 +221,11 @@ class AerOS:
         """Move the mouse (right and down are positive)."""
         self.monitor(f'mouse_move {dx} {dy}')
 
+    def mouse_wheel(self, notches):
+        """Turn the scroll wheel: negative is up (away from you), positive down, the way the mouse
+        itself counts. (QEMU's mouse_move counts the other way round: positive is up)"""
+        self.monitor(f'mouse_move 0 0 {-notches}')
+
     def mouse_buttons(self, mask):
         """Set which mouse buttons are held: 1 left, 2 right, 4 middle, 0 none."""
         self.monitor(f'mouse_button {mask}')

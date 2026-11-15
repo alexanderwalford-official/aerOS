@@ -58,9 +58,23 @@ wherever the cursor is.
 `rd /docs/sec` then Tab gives `rd /docs/security.md`. If more than one thing fits, Tab fills
 in as much as they share, and when there is nothing more to fill in it lists them all.
 
+## The mouse at the prompt
+
 With a mouse, a pointer shows where it is while the prompt waits: an arrow, or on a text screen
-a highlighted square. It only points for now; clicking does nothing yet. (In QEMU, click the
-window first so the mouse goes to AerOS: Ctrl+Alt+G lets it go again.)
+a highlighted square. (In QEMU, click the window first so the mouse goes to AerOS: Ctrl+Alt+G
+lets it go again.)
+
+| Mouse | Does |
+| --- | --- |
+| click on the line you are typing | puts the cursor there |
+| drag over text | selects it (black on cyan), and copies it when you let go |
+| double click | selects and copies one word, like a file name |
+| right click | pastes where the cursor is (Ctrl+V does too) |
+| scroll wheel | looks back through earlier output, like Page Up |
+
+Selected text goes on the clipboard, which programs share: `clip()` and `setclip(text)` in
+[AerLang](aerlang.md). A line break pasted into a line becomes a space, so pasting never runs
+anything by itself. The clipboard is emptied when you log out.
 
 ## First things to try
 

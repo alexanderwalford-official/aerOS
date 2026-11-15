@@ -24,6 +24,11 @@
 
     - The movement is in "counts", about 4 a millimetre at the default settings. There is no
       position: the driver adds the movements up itself, keeping the pointer inside the screen.
+    - A mouse with a scroll wheel acts like a plain one until it is asked, with a "secret knock":
+      setting the sample rate to 200, then 100, then 80. If it has a wheel, its ID changes from
+      0 to 3, and every packet gets a fourth byte:
+
+          byte 3   the wheel, -8 to 7 notches (negative: turned away from you, "up")
 */
 
 #ifndef MOUSE_H
@@ -59,5 +64,16 @@ void mouse_position(int* x, int* y, int* buttons);
 // Unlike the position it never stops at the edge of the screen, which is what turning a camera
 // needs. The count starts again from 0 after each call
 void mouse_motion(int* dx, int* dy);
+
+// how many notches the scroll wheel has turned since the last call: negative is up (away from
+// you), positive down. Always 0 for a mouse with no wheel
+int mouse_wheel(void);
+
+// The next change to the buttons, oldest first: where the pointer was and which buttons were
+// held (MOUSE_ bits) just after it. False once there are none left. Each press and each release
+// is kept (up to MOUSE_CHANGES_KEPT waiting), so a quick click isn't missed by code that only
+// looks every so often, the way checking mouse_position can miss it
+#define MOUSE_CHANGES_KEPT 16
+bool mouse_next_change(int* x, int* y, int* buttons);
 
 #endif /* MOUSE_H */

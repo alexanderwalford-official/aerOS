@@ -114,3 +114,131 @@ def test_pointer_in_graphics_mode(t):
     time.sleep(1)
     if aeros.screenshot('back')[2] != before[2]:
         aeros.fail('the screen is not as it was after the pointer moved over the title and back')
+
+
+# ---- the mouse at the prompt: selecting, copying, pasting, clicking and the wheel ----------------
+# In text mode the pointer moves over 640 x 400 of its own pixels: a cell is 8 across and 16 down.
+# QEMU moves it by however much it is told, so the tests keep track of which cell it is on
+
+class Pointer:
+    """Where the pointer is, as (row, column), and a way to move it to another cell."""
+
+    def __init__(self, aeros, row=12, col=40):
+        self.aeros = aeros
+        self.row, self.col = row, col          # it starts in the middle of the screen
+
+    def to(self, row, col):
+        self.aeros.mouse_move((col - self.col) * 8, (row - self.row) * 16)
+        self.row, self.col = row, col
+        time.sleep(0.3)
+
+    def click(self, button=1):
+        self.aeros.mouse_buttons(button)
+        self.aeros.mouse_buttons(0)
+        time.sleep(0.3)
+
+
+def selected_cells(aeros):
+    """The cells shown as selected: black text on cyan (3), or, for the one cell the pointer is on
+    (which has its colours swapped), cyan text on black."""
+    return [(i // 80, i % 80) for i, colour in enumerate(aeros.screen_colours())
+            if colour >> 4 == 3 or colour == 0x03]
+
+
+def test_select_copy_and_paste(t):
+    aeros = t.boot()
+    aeros.wait_for(GUEST_PROMPT, 60)
+    aeros.cls()
+    aeros.run('ech hello world')                  # row 1 says "hello world"
+    pointer = Pointer(aeros)
+
+    # drag across "hello": selected while the button is held, copied when it comes up
+    pointer.to(1, 0)
+    aeros.mouse_buttons(1)
+    pointer.to(1, 4)
+    if selected_cells(aeros) != [(1, c) for c in range(5)]:
+        aeros.fail(f'dragging over "hello" selected {selected_cells(aeros)}')
+    aeros.mouse_buttons(0)
+    time.sleep(0.3)
+    aeros.cls()
+    aeros.run('clip()')
+    aeros.expect_line('hello')
+
+    # a right click pastes it into the line being typed, where the cursor is
+    aeros.cls()
+    aeros.type('ech ')
+    aeros.wait_for('ech ')
+    pointer.click(2)
+    aeros.wait_for('ech hello')
+    before = aeros.prompts()
+    aeros.type('\n')
+    aeros.wait_prompt(before)
+    aeros.expect_line('hello')
+
+    # and so does Ctrl+V. A line break in the clipboard becomes a space, so it can't run a line
+    aeros.cls()
+    aeros.run('setclip("two" + chr(10) + "lines")')
+    aeros.type('ech ')
+    aeros.wait_for('ech ')
+    aeros.key('ctrl-v')
+    aeros.wait_for('ech two lines')
+    before = aeros.prompts()
+    aeros.type('\n')
+    aeros.wait_prompt(before)
+    aeros.expect_line('two lines')
+
+
+def test_double_click_and_placing_the_cursor(t):
+    aeros = t.boot()
+    aeros.wait_for(GUEST_PROMPT, 60)
+    aeros.cls()
+    aeros.run('ech one two three')                # row 1: "two" is columns 4 to 6
+    pointer = Pointer(aeros)
+
+    # a double click selects and copies the word under the pointer
+    pointer.to(1, 5)
+    aeros.mouse_buttons(1)
+    aeros.mouse_buttons(0)
+    aeros.mouse_buttons(1)
+    aeros.mouse_buttons(0)
+    time.sleep(0.5)
+    if selected_cells(aeros) != [(1, 4), (1, 5), (1, 6)]:
+        aeros.fail(f'a double click on "two" selected {selected_cells(aeros)}')
+    aeros.cls()
+    aeros.run('clip()')
+    aeros.expect_line('two')
+
+    # a click on the line being typed puts the cursor there: after the prompt (11 characters,
+    # "guest@0//: "), "ech abc" has its b in column 16. Clicking there and typing X puts the X
+    # before the b
+    aeros.cls()
+    aeros.type('ech abc')
+    aeros.wait_for('ech abc')
+    pointer.to(0, 16)
+    pointer.click()
+    aeros.type('X')
+    aeros.wait_for('ech aXbc')
+    before = aeros.prompts()
+    aeros.type('\n')
+    aeros.wait_prompt(before)
+    aeros.expect_line('aXbc')
+
+
+def test_the_wheel_scrolls_back(t):
+    aeros = t.boot()
+    aeros.wait_for(GUEST_PROMPT, 60)
+    aeros.cls()
+    aeros.run('for i = 1 to 60 do print("line " + str(i)) end')
+    # the screen shows the end of it; each notch up looks 3 lines further back
+    if 'line 30' in aeros.screen():
+        aeros.fail('line 30 should have scrolled off the top')
+    for _ in range(5):
+        aeros.mouse_wheel(-1)
+        time.sleep(0.2)
+    aeros.wait_for('line 30', 10)
+    # and down again comes back to the live screen, with the prompt
+    for _ in range(10):
+        aeros.mouse_wheel(1)
+        time.sleep(0.2)
+    aeros.wait_gone('line 30', 10)
+    aeros.expect(GUEST_PROMPT)

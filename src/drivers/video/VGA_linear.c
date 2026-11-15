@@ -103,7 +103,16 @@ static vga_framebuffer_t fb_info; // what GRUB told us, handed on to the graphic
 static bool pointer_shown = false;
 static int pointer_x = 0;
 static int pointer_y = 0;
+static unsigned int pointer_cell = 0;   // text mode: the cell the pointer is on
 static void pointer_cell_drawn(unsigned int index);
+
+// the selection (see "Selecting text" further down): the first and last cell of it, in reading
+// order, or -1 for none
+static int selected_from = -1;
+static int selected_to = -1;
+#define SELECTION_COLOURS ((CYAN << 4) | BLACK)   // black text on cyan
+static uint16_t cell_as_shown(unsigned int index);
+static void cell_redraw(unsigned int index);
 
 // the 16 colours as red, green, blue: the standard VGA colours, except that colour 6 (brown)
 // is the logo's orange, ORANGE. The palette can still be changed later with vga_set_palette()
@@ -144,8 +153,10 @@ static void fb_put(uint8_t* pixel, uint32_t color) {
 static void fb_draw_cell(unsigned int index) {
     // a cell is the character in the low byte and the colours in the high byte, text colour in
     // the low 4 bits of that and background in the high 4
-    uint8_t ch = cells[index] & 0xFF;
-    uint8_t attr = cells[index] >> 8;
+    // what the cell holds, in the colours it is shown in (selected text has its own)
+    uint16_t entry = cell_as_shown(index);
+    uint8_t ch = entry & 0xFF;
+    uint8_t attr = entry >> 8;
     uint32_t fg = fb_colors[attr & 0x0F];
     uint32_t bg = fb_colors[attr >> 4];
     const uint8_t* glyph = fb_font[ch];
@@ -343,12 +354,33 @@ static void cell_set(unsigned int index, uint16_t entry) {
         return;
     }
     cells[index] = entry;
-    // a framebuffer cell is drawn by us, a text mode cell by the graphics card from video[]
+    cell_redraw(index);
+}
+
+// Draw one cell again, the way it should look now (see cell_as_shown): a framebuffer cell is drawn
+// by us, a text mode cell by the graphics card from video[]
+static void cell_redraw(unsigned int index) {
     if (fb_mode) {
         fb_draw_cell(index);
     } else {
-        pointer_cell_drawn(index);
+        video[index] = cell_as_shown(index);
     }
+}
+
+// A cell as it is shown, which isn't always as it is in cells[]: selected text is shown in the
+// selection's colours, and in text mode the cell under the mouse pointer has its colours swapped.
+// cells[] always keeps the real ones, so taking either away puts the cell back as it was
+static uint16_t cell_as_shown(unsigned int index) {
+    uint16_t entry = cells[index];
+    if ((int)index >= selected_from && (int)index <= selected_to) {
+        entry = (uint16_t)((SELECTION_COLOURS << 8) | (entry & 0xFF));
+    }
+    if (!fb_mode && pointer_shown && index == pointer_cell) {
+        uint16_t attr = entry >> 8;
+        uint16_t swapped = (uint16_t)(((attr & 0x0F) << 4) | (attr >> 4));
+        entry = (uint16_t)((swapped << 8) | (entry & 0xFF));
+    }
+    return entry;
 }
 
 
@@ -397,9 +429,6 @@ static uint32_t pointer_left, pointer_top, pointer_w, pointer_h, pointer_scale;
 static uint32_t under[POINTER_W * POINTER_SCALE_MAX * POINTER_H * POINTER_SCALE_MAX];
 #define UNDER_STRIDE (POINTER_W * POINTER_SCALE_MAX)   // under[] holds one row of pixels per this many
 
-// text mode: the cell the pointer is on
-static unsigned int pointer_cell = 0;
-
 // read one packed colour back from the pixel at `pixel` (fb_put the other way round)
 static uint32_t fb_get(const uint8_t* pixel) {
     switch (fb.bytes) {
@@ -407,13 +436,6 @@ static uint32_t fb_get(const uint8_t* pixel) {
         case 3: return (uint32_t)pixel[0] | ((uint32_t)pixel[1] << 8) | ((uint32_t)pixel[2] << 16);
         default: return *(const uint16_t*)pixel;
     }
-}
-
-// a text mode cell with its text and background colours swapped (the character stays)
-static uint16_t swapped_colours(uint16_t entry) {
-    uint16_t attr = entry >> 8;
-    uint16_t swapped = (uint16_t)(((attr & 0x0F) << 4) | (attr >> 4));
-    return (uint16_t)((swapped << 8) | (entry & 0xFF));
 }
 
 // Framebuffer: in the screen rectangle x0, y0 (inclusive) to x1, y1 (not), keep what the screen
@@ -439,13 +461,9 @@ static void pointer_paint(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1) {
     }
 }
 
-// A cell was just drawn (fb_draw_cell) or changed (cell_set, in text mode). If the pointer is over
-// it, put the pointer back on top
+// Framebuffer: a cell was just drawn (fb_draw_cell). If the pointer is over it, put the pointer
+// back on top. (In text mode cell_as_shown takes care of the pointer)
 static void pointer_cell_drawn(unsigned int index) {
-    if (!fb_mode) {
-        video[index] = (pointer_shown && index == pointer_cell) ? swapped_colours(cells[index]) : cells[index];
-        return;
-    }
     uint32_t x0 = fb.left + (index % COLS) * fb.cell_width * fb.scale;
     uint32_t y0 = fb.top + (index / COLS) * CELL_HEIGHT * fb.scale;
     pointer_paint(x0, y0, x0 + fb.cell_width * fb.scale, y0 + CELL_HEIGHT * fb.scale);
@@ -472,7 +490,7 @@ void console_pointer_show(int x, int y) {
 
     if (!fb_mode) {
         pointer_cell = (unsigned int)((pointer_y / CELL_HEIGHT) * COLS + pointer_x / 8);
-        pointer_cell_drawn(pointer_cell);
+        cell_redraw(pointer_cell);
         return;
     }
     // where it is in screen pixels, and how much of it fits on the screen
@@ -497,7 +515,7 @@ void console_pointer_hide(void) {
     }
     pointer_shown = false;
     if (!fb_mode) {
-        pointer_cell_drawn(pointer_cell); // pointer_shown is false now, so the real colours
+        cell_redraw(pointer_cell); // pointer_shown is false now, so its own colours
         return;
     }
     for (uint32_t y = 0; y < pointer_h; y++) {
@@ -506,6 +524,116 @@ void console_pointer_hide(void) {
             fb_put(pixel, under[y * UNDER_STRIDE + x]);
         }
     }
+}
+
+// the cell the pointer's x, y is over (see VGA_linear.h)
+int console_cell_at(int x, int y) {
+    int width, height;
+    console_pointer_area(&width, &height);
+    int col = x * COLS / width;
+    int row = y / CELL_HEIGHT;
+    col = col < 0 ? 0 : (col >= COLS ? COLS - 1 : col);
+    row = row < 0 ? 0 : (row >= ROWS ? ROWS - 1 : row);
+    return row * COLS + col;
+}
+
+
+// =================================================================================================
+//  Selecting text (see VGA_linear.h)
+// =================================================================================================
+//
+// The selection is a run of cells in reading order, from selected_from to selected_to: along a
+// row, then on to the start of the next, the way a terminal selects text. cell_as_shown shows
+// those cells in SELECTION_COLOURS, while cells[] keeps their real colours. Changing it only
+// redraws the cells that went into it or out of it, so dragging stays quick.
+//
+// It is a place on the screen, not the text in it: anything that moves the text (scrolling,
+// clearing, the scrollback view) drops the selection first.
+
+// is cell i inside the run from..to? (from -1: there is no run)
+static bool in_run(int i, int from, int to) {
+    return from >= 0 && i >= from && i <= to;
+}
+
+// select from one cell to another, in either order (see VGA_linear.h)
+void console_select(int from_cell, int to_cell) {
+    // whichever comes first in reading order is the start
+    if (from_cell > to_cell) {
+        int swap = from_cell;
+        from_cell = to_cell;
+        to_cell = swap;
+    }
+    int last_cell = COLS * ROWS - 1;
+    from_cell = from_cell < 0 ? 0 : (from_cell > last_cell ? last_cell : from_cell);
+    to_cell = to_cell < 0 ? 0 : (to_cell > last_cell ? last_cell : to_cell);
+
+    int old_from = selected_from;
+    int old_to = selected_to;
+    selected_from = from_cell;
+    selected_to = to_cell;
+
+    // the cells that went in or came out are all between the earlier start and the later end
+    int first = (old_from >= 0 && old_from < from_cell) ? old_from : from_cell;
+    int last = (old_to > to_cell) ? old_to : to_cell;
+    for (int i = first; i <= last; i++) {
+        if (in_run(i, old_from, old_to) != in_run(i, from_cell, to_cell)) {
+            cell_redraw((unsigned int)i);
+        }
+    }
+}
+
+// drop the selection (see VGA_linear.h)
+void console_select_none(void) {
+    if (selected_from < 0) {
+        return;
+    }
+    int old_from = selected_from;
+    int old_to = selected_to;
+    selected_from = -1;
+    selected_to = -1;
+    for (int i = old_from; i <= old_to; i++) {
+        cell_redraw((unsigned int)i);
+    }
+}
+
+// the character in a cell, as plain text (see VGA_linear.h)
+char console_char_at(int cell) {
+    if (cell < 0 || cell >= COLS * ROWS) {
+        return ' ';
+    }
+    uint8_t c = cells[cell] & 0xFF;
+    // the box drawing and block characters (big_text's halves) aren't text you could type
+    return (c >= 32 && c < 127) ? (char)c : ' ';
+}
+
+// the selected text, row by row (see VGA_linear.h)
+size_t console_selection_text(char* out, size_t size) {
+    size_t length = 0;
+    if (size == 0) {
+        return 0;
+    }
+    if (selected_from >= 0) {
+        int first_row = selected_from / COLS;
+        int last_row = selected_to / COLS;
+        for (int row = first_row; row <= last_row; row++) {
+            // the part of this row that is selected: all of it, except on the first and last rows
+            int first = (row == first_row) ? selected_from % COLS : 0;
+            int last = (row == last_row) ? selected_to % COLS : COLS - 1;
+            // without the spaces at the end of the row, which are only empty screen
+            while (last >= first && console_char_at(row * COLS + last) == ' ') {
+                last--;
+            }
+            for (int col = first; col <= last && length < size - 1; col++) {
+                out[length++] = console_char_at(row * COLS + col);
+            }
+            // a line break between rows (not after the last one)
+            if (row < last_row && length < size - 1) {
+                out[length++] = '\n';
+            }
+        }
+    }
+    out[length] = '\0';
+    return length;
 }
 
 // cursor
@@ -732,6 +860,7 @@ int big_text_sized(uint8_t x, uint8_t y, enum color fg, enum color bg, const cha
 // positional drawing
 void clear(enum color bg) {
     LIVE_SCREEN();
+    console_select_none(); // the text moves: a selection would be left over something else
     // full screen layouts (splash, error screens) draw with puts, so hide the console cursor
     vga_disable_cursor();
     vga_fill(VGA_ENTRY(' ', bg, bg));
@@ -820,6 +949,7 @@ void console_clear(void) {
         return; // (see console_capture_begin: a captured command doesn't touch the screen)
     }
     LIVE_SCREEN();
+    console_select_none(); // the text moves: a selection would be left over something else
     vga_fill(VGA_ENTRY(' ', console_fg, console_bg));
     if (fb_mode) {
         fb_fill_border(console_bg);
@@ -833,6 +963,7 @@ void console_clear(void) {
 // the top line goes into the scrollback first. The copy runs forwards: each cell is copied from
 // one row further down, which has not been overwritten yet, so the overlap is safe
 static void console_scroll(void) {
+    console_select_none(); // the text moves: a selection would be left over something else
     // keep the top line in the next slot of the ring, wrapping round to slot 0 at the end
     for (unsigned int x = 0; x < COLS; x++) {
         scrollback[scrollback_next][x] = cells[x];
@@ -966,6 +1097,7 @@ static const uint16_t* scrollback_line(unsigned int i) {
 
 // draw the view, with a tag in the top right corner saying how far back it is
 static void view_draw(void) {
+    console_select_none(); // the text moves: a selection would be left over something else
     // each screen row comes from the scrollback, or once past its end, from the set aside live screen
     for (unsigned int r = 0; r < ROWS; r++) {
         unsigned int line = scrollback_count - view_back + r;
@@ -1030,12 +1162,18 @@ void console_view_scroll(int lines) {
     view_draw();
 }
 
+// is the scrollback view showing? (see VGA_linear.h)
+bool console_viewing_back(void) {
+    return view_back != 0;
+}
+
 // stop looking back: draw the set aside live screen again, cursor and all
 void console_view_live(void) {
     if (view_back == 0) {
         return;
     }
     view_back = 0; // first, so the drawing below doesn't come back here
+    console_select_none(); // the text moves: a selection would be left over something else
     for (unsigned int i = 0; i < COLS * ROWS; i++) {
         cell_set(i, live[i]);
     }

@@ -36,6 +36,8 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("write", bi_write, 0, AER_MAX_ARGS),
     BUILTIN("input", bi_input, 0, 1),
     BUILTIN("inpw", bi_input_secret, 0, 1),
+    BUILTIN("clip", bi_clip, 0, 0),
+    BUILTIN("setclip", bi_setclip, 1, 1),
     BUILTIN("cls", bi_cls, 0, 0),
     BUILTIN("color", bi_color, 1, 2),
     BUILTIN("at", bi_at, 2, 2),

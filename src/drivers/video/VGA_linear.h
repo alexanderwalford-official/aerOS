@@ -238,4 +238,21 @@ void console_pointer_area(int* width, int* height);
 void console_pointer_show(int x, int y);   // show it with its tip at x, y (or move it there)
 void console_pointer_hide(void);           // take it away, leaving the screen as it was under it
 
+// the cell (row * 80 + column) under a pointer position given in the grid's own pixels
+int console_cell_at(int x, int y);
+
+// is Page Up's scrollback view showing, rather than the live screen?
+bool console_viewing_back(void);
+
+// SELECTING TEXT: a run of cells in reading order (along a row, then on to the next), shown as
+// black text on cyan. It is a place on the screen, so anything that moves the text (scrolling,
+// clearing, Page Up) drops it. sys/terminal/pointer.c selects with the mouse
+void console_select(int from_cell, int to_cell);   // select from one cell to another, either order
+void console_select_none(void);                    // drop the selection
+// The selected text, into out (room for size bytes, with the '\0'): each row without the empty
+// screen at its end, and a '\n' between rows. Gives back its length (0 with nothing selected)
+size_t console_selection_text(char* out, size_t size);
+// the character in a cell, as text: ' ' for anything that isn't a plain printable character
+char console_char_at(int cell);
+
 #endif /* VGA_LINEAR_H */

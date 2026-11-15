@@ -91,6 +91,10 @@ rounds a decimal down, so a game can keep positions as decimals: `rect(x, y, 10,
 `inpw(prompt)` (shows `*`), `cls()`, `color(fg, bg)`, `at(x, y)`, `key()` (waits,
 gives the key's code), `haskey()`.
 
+**The clipboard:** `clip()` gives the text on it ("" if none), and `setclip(text)` puts text
+on it. It is the same clipboard the mouse copies to and pastes from at the prompt (see
+[Getting started](start.md)).
+
 Colours: `BLACK`, `DARK_BLUE`, `GREEN`, `CYAN`, `RED`, `PURPLE`, `ORANGE` (the logo
 orange, also called `BROWN`), `BRIGHT`, `DARK_GRAY`, `LIGHT_BLUE`, `LIGHT_GREEN`,
 `LIGHT_CYAN`, `LIGHT_RED`, `LIGHT_PURPLE`, `YELLOW`, `WHITE`. Keys: `KEY_UP`,

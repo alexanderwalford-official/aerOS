@@ -173,6 +173,8 @@ encrypted file and `gopen` opens the graphics screen.
 `print(a, b, ...)` print, separated by spaces, then a new line ·
 `write(...)` the same without the new line ·
 `input(prompt)` read a line · `inpw(prompt)` the same, showing `*` (for passwords) ·
+`clip()` the text on the clipboard, "" if none · `setclip(text)` put text on it (the clipboard
+the mouse copies to at the prompt, sys/clipboard.h) ·
 `cls()` clear the screen ·
 `color(fg, bg)` text colours (`BLACK` ... `WHITE`, and `ORANGE`, the logo orange) ·
 `at(x, y)` move the cursor ·
