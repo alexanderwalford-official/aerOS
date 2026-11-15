@@ -16,8 +16,6 @@ Like many other operating systems, apps that shape the user experience can be ed
 - **The network sends nothing readable.** Every message is sealed (AES-256 and an HMAC tag) with a password both ends know, and the firewall blocks everything until you allow an address (or name) and port yourself: `fw allow 10.0.2.2 5000`, then `msg 10.0.2.2 5000 hello`.
 It's an opensource operating system and its design is remarkably simple considering the feature set. That's one of the major selling points. 
 
-Like many other operating systems, apps that shape the user experience can be edited in realtime. If you don't like how the text editor works, change it using said editor and save your changes. Then reload the app to test said changes immediately. No recompiling needed.
-
 ## Documentation
 AerOS is written to be read. Every source file starts with an explanation of what it does and how, and these guides tie it all together:
 
