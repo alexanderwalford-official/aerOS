@@ -39,6 +39,8 @@
     Only this file. Anything else that tries to change /sys/logs.db, from the terminal or a
     program, gets FS_ERR_READ_ONLY (f_sys.c), and a program isn't even asked about it (perm.c).
     Anyone can read it: "sql /sys/logs.db SELECT ...", or dbopen("/sys/logs.db", "read").
+    The one way to clear it is AerLang's logclear() (lang/bi_system.c), which asks the person at
+    the keyboard Y / N and their password before calling syslog_clear().
 
     docs/LOGS.md explains the whole thing: why it was built this way, a boot's life step by
     step, and how to add entries of your own.
@@ -69,6 +71,12 @@ void syslog_flush (void);
 // AerOS is shutting down (restarting = false) or restarting: log it, write everything, and
 // mark this boot as having ended properly
 void syslog_stop (bool restarting);
+
+// Clear the log: every entry, and every boot before this one (this boot stays, so the numbers
+// carry on). Then one warning entry records who cleared it and with what ("aerlog", or
+// "the prompt"). Doesn't ask anyone: lang/bi_system.c's logclear() asks first. False if the
+// log couldn't be opened or changed
+bool syslog_clear (const char* user, const char* with);
 
 // this boot's number, counting from 1 (0 until syslog_start has run)
 int syslog_boot (void);

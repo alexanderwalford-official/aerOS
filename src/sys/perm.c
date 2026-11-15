@@ -276,9 +276,10 @@ int perm_forget (int number) {
 
 typedef enum { ANSWER_NO, ANSWER_YES, ANSWER_ALWAYS } answer_t;
 
-// wait for Y, A or N (Esc and Ctrl+C count as N). With no keyboard (a command run by AerLang's
-// cmd(), where nobody can see the question) the answer is no
-static answer_t wait_for_answer (void) {
+// Wait for Y, A or N (Esc and Ctrl+C count as N). A only counts when can_always is true: a
+// question that has to be asked every time (perm_confirm) ignores it. With no keyboard (a
+// command run by AerLang's cmd(), where nobody can see the question) the answer is no
+static answer_t wait_for_answer (bool can_always) {
     // any other key is ignored, so a stray press can't answer by accident
     for (;;) {
         int key = getk();
@@ -286,16 +287,21 @@ static answer_t wait_for_answer (void) {
         if (key == 0 || key == KEY_ESCAPE || kb_take_break()) {
             return ANSWER_NO;
         }
-        switch (tolower(key)) {
-            case 'y': return ANSWER_YES;
-            case 'a': return ANSWER_ALWAYS;
-            case 'n': return ANSWER_NO;
+        char answer = (char)tolower(key);
+        if (answer == 'y') {
+            return ANSWER_YES;
+        }
+        if (answer == 'a' && can_always) {
+            return ANSWER_ALWAYS;
+        }
+        if (answer == 'n') {
+            return ANSWER_NO;
         }
     }
 }
 
 // on the text screen: two lines, and the answer typed after them
-static answer_t ask_in_text (const char* question, const char* choices) {
+static answer_t ask_in_text (const char* question, const char* choices, bool can_always) {
     // start on a fresh line, in case the program was half way through printing one
     uint8_t x, y;
     console_get_cursor(&x, &y);
@@ -307,7 +313,7 @@ static answer_t ask_in_text (const char* question, const char* choices) {
     enum color old_fg = console_fg;
     colour(YELLOW, console_bg);
     prtf("[ ? ] %s\n      %s  ", question, choices);
-    answer_t answer = wait_for_answer();
+    answer_t answer = wait_for_answer(can_always);
     colour(WHITE, console_bg);
     prtf("-> %s\n", answer == ANSWER_ALWAYS ? "always" : answer == ANSWER_YES ? "yes" : "no");
     colour(old_fg, console_bg);
@@ -315,7 +321,7 @@ static answer_t ask_in_text (const char* question, const char* choices) {
 }
 
 // over a program's graphics: a box in the middle of the screen, which leaves no trace
-static answer_t ask_in_graphics (const char* question, const char* choices) {
+static answer_t ask_in_graphics (const char* question, const char* choices, bool can_always) {
     const int margin = 16;        // pixels between the box's edge and the text
     const int line_height = 20;   // the font is 16 pixels tall, plus a gap
     // the box is as wide as the longer of the two lines (8 pixels per character), and centred
@@ -332,7 +338,7 @@ static answer_t ask_in_graphics (const char* question, const char* choices) {
     gfx_rect(x + 2, y + 2, w - 4, h - 4, 0x202020);       // ...round a dark grey box
     gfx_text(x + margin, y + margin, question, 0xFFFFFF, 1);
     gfx_text(x + margin, y + margin + line_height, choices, 0xFFD080, 1);
-    answer_t answer = wait_for_answer();
+    answer_t answer = wait_for_answer(can_always);
     gfx_overlay_end(overlay);
     return answer;
 }
@@ -350,7 +356,21 @@ static answer_t ask (const char* folder, const char* name, perm_kind_t kind) {
 
     // a width of 0 means graphics mode isn't on, so the text screen is showing
     bool graphics = gfx_width() > 0;
-    return graphics ? ask_in_graphics(question, choices) : ask_in_text(question, choices);
+    return graphics ? ask_in_graphics(question, choices, true) : ask_in_text(question, choices, true);
+}
+
+// a yes / no question, asked like a permission question but every time (see perm.h)
+bool perm_confirm (const char* question) {
+    const char* choices = "Y = yes    N = no";
+    bool graphics = gfx_width() > 0;
+    answer_t answer;
+    if (graphics) {
+        answer = ask_in_graphics(question, choices, false);
+    } else {
+        answer = ask_in_text(question, choices, false);
+    }
+    TRACE("asked you \"%s\": %s", question, answer == ANSWER_YES ? "yes" : "no");
+    return answer == ANSWER_YES;
 }
 
 

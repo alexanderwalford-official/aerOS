@@ -113,3 +113,70 @@ def test_in_memory(t):
     aeros.cls()
     aeros.run(LOG + "SELECT kind, message FROM log WHERE source = 'disk'")
     aeros.expect_line('boot | no AEROS disk found: files only last until the computer is turned off')
+
+
+def test_clearing(t):
+    # logclear(): AerOS asks Y / N, then the password, and only then clears it
+    disk = t.disk()
+    aeros = t.boot(disk=disk)
+    aeros.first_login()
+
+    # N: nothing happens
+    aeros.cls()
+    aeros.ask('logclear()')
+    aeros.wait_for("[ ? ] Clear AerOS's log", 30)
+    before = aeros.prompts()
+    aeros.key('n')
+    aeros.wait_prompt(before)
+    aeros.expect_line('false')
+
+    # A isn't an answer here (it is asked every time), then Y and a wrong password: nothing
+    # happens, and the try is logged
+    aeros.cls()
+    before = aeros.prompts()
+    aeros.ask('logclear()')
+    aeros.wait_for('[ ? ]', 30)
+    aeros.key('a')
+    aeros.key('y')
+    aeros.answer('wrong1')
+    aeros.wait_prompt(before)
+    aeros.expect('-> yes', 'Wrong password: the log was left as it is.')
+    aeros.expect_line('false')
+    aeros.cls()
+    aeros.run(LOG + "SELECT message FROM log WHERE source = 'log'")
+    aeros.expect('a wrong password was typed for tester, trying to clear the log with the prompt')
+
+    # not while the log is open: clearing it moves its pages
+    aeros.cls()
+    aeros.run('let d = dbopen("/sys/logs.db", "read")')
+    aeros.run('logclear()')
+    aeros.expect('close the log with dbclose() first')
+    aeros.run('dbclose(d)')
+
+    # Y and the right password: cleared, leaving this boot and one entry saying who did it
+    aeros.cls()
+    before = aeros.prompts()
+    aeros.ask('logclear()')
+    aeros.wait_for('[ ? ]', 30)
+    aeros.key('y')
+    aeros.answer('secret1')
+    aeros.wait_prompt(before)
+    aeros.expect_line('true')
+    aeros.cls()
+    aeros.run(LOG + 'SELECT kind, message FROM log')
+    aeros.expect_line('warning | the log was cleared by tester, with the prompt', '(1 row)')
+    aeros.cls()
+    aeros.run(LOG + 'SELECT boot FROM boots')
+    aeros.expect_line('1', '(1 row)')
+
+    # from a program, the question says which program wants it
+    aeros.run('mkf clr.aer print(logclear())')
+    aeros.cls()
+    before = aeros.prompts()
+    aeros.ask('clr')
+    aeros.wait_for("[ ? ] clr.aer wants to clear AerOS's log", 30)
+    aeros.key('n')
+    aeros.wait_prompt(before)
+    aeros.expect_line('false')
+    aeros.quit()
+    t.check_disk(disk)

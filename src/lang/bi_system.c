@@ -3,7 +3,7 @@
     AerLang's built-in functions for the system: waiting (sleep), the time, random numbers,
     what AerOS knows about the computer (sysinfo), queueing programs for GO (queue), running a
     terminal command from the prompt (cmd), what app mode did (appmode), adding to AerOS's log
-    (logadd) and ending the program (exit).
+    (logadd), clearing it after asking (logclear) and ending the program (exit).
 
     Which built-ins need which part of AerOS, for app mode, is listed next to aer_profile in
     aer_builtins.c.
@@ -14,6 +14,7 @@
 #include "builtins.h"
 #include "../lib/aer_string.h"
 #include "../lib/aer_stdlib.h"
+#include "../lib/aer_stdio.h"
 #include "../drivers/video/VGA_linear.h"
 #include "../drivers/input/IO.h"
 #include "../sys/sys_clck.h"
@@ -23,6 +24,9 @@
 #include "../sys/appmode.h"
 #include "../sys/syslog.h"
 #include "../sys/f_sys.h"
+#include "../sys/accounts/auth.h"
+#include "../lib/crypto.h"
+#include "../drivers/video/gfx.h"
 
 // sleep(ms): wait that many milliseconds (Ctrl+C still stops the program)
 value_t bi_sleep (int argc, value_t* argv, int line) {
@@ -187,6 +191,56 @@ value_t bi_logadd (int argc, value_t* argv, int line) {
     }
     syslog_add("app", source, "%s", message);
     return aer_nil();
+}
+
+// logclear(): clear AerOS's log, after asking. AerOS asks, not the program: first Y or N, then
+// (when there are accounts) the logged in user's password. Only then is the log cleared
+// (syslog_clear in sys/syslog.c), leaving an entry saying who cleared it and with what. Gives
+// back true if it was cleared, false if not.
+// It asks on the text screen, so not while graphics are on, and the program must have closed
+// the log first: clearing it moves its pages, so a copy opened before would read the wrong ones
+value_t bi_logclear (int argc, value_t* argv, int line) {
+    (void)argc;
+    (void)argv;
+    if (gfx_width() > 0) {
+        aer_error(line, "logclear() asks for a password on the text screen: call it before gopen() or after gclose()");
+    }
+    if (database_is_open(SYSLOG_FOLDER, SYSLOG_FILE)) {
+        aer_error(line, "logclear(): close the log with dbclose() first (and open it again afterwards)");
+    }
+
+    // who wants to clear it: a program, or code typed at the prompt
+    const char* program = perm_program_name();
+    char with[FS_NAME_MAX];
+    char question[FS_NAME_MAX + 80];
+    if (program[0] != '\0') {
+        scpy(with, program, sizeof(with));
+        sfmt(question, sizeof(question), "%s wants to clear AerOS's log (every entry, and every earlier boot)", program);
+    } else {
+        scpy(with, "the prompt", sizeof(with));
+        sfmt(question, sizeof(question), "Clear AerOS's log (every entry, and every earlier boot)?");
+    }
+    if (!perm_confirm(question)) {
+        return aer_bool(false);
+    }
+
+    // The logged in user's password. With no disk there are no accounts (everyone is "guest"),
+    // so there is no password to ask for, and the log is only in memory anyway
+    if (auth_required()) {
+        char password[64];
+        prtf("      Your password (%s): ", auth_user);
+        GetSecret(password, sizeof(password));
+        bool right = auth_check(auth_user, password);
+        // blank it straight away, so the password isn't left in memory for whatever runs next
+        wipe(password, sizeof(password));
+        if (!right) {
+            prtf("      Wrong password: the log was left as it is.\n");
+            syslog_add("warning", "log", "a wrong password was typed for %s, trying to clear the log with %s",
+                       auth_user, with);
+            return aer_bool(false);
+        }
+    }
+    return aer_bool(syslog_clear(auth_user, with));
 }
 
 // exit(): end the program here, quietly

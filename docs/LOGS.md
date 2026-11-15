@@ -56,9 +56,9 @@ AerOS (`doc logs`, from `src/disk/docs/logs.md`).
 | `sys/boot.c` | `boot_report()` prints each boot line and logs it; calls `syslog_start()` |
 | `sys/power.c` | `syslog_stop()` at the start of `sys_reboot()` and `sys_shutdown()` |
 | `sys/terminal/t_int.c` | `syslog_flush()` before each prompt |
-| `lang/bi_system.c` | `logadd(message)` for AerLang programs |
+| `lang/bi_system.c` | `logadd(message)` and `logclear()` for AerLang programs |
 | `sys/f_sys.c` | `read_only_file()`: nothing but syslog.c may change `/sys/logs.db` |
-| `sys/perm.c` | a program asking to change the log is refused without a question |
+| `sys/perm.c` | a program asking to change the log is refused without a question; `perm_confirm()` asks the Y / N for `logclear()` |
 | `db/file.c`, `db/run.c` | `aerdb_open_read()`: AerDB's read-only mode |
 | `lang/bi_database.c` | `dbopen(path, "read")` |
 | `sys/terminal/cmd_database.c` | the SQL command opens the log read-only |
@@ -184,6 +184,47 @@ Three layers, from the bottom up:
 The file-system rule is the same idea as `/src/` being read-only, and uses the same error, so
 `why` explains both in one place (`PROBLEM_READ_ONLY` in `explain.c`).
 
+### Clearing it: the one way in, and it asks
+
+A log viewer needs a "clear the log" option, but letting programs change the log would undo
+everything above. So clearing is a single built-in, `logclear()` (`bi_logclear` in
+`lang/bi_system.c`), and **AerOS** decides, not the program:
+
+```
+logclear()
+  |  the program still has the log open (database_is_open)?  -> stops with an error
+  |  graphics on?                                             -> stops with an error
+  |
+  |  perm_confirm("aerlog.aer wants to clear AerOS's log ...")    Y / N, asked every time
+  |     no -> false                                               ("A" isn't an answer here)
+  |
+  |  accounts in use (a disk)? "Your password (alex): "           auth_check(), then wiped
+  |     wrong -> a warning entry saying so, and false
+  |
+  v  syslog_clear(user, program)
+       DELETE FROM log
+       DELETE FROM boots WHERE boot != (this boot)      this boot stays: numbering carries on
+       COMPACT                                          cleared means gone from the file
+       a warning entry: "the log was cleared by alex, with aerlog.aer"
+  -> true
+```
+
+Why each step:
+
+- **The question comes from AerOS, not the program.** `perm_confirm()` (perm.c) uses the
+  same yellow `[ ? ]` line as a permission question, so a program can't fake or skip it. It
+  has no "always": it's for things that should never be agreed to in advance.
+- **The password** is the logged in user's, checked the same way `PW` checks it. Someone
+  passing a logged-in computer can't wipe the record of what they did. With no disk there are
+  no accounts and the log is only in memory, so Y / N is enough.
+- **A wrong password is logged.** Someone trying to clear the log is exactly what the log is
+  for.
+- **The log must be closed first.** COMPACT moves pages around. A copy the program opened
+  before would still have the old page numbers in its copy of page 1 and read the wrong rows,
+  so `logclear()` refuses rather than letting that happen.
+- **Text screen only.** The password is typed on the text screen; asking for it over a
+  program's graphics isn't supported (yet).
+
 ### AerDB's read-only mode
 
 `aerdb_open_read()` opens an existing database (it never makes one) and sets `read_only` in
@@ -254,6 +295,17 @@ The kind is `app` and the source is the program's name without `.aer` (`prompt` 
 typed at the prompt). It's written when the program ends, so the program can't read back its
 own entries.
 
+### Clearing it from AerLang
+
+```
+dbclose(db)                       # if the program has the log open, close it first
+if logclear() then
+    print("The log has been cleared.")
+else
+    print("The log was left as it is.")
+end
+```
+
 
 ## Limits, and things to know
 
@@ -269,9 +321,11 @@ own entries.
 
 ## Ideas for later
 
-- **Reset and on / off.** The viewer app's menu wants "clear this log" and "stop logging".
-  Programs can't change the log, so these would be AerOS commands (say `log clear`,
-  `log off`), probably for admin accounts only, which the app could run.
+- **Turning logging off.** The viewer app's menu wants "stop logging". It could work like
+  `logclear()`: a built-in that asks Y / N and the password, and a setting kept in `/sys/`
+  that `syslog_add()` checks. (Clearing is done: see "Clearing it" above.)
+- **Admin accounts.** Every account is equal today, so any logged in user can clear the log
+  with their own password. If AerOS gets admins, `logclear()` is the place to check for one.
 - **WHY after a crash.** `why` at the first prompt after a bad shutdown could explain what the
   log says happened last.
 - **More sources.** Logins and failed passwords (`sys/accounts/`), AerLang errors
@@ -289,3 +343,4 @@ own entries.
 | `test_boots` | boot 1's row and entries; OFF ends it cleanly; a boot that just stops is reported at the next boot, and marked `clean = 0` |
 | `test_only_aeros_changes_it` | `files/logs.aer` reads the log from a program without a question, can't open it to change it, and adds an entry with `logadd`; DEL, WR and the SQL command are refused, and WHY explains |
 | `test_in_memory` | with no disk, the log is in memory |
+| `test_clearing` | `logclear()`: N does nothing, A isn't an answer, a wrong password does nothing and is logged, it refuses while the log is open, Y and the right password clear it (leaving this boot and one entry), and the question names the program asking |

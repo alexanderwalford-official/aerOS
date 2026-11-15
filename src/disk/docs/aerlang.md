@@ -127,7 +127,7 @@ The names are built like the terminal's commands: `rd` read, `wr` write, `ap` ap
 
 **System:** `sleep(ms)`, `time()` (ms since start), `random(n)` (0 to n - 1), `beep(hz)`,
 `play(path)`, `video(path)` (an .mpg, full screen: see [Video](video.md)), `logadd(message)`
-(adds to [AerOS's log](logs.md)), `exit()`.
+(adds to [AerOS's log](logs.md)), `logclear()` (clears it, after asking you), `exit()`.
 `args` is the list of words typed after the program's name.
 `sysinfo()` gives everything AerOS knows about the computer as a list of
 `[group, name, value]`, e.g. `["Processor", "Speed", "about 2400 MHz"]`.

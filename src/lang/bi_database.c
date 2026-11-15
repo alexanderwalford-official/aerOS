@@ -207,3 +207,15 @@ void database_finish (void) {
         }
     }
 }
+
+// Has the program got this database open? (logclear() checks the log isn't: clearing it moves its
+// pages, and a copy opened before would then read the wrong ones)
+bool database_is_open (const char* folder, const char* name) {
+    for (int slot = 0; slot < DATABASES_MAX; slot++) {
+        aerdb_t* db = open_databases[slot];
+        if (db != NULL && strcasecmp(db->folder, folder) == 0 && strcasecmp(db->name, name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}

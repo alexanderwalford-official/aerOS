@@ -267,6 +267,30 @@ void syslog_stop (bool restarting) {
     close_log(db);
 }
 
+// Clear the log (see syslog.h). DELETE only marks rows as deleted, so COMPACT straight after
+// gives their space back: cleared means gone from the file, not just hidden
+bool syslog_clear (const char* user, const char* with) {
+    if (!started) {
+        return false;
+    }
+    aerdb_t* db = open_log();
+    if (db == NULL) {
+        return false;
+    }
+    db_value_t this_one[1] = { number_value(this_boot) };
+    bool cleared = log_run(db, "DELETE FROM log", NULL, 0)
+                   && log_run(db, "DELETE FROM boots WHERE boot != ?", this_one, 1)
+                   && log_run(db, "COMPACT", NULL, 0);
+    close_log(db);
+
+    if (cleared) {
+        TRACE("cleared the log: every entry, and every boot but this one (%d)", this_boot);
+        syslog_add("warning", "log", "the log was cleared by %s, with %s", user, with);
+        syslog_flush();
+    }
+    return cleared;
+}
+
 // this boot's number (see syslog.h)
 int syslog_boot (void) {
     return this_boot;

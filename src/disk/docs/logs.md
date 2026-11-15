@@ -69,6 +69,25 @@ Nobody but AerOS. DEL, WR and the SQL command can't change it, and a program can
 to read: anything else is turned away with "it can be read but not changed". That way what the
 log says can be trusted. `why` explains it.
 
+## Clearing it
+
+`logclear()` clears the log, from a program or the prompt, but only if you agree. AerOS asks,
+not the program, and it asks every time (there is no "always"):
+
+```
+[ ? ] aerlog.aer wants to clear AerOS's log (every entry, and every earlier boot)
+      Y = yes    N = no  -> yes
+      Your password (alex): ******
+```
+
+With Y and the right password, every entry and every earlier boot are deleted, and one entry
+is left saying who cleared it and with what program. This boot stays, so the numbering
+carries on. It gives back `true`, or `false` if it was left alone. A wrong password is
+recorded in the log too.
+
+Close the log (`dbclose`) before calling it, and use it on the text screen, not while graphics
+are on. With no disk there are no accounts, so only Y or N is asked.
+
 With no disk (VFS mode) the log is kept in memory like every other file, and is gone when the
 computer is turned off.
 

@@ -54,6 +54,12 @@ void perm_program_ended (void);
 // the running program's file name ("viewer.aer"), or "" when no program is running
 const char* perm_program_name (void);
 
+// Ask the person at the keyboard a yes / no question, in the same yellow "[ ? ]" style (or box
+// over graphics) as a permission question. Unlike those there's no "always": it is asked every
+// time, for things that should never be agreed to in advance (logclear() in lang/bi_system.c).
+// True only for Y; N, Esc, Ctrl+C or no keyboard are no
+bool perm_confirm (const char* question);
+
 // May the running program read (PERM_READ) or change (PERM_CHANGE) the file `name` in
 // `folder`? Asks if it needs to (see above). name is "" when it is about the folder itself
 // (listing it). Always true when no program is running
