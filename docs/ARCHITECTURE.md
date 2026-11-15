@@ -105,6 +105,7 @@ src/
                           _programs (RUN, QUE, GO), _help (DOC, WHY, SRC, SHOW)
     trace.c               notes on what AerOS does, for SHOW (TRACE() in the code)
     terminal/editor.c     the text editor (EDT)
+    terminal/pointer.c    the mouse pointer while the prompt waits (drawn by drivers/video/VGA_linear.c)
 
   lib/                  the kernel's own small C library
     aer_string.c          memcpy, slen, strtok_r, sdist  aer_stdlib.c  malloc / free, itoa, qsort...

@@ -56,7 +56,7 @@ are skipped rather than failed.
 | `test_apps.py` | the DOC reader, the animation demo, and how built-in apps are installed and kept up to date on a disk |
 | `test_crypto.py` | the boot's crypto self-test, and the decryptor printed in `docs/SECURITY.md` run on a file AerOS encrypted |
 | `test_media.py` | WAV files in three formats and an MP3 (recorded and checked for the right notes), the startup sound, and video |
-| `test_input.py` | the mouse in AerLang, and held keys |
+| `test_input.py` | the mouse in AerLang, the mouse pointer at the prompt (text and graphics mode), and held keys |
 | `test_games.py` | Maze 3D, Snake (and its high scores) and `move.aer`, booted from the ISO in graphics mode |
 | `test_database.py` | AerDB from AerLang (`files/aerdb.aer`: every statement, many pages, reopening, COMPACT), the SQL command, and SHOW on a query |
 | `test_logs.py` | AerOS's log: boots, the boot log's entries, OFF, noticing a boot that didn't end properly, reading it from a program (`files/logs.aer`), that only AerOS can change it, and clearing it or turning it off (the question and password) |

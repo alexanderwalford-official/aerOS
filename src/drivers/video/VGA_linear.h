@@ -226,4 +226,16 @@ void console_capture_begin(char* buffer, size_t size);
 size_t console_capture_end(void);
 bool console_capturing(void);
 
+// THE MOUSE POINTER, drawn over the console (the terminal shows it while its prompt waits, see
+// sys/terminal/pointer.c). Its position is in the grid's own pixels, before any scaling: 0 to
+// width - 1 across and 0 to height - 1 down, with console_pointer_area giving width and height
+// (720 or 640 by 400 on a framebuffer, 640 by 400 in text mode).
+// On a framebuffer it is an arrow, and the pixels under it are kept and put back when it moves,
+// so it never rubs out what is underneath. In text mode, where there are no pixels, it is the
+// cell under it with its colours swapped. Writing to the console while it shows is fine: a cell
+// drawn under the pointer is drawn under it, with the pointer still on top
+void console_pointer_area(int* width, int* height);
+void console_pointer_show(int x, int y);   // show it with its tip at x, y (or move it there)
+void console_pointer_hide(void);           // take it away, leaving the screen as it was under it
+
 #endif /* VGA_LINEAR_H */

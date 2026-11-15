@@ -331,7 +331,8 @@ Two ways to read keys, for two jobs: `keydown()` for things that last while a ke
 sees the moment it is asked, so a quick tap between two frames can slip past it, while every
 press waits for `key()` until it is read.
 
-**The mouse** (for programs only: the terminal never uses it)
+**The mouse** (a program has it to itself: the terminal only uses it for its pointer while the
+prompt waits, see `src/sys/terminal/pointer.c`)
 `mouse()` where the pointer is and which buttons are held, as `[x, y, buttons]`: pixels from
 the top left of the screen, starting in the middle, and `buttons` adds up `MOUSE_LEFT` (1),
 `MOUSE_RIGHT` (2) and `MOUSE_MIDDLE` (4). nil if there is no mouse · `mousemove()` how far the

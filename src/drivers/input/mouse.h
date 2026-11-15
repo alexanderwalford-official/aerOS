@@ -1,9 +1,12 @@
 /*
-    mouse.h - the PS/2 mouse, for AerLang programs
+    mouse.h - the PS/2 mouse, for AerLang programs and the terminal's pointer
 
-    Only programs use the mouse: the terminal never does. The mouse is switched on the first time
-    a program asks about it (mouse(), mousemove() or mousedown() in lang/bi_graphics.c) and off
-    again when the program ends, so with no program running AerOS works just as it always has.
+    Two things switch the mouse on, never at the same time:
+    - a program, the first time it asks about it (mouse(), mousemove() or mousedown() in
+      lang/bi_graphics.c). It is switched off again when the program ends.
+    - the terminal, while its prompt waits for a line, to show a pointer (sys/terminal/pointer.c).
+      It is switched off before the line runs, so a program always finds it off and gets the
+      mouse to itself, with an area the size of its own screen.
 
     How a PS/2 mouse talks:
     - It sits on the 8042 controller's second port, next to the keyboard on the first. Its bytes
@@ -45,6 +48,9 @@ bool mouse_ready(void);
 
 // the pointer stays inside width x height pixels. This also puts it in the middle
 void mouse_set_area(int width, int height);
+
+// move the pointer to x, y (kept inside the area): the terminal puts it back where it was
+void mouse_put(int x, int y);
 
 // where the pointer is, in pixels from the top left, and which buttons are held (MOUSE_ bits)
 void mouse_position(int* x, int* y, int* buttons);

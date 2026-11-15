@@ -59,3 +59,58 @@ def test_keys_held(t):
     aeros.cls()
     aeros.run('seen')
     aeros.expect_line('true')
+
+
+def highlighted_cells(aeros):
+    """The cells (row, column) shown with a light background: in VGA text mode, the terminal's
+    mouse pointer is the cell under it with its colours swapped (light grey text on black becomes
+    black on light grey). Nothing else at a plain prompt has a background."""
+    colours = aeros.screen_colours()
+    return [(i // 80, i % 80) for i, colour in enumerate(colours) if colour >> 4 != 0]
+
+
+def wait_for_pointer(aeros, cell, timeout=10):
+    """Wait until the pointer is the one highlighted cell, at (row, column)."""
+    start = time.time()
+    while highlighted_cells(aeros) != [cell]:
+        if time.time() - start > timeout:
+            aeros.fail(f'expected the pointer at {cell}, but the highlighted cells are {highlighted_cells(aeros)}')
+        time.sleep(0.1)
+
+
+def test_pointer_at_the_prompt(t):
+    # While the prompt waits, the mouse shows as a pointer: in text mode, a highlighted cell. The
+    # grid is 640 x 400 of the pointer's pixels, 8 x 16 to a cell, and it starts in the middle
+    aeros = t.boot()
+    aeros.wait_for(GUEST_PROMPT, 60)
+    aeros.cls()
+    wait_for_pointer(aeros, (12, 40))              # pixel 320, 200
+    aeros.mouse_move(80, 0)
+    wait_for_pointer(aeros, (12, 50))              # 80 pixels = 10 cells to the right
+    aeros.mouse_move(0, 48)
+    wait_for_pointer(aeros, (15, 50))              # 48 pixels = 3 rows down
+
+    # while a line runs the pointer is gone and the mouse is the program's, from the middle of
+    # its own area as always; back at the prompt the pointer is where it was
+    aeros.cls()
+    aeros.run('mouse()')
+    aeros.expect_line('[320, 240, 0]')
+    wait_for_pointer(aeros, (15, 50))
+
+
+def test_pointer_in_graphics_mode(t):
+    # On a framebuffer the pointer is an arrow, and what is under it is kept: moved over the big
+    # title and back again, the screen is exactly as it was
+    aeros = t.boot(graphics=True)
+    aeros.wait_for(GUEST_PROMPT, 60)
+    time.sleep(1)
+    before = aeros.screenshot('before')
+    aeros.mouse_move(-150, -150)                   # up and left, onto the "aerOS" title
+    time.sleep(1)
+    over = aeros.screenshot('over_title')
+    if over[2] == before[2]:
+        aeros.fail('moving the mouse did not move the pointer')
+    aeros.mouse_move(150, 150)                     # back where it started
+    time.sleep(1)
+    if aeros.screenshot('back')[2] != before[2]:
+        aeros.fail('the screen is not as it was after the pointer moved over the title and back')

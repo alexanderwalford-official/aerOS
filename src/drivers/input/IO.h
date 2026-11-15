@@ -54,6 +54,12 @@ void ps2_service(void);
 // Mouse bytes are never treated as key presses, whether or not there is a sink
 void kb_set_mouse_sink(void (*sink)(uint8_t byte));
 
+// Called by getk() over and over while it waits for a key (about 1000 times a second, each time
+// the timer wakes it), when it isn't NULL. The terminal sets it while its prompt waits, to move
+// the mouse pointer (sys/terminal/pointer.c). It runs outside any interrupt, so it may draw, but
+// it must be quick: it's called even when nothing has changed
+extern void (*kb_idle_hook)(void);
+
 // special (non-ASCII) keys returned by getk()
 // they start at 0x80 so they can never be confused with a normal 7 bit ASCII character
 #define KEY_ESCAPE 27

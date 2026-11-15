@@ -230,7 +230,7 @@ void aer_give_screen_back (void) {
 // a program that ends (or crashes) in graphics mode gets the terminal back automatically
 void aer_builtins_finish (void) {
     mixer_stop_all(); // sounds from splay() stop with the program (their memory is about to go)
-    mouse_stop();     // the mouse is only for programs: the terminal goes back to not having it
+    mouse_stop();     // the mouse was the program's: the terminal's pointer takes it back at the prompt
     database_finish(); // databases a program left open are closed
     aer_give_screen_back();
 }

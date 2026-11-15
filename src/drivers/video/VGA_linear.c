@@ -98,6 +98,13 @@ static struct {
 static int border_color = BLACK; // the colour of the margin around the grid
 static vga_framebuffer_t fb_info; // what GRUB told us, handed on to the graphics module
 
+// the mouse pointer (see "The mouse pointer" further down): whether it is showing, and where its
+// tip is in the grid's own pixels
+static bool pointer_shown = false;
+static int pointer_x = 0;
+static int pointer_y = 0;
+static void pointer_cell_drawn(unsigned int index);
+
 // the 16 colours as red, green, blue: the standard VGA colours, except that colour 6 (brown)
 // is the logo's orange, ORANGE. The palette can still be changed later with vga_set_palette()
 #define ORANGE_RGB 0xFF, 0x7F, 0x00
@@ -132,7 +139,8 @@ static void fb_put(uint8_t* pixel, uint32_t color) {
     }
 }
 
-// draw one cell from cells[], including the underline cursor if it is in this cell
+// draw one cell from cells[], including the underline cursor if it is in this cell, and the
+// mouse pointer if it is over this cell
 static void fb_draw_cell(unsigned int index) {
     // a cell is the character in the low byte and the colours in the high byte, text colour in
     // the low 4 bits of that and background in the high 4
@@ -174,6 +182,10 @@ static void fb_draw_cell(unsigned int index) {
                 }
             }
         }
+    }
+    // the cell is new under the pointer: put the pointer back on top of it
+    if (pointer_shown) {
+        pointer_cell_drawn(index);
     }
 }
 
@@ -335,7 +347,164 @@ static void cell_set(unsigned int index, uint16_t entry) {
     if (fb_mode) {
         fb_draw_cell(index);
     } else {
-        video[index] = entry;
+        pointer_cell_drawn(index);
+    }
+}
+
+
+// =================================================================================================
+//  The mouse pointer (see VGA_linear.h)
+// =================================================================================================
+//
+// On a framebuffer the pointer is an arrow, POINTER_W x POINTER_H of the grid's pixels, each one
+// scaled up like the font. Before it is drawn, the screen pixels it will cover are copied into
+// under[], and hiding it copies them back, so whatever was there (even big_text_sized's pixels,
+// which no cell knows about) comes back untouched. If a cell under it is drawn again while it
+// shows (text typed under it), fb_draw_cell calls pointer_cell_drawn: the new pixels are kept in
+// under[] and the pointer is drawn back on top.
+//
+// In text mode the graphics card draws the characters, so the pointer is the cell under its tip,
+// with its text and background colours swapped. cells[] keeps the real colours; only video[],
+// what the card shows, gets the swapped ones.
+
+#define POINTER_W 11
+#define POINTER_H 17
+#define POINTER_SCALE_MAX 6   // bigger screens draw it at 6 x: under[] has room for that much
+
+// the arrow: X is its black edge, . its white inside, and a space leaves the screen showing
+static const char* const pointer_shape[POINTER_H] = {
+    "X          ",
+    "XX         ",
+    "X.X        ",
+    "X..X       ",
+    "X...X      ",
+    "X....X     ",
+    "X.....X    ",
+    "X......X   ",
+    "X.......X  ",
+    "X........X ",
+    "X.....XXXXX",
+    "X..X..X    ",
+    "X.X X..X   ",
+    "XX  X..X   ",
+    "X    X..X  ",
+    "     X..X  ",
+    "      XX   ",
+};
+
+// framebuffer: the screen pixels the pointer covers (cut to fit the screen), and what was there
+static uint32_t pointer_left, pointer_top, pointer_w, pointer_h, pointer_scale;
+static uint32_t under[POINTER_W * POINTER_SCALE_MAX * POINTER_H * POINTER_SCALE_MAX];
+#define UNDER_STRIDE (POINTER_W * POINTER_SCALE_MAX)   // under[] holds one row of pixels per this many
+
+// text mode: the cell the pointer is on
+static unsigned int pointer_cell = 0;
+
+// read one packed colour back from the pixel at `pixel` (fb_put the other way round)
+static uint32_t fb_get(const uint8_t* pixel) {
+    switch (fb.bytes) {
+        case 4: return *(const uint32_t*)pixel;
+        case 3: return (uint32_t)pixel[0] | ((uint32_t)pixel[1] << 8) | ((uint32_t)pixel[2] << 16);
+        default: return *(const uint16_t*)pixel;
+    }
+}
+
+// a text mode cell with its text and background colours swapped (the character stays)
+static uint16_t swapped_colours(uint16_t entry) {
+    uint16_t attr = entry >> 8;
+    uint16_t swapped = (uint16_t)(((attr & 0x0F) << 4) | (attr >> 4));
+    return (uint16_t)((swapped << 8) | (entry & 0xFF));
+}
+
+// Framebuffer: in the screen rectangle x0, y0 (inclusive) to x1, y1 (not), keep what the screen
+// shows in under[], then draw the arrow's pixels over it. Only the part inside the pointer counts
+static void pointer_paint(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1) {
+    // the overlap of that rectangle with the pointer's
+    uint32_t left = x0 > pointer_left ? x0 : pointer_left;
+    uint32_t top = y0 > pointer_top ? y0 : pointer_top;
+    uint32_t right = x1 < pointer_left + pointer_w ? x1 : pointer_left + pointer_w;
+    uint32_t bottom = y1 < pointer_top + pointer_h ? y1 : pointer_top + pointer_h;
+    for (uint32_t y = top; y < bottom; y++) {
+        const char* shape_row = pointer_shape[(y - pointer_top) / pointer_scale];
+        uint8_t* pixel = fb.base + y * fb.pitch + left * fb.bytes;
+        for (uint32_t x = left; x < right; x++, pixel += fb.bytes) {
+            under[(y - pointer_top) * UNDER_STRIDE + (x - pointer_left)] = fb_get(pixel);
+            char dot = shape_row[(x - pointer_left) / pointer_scale];
+            if (dot == 'X') {
+                fb_put(pixel, fb_colors[BLACK]);
+            } else if (dot == '.') {
+                fb_put(pixel, fb_colors[WHITE]);
+            }
+        }
+    }
+}
+
+// A cell was just drawn (fb_draw_cell) or changed (cell_set, in text mode). If the pointer is over
+// it, put the pointer back on top
+static void pointer_cell_drawn(unsigned int index) {
+    if (!fb_mode) {
+        video[index] = (pointer_shown && index == pointer_cell) ? swapped_colours(cells[index]) : cells[index];
+        return;
+    }
+    uint32_t x0 = fb.left + (index % COLS) * fb.cell_width * fb.scale;
+    uint32_t y0 = fb.top + (index / COLS) * CELL_HEIGHT * fb.scale;
+    pointer_paint(x0, y0, x0 + fb.cell_width * fb.scale, y0 + CELL_HEIGHT * fb.scale);
+}
+
+// the area the pointer moves in, in the grid's own pixels (see VGA_linear.h)
+void console_pointer_area(int* width, int* height) {
+    *width = COLS * (fb_mode ? (int)fb.cell_width : 8);
+    *height = ROWS * CELL_HEIGHT;
+}
+
+// show the pointer with its tip at x, y, or move it there (see VGA_linear.h)
+void console_pointer_show(int x, int y) {
+    if (pointer_shown && x == pointer_x && y == pointer_y) {
+        return; // already there: the usual case, as this is called while the prompt waits
+    }
+    // moving: put back what was under it first, then draw it in the new place
+    console_pointer_hide();
+    int width, height;
+    console_pointer_area(&width, &height);
+    pointer_x = x < 0 ? 0 : (x >= width ? width - 1 : x);
+    pointer_y = y < 0 ? 0 : (y >= height ? height - 1 : y);
+    pointer_shown = true;
+
+    if (!fb_mode) {
+        pointer_cell = (unsigned int)((pointer_y / CELL_HEIGHT) * COLS + pointer_x / 8);
+        pointer_cell_drawn(pointer_cell);
+        return;
+    }
+    // where it is in screen pixels, and how much of it fits on the screen
+    pointer_scale = fb.scale < POINTER_SCALE_MAX ? fb.scale : POINTER_SCALE_MAX;
+    pointer_left = fb.left + (uint32_t)pointer_x * fb.scale;
+    pointer_top = fb.top + (uint32_t)pointer_y * fb.scale;
+    pointer_w = POINTER_W * pointer_scale;
+    pointer_h = POINTER_H * pointer_scale;
+    if (pointer_left + pointer_w > fb.width) {
+        pointer_w = fb.width - pointer_left;
+    }
+    if (pointer_top + pointer_h > fb.height) {
+        pointer_h = fb.height - pointer_top;
+    }
+    pointer_paint(pointer_left, pointer_top, pointer_left + pointer_w, pointer_top + pointer_h);
+}
+
+// take the pointer away, putting back what was under it (see VGA_linear.h)
+void console_pointer_hide(void) {
+    if (!pointer_shown) {
+        return;
+    }
+    pointer_shown = false;
+    if (!fb_mode) {
+        pointer_cell_drawn(pointer_cell); // pointer_shown is false now, so the real colours
+        return;
+    }
+    for (uint32_t y = 0; y < pointer_h; y++) {
+        uint8_t* pixel = fb.base + (pointer_top + y) * fb.pitch + pointer_left * fb.bytes;
+        for (uint32_t x = 0; x < pointer_w; x++, pixel += fb.bytes) {
+            fb_put(pixel, under[y * UNDER_STRIDE + x]);
+        }
     }
 }
 

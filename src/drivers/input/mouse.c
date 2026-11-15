@@ -233,6 +233,17 @@ void mouse_set_area(int width, int height) {
     }
 }
 
+// move the pointer to x, y (kept inside the area), see mouse.h
+void mouse_put(int x, int y) {
+    bool were_on = interrupts_enabled();
+    interrupts_disable();
+    pointer_x = clamp(x, 0, area_width - 1);
+    pointer_y = clamp(y, 0, area_height - 1);
+    if (were_on) {
+        interrupts_enable();
+    }
+}
+
 // where the pointer is and which buttons are held (read together, with interrupts off)
 void mouse_position(int* x, int* y, int* buttons) {
     bool were_on = interrupts_enabled();

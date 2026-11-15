@@ -203,10 +203,10 @@ presses (jumping): every press waits there until it is read, so a quick tap is n
 buttons are held (`MOUSE_LEFT` 1, `MOUSE_RIGHT` 2, `MOUSE_MIDDLE` 4 added up), or nil if there
 is no mouse. `mousemove()` gives `[dx, dy]`, how far it moved since the last time: it never
 stops at the edge of the screen, so it is the one for turning a camera, and it gives `[0, 0]`
-with no mouse. `mousedown(MOUSE_LEFT)` asks if a button is held. AerOS draws no pointer, so a
-program draws its own. Only programs have the mouse: it switches on when one asks about it and
-off when it ends. In QEMU, click the window first (Ctrl+Alt+G lets go). `/bin/games/maze3d.aer`
-looks around with it.
+with no mouse. `mousedown(MOUSE_LEFT)` asks if a button is held. AerOS draws no pointer for a
+program, so it draws its own. The terminal shows one while its prompt waits, but a program has
+the mouse to itself: it switches on when the program asks about it and off when it ends. In
+QEMU, click the window first (Ctrl+Alt+G lets go). `/bin/games/maze3d.aer` looks around with it.
 
 ```
 gopen()

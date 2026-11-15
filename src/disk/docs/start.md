@@ -58,6 +58,10 @@ wherever the cursor is.
 `rd /docs/sec` then Tab gives `rd /docs/security.md`. If more than one thing fits, Tab fills
 in as much as they share, and when there is nothing more to fill in it lists them all.
 
+With a mouse, a pointer shows where it is while the prompt waits: an arrow, or on a text screen
+a highlighted square. It only points for now; clicking does nothing yet. (In QEMU, click the
+window first so the mouse goes to AerOS: Ctrl+Alt+G lets it go again.)
+
 ## First things to try
 
 | Type | To |

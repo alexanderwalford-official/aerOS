@@ -364,6 +364,9 @@ bool kb_haschar(void) {
     return kb_head != kb_tail;
 }
 
+// what getk() calls while it waits (see IO.h)
+void (*kb_idle_hook)(void) = NULL;
+
 // take the oldest key out of the ring buffer, sleeping until one arrives if necessary
 // returns the key (1-255), or 0 if no key can ever arrive
 int getk(void) {
@@ -377,6 +380,10 @@ int getk(void) {
     // through it. That's harmless here: the 1000 Hz timer interrupt wakes us within a millisecond
     // and the loop sees the key then.
     while (!kb_haschar()) {
+        // something to do while waiting, like moving the terminal's mouse pointer
+        if (kb_idle_hook != NULL) {
+            kb_idle_hook();
+        }
         cpu_idle(); // sleep until the next interrupt
     }
     uint8_t key = kb_buffer[kb_tail];

@@ -224,8 +224,11 @@ int cli_init (int ask_login) {
             cli_prompt();
             // wait for Enter. Tab fills in names (cli_complete), the up and down arrows bring
             // back earlier lines, Page Up and Page Down scroll back through the output.
-            // With no keyboard at all this returns an empty line at once, so the prompt repeats
+            // With no keyboard at all this returns an empty line at once, so the prompt repeats.
+            // Meanwhile the mouse pointer shows, and follows the mouse (pointer.c)
+            pointer_begin();
             GetLine(cli_input, sizeof(cli_input), cli_complete);
+            pointer_end();
             HandleInput(cli_input);
         }
     }

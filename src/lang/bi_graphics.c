@@ -182,7 +182,7 @@ value_t bi_keydown (int argc, value_t* argv, int line) {
     return aer_bool(kb_is_down(key));
 }
 
-// ---- the mouse (only for programs: see drivers/input/mouse.h) ----------------------------------
+// ---- the mouse (the program's while it runs: see drivers/input/mouse.h) ----------------------------
 
 // switch the mouse on if it isn't yet, the first time a program asks about it. The pointer moves
 // over the screen in pixels, starting in the middle. False if there is no mouse.
