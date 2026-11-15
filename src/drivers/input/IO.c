@@ -43,6 +43,7 @@
 #include "../../lib/aer_stdio.h"
 #include "../../sys/interrupts.h"
 #include "../../lib/crypto.h"
+#include "../../sys/clipboard.h"
 
 // (the 8042 controller's ports and status bits are in IO.h, as the mouse driver uses them too)
 
@@ -69,6 +70,14 @@ static bool kb_clear_pending = false; // set by ClearInputbuffer, handled by the
 static volatile uint8_t kb_buffer[KB_BUFFER_SIZE];
 static volatile unsigned int kb_head = 0;
 static volatile unsigned int kb_tail = 0;
+
+// keys typed in by AerOS itself rather than the keyboard (kb_type): a paste, or the arrow keys a
+// mouse click turns into. getk() takes these first. Only ever used outside interrupts, so it
+// needs none of the care the ring buffer above does
+#define TYPED_MAX 512
+static uint8_t typed[TYPED_MAX];
+static int typed_count = 0;  // how many are waiting
+static int typed_next = 0;   // the next one getk() takes
 
 // modifier key state
 // shift and ctrl are true while the key is held down, caps lock flips on every press,
@@ -364,6 +373,24 @@ bool kb_haschar(void) {
     return kb_head != kb_tail;
 }
 
+// what getk() calls while it waits (see IO.h)
+void (*kb_idle_hook)(void) = NULL;
+
+// type a key in, as if it had been pressed (see IO.h)
+bool kb_type(uint8_t key) {
+    // the waiting keys always start at typed[0] once they have all been taken, so there is
+    // room until TYPED_MAX are waiting at once
+    if (typed_count == 0) {
+        typed_next = 0;
+    }
+    if (typed_next + typed_count >= TYPED_MAX) {
+        return false;
+    }
+    typed[typed_next + typed_count] = key;
+    typed_count++;
+    return true;
+}
+
 // take the oldest key out of the ring buffer, sleeping until one arrives if necessary
 // returns the key (1-255), or 0 if no key can ever arrive
 int getk(void) {
@@ -373,10 +400,24 @@ int getk(void) {
     if (console_capturing()) {
         return 0; // a command run by AerLang's cmd(): nobody can see what it is asking
     }
+    // keys AerOS typed in itself (kb_type) come first
+    if (typed_count > 0) {
+        typed_count--;
+        return typed[typed_next++];
+    }
     // a key could arrive just after the check and just before the hlt, in which case we sleep
     // through it. That's harmless here: the 1000 Hz timer interrupt wakes us within a millisecond
     // and the loop sees the key then.
     while (!kb_haschar()) {
+        // something to do while waiting, like moving the terminal's mouse pointer. It may type
+        // keys in (a click, a paste): then those are the next keys
+        if (kb_idle_hook != NULL) {
+            kb_idle_hook();
+            if (typed_count > 0) {
+                typed_count--;
+                return typed[typed_next++];
+            }
+        }
         cpu_idle(); // sleep until the next interrupt
     }
     uint8_t key = kb_buffer[kb_tail];
@@ -444,6 +485,21 @@ void ClearInputHistory(void) {
 // long line has scrolled off the top, which is fine: those cells are just never drawn again.)
 static int line_start;
 
+// for getline_line (the mouse pointer asks where the line is): whether GetLine is reading a line
+// right now, and how long that line is, kept up to date each time it waits for a key
+static bool line_editing = false;
+static int line_length = 0;
+
+// where the line being typed is, if one is (see IO.h)
+bool getline_line(int* start_cell, int* length) {
+    if (!line_editing) {
+        return false;
+    }
+    *start_cell = line_start;
+    *length = line_length;
+    return true;
+}
+
 // the cell the console cursor is in, counting from the top left
 static int cursor_cell(void) {
     uint8_t x, y;
@@ -488,8 +544,9 @@ static void line_redraw(const char* in, int from, int length, int erase) {
 // returns in, which is left empty if there is no keyboard
 // supported keys: printable characters (typed in where the cursor is), Left / Right, Home / End,
 // Backspace (the character before the cursor) and Delete (the one under it), Enter, Up / Down for
-// the history, Page Up / Page Down to look back at earlier output, and Tab if a complete function
-// was given. Anything else (escape, ctrl codes...) is ignored.
+// the history, Page Up / Page Down to look back at earlier output, Ctrl+V to paste the clipboard
+// (sys/clipboard.h), and Tab if a complete function was given. Anything else (escape, other
+// ctrl codes...) is ignored.
 char* GetLine(char* in, int size, tab_complete_fn complete) {
     if (kb_clear_pending) {
         // throw away keys that were pressed between the clear and this point
@@ -503,10 +560,17 @@ char* GetLine(char* in, int size, tab_complete_fn complete) {
     in[0] = '\0';
     line_start = cursor_cell(); // the line starts where the cursor is now, after the prompt
 
+    line_editing = true;
     for (;;) {
+        line_length = len;
         int key = getk();
         if (key == 0) {
             break; // no keyboard
+        }
+        // Ctrl+V: the clipboard is typed in, and those keys come round this loop like any others
+        if (key == KEY_CTRL_V) {
+            clipboard_paste();
+            continue;
         }
         // enter (or ctrl + M) finishes the line, wherever the cursor is in it
         if (key == '\n' || key == '\r') {
@@ -625,6 +689,7 @@ char* GetLine(char* in, int size, tab_complete_fn complete) {
     }
 
     // finished (or no keyboard): remember the line for the up arrow
+    line_editing = false;
     input_history_add(in);
     return in;
 }
@@ -645,6 +710,7 @@ void InputBufferChangeState(int state) {
 void ClearInputbuffer(void) {
     kb_tail = kb_head;
     kb_clear_pending = true;
+    typed_count = 0;
 }
 
 // send a byte to the 8042 controller once it is ready to take one

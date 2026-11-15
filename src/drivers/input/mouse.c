@@ -5,17 +5,19 @@
       1. Enable the controller's second port (command 0xA8).
       2. In the controller's configuration byte, turn on IRQ12 (bit 1) and the second port's
          clock (bit 5 set means it is stopped).
-      3. Send the mouse two commands, each through controller command 0xD4 ("the next data byte is
-         for the second port"): 0xF6 sets the default settings, 0xF4 starts it sending packets.
-         The mouse answers each with 0xFA ("acknowledged").
+      3. Send the mouse its commands, each through controller command 0xD4 ("the next data byte
+         is for the second port"): 0xF6 sets the default settings, then the knock that asks for
+         the scroll wheel (try_wheel), then 0xF4 starts it sending packets. The mouse answers
+         each with 0xFA ("acknowledged").
       4. Point IRQ12 and the mouse sink in IO.c at this driver, and unmask IRQ12.
     All of it runs with interrupts off, so the answers are read here and not by an IRQ handler.
 
     Switching off (mouse_stop) is the same backwards, finishing with any mouse bytes still in the
     controller thrown away: one left there would stop key presses getting through.
 
-    The IRQ handler only adds the movement up. Programs read it with interrupts off for a moment,
-    so they never see a half updated pair of numbers.
+    The IRQ handler only adds the movement up, and notes each change to the buttons in a small
+    queue (changes[]). Programs read them with interrupts off for a moment, so they never see a
+    half updated pair of numbers.
 */
 
 #include <stddef.h>
@@ -39,15 +41,19 @@
 #define MOUSE_DEFAULTS       0xF6
 #define MOUSE_REPORTING_ON   0xF4
 #define MOUSE_REPORTING_OFF  0xF5
+#define MOUSE_SAMPLE_RATE    0xF3 // followed by the rate: used for the wheel's knock
+#define MOUSE_GET_ID         0xF2 // the mouse answers with its ID: 0 plain, 3 with a wheel
 #define MOUSE_ACK            0xFA
+#define MOUSE_ID_WHEEL       3
 
 #define MOUSE_IRQ 12
 
 static bool running = false;
 static bool missing = false; // looked for once and not found
+static bool has_wheel = false; // it answered the knock: packets are 4 bytes
 
-// the packet being put together, and how many of its 3 bytes have arrived
-static uint8_t packet[3];
+// the packet being put together, and how many of its 3 (or 4) bytes have arrived
+static uint8_t packet[4];
 static int have = 0;
 
 // written by the IRQ handler, read by programs (hence volatile: always read from memory)
@@ -55,6 +61,15 @@ static volatile int pointer_x = 0, pointer_y = 0;
 static volatile int area_width = 640, area_height = 480;
 static volatile int held = 0;
 static volatile int moved_x = 0, moved_y = 0;
+static volatile int wheel_turned = 0;
+
+// the changes to the buttons waiting to be read (see mouse_next_change): a ring, where
+// changes_next is the next place to write and changes_count how many are waiting
+static volatile struct {
+    int x, y, buttons;
+} changes[MOUSE_CHANGES_KEPT];
+static volatile int changes_next = 0;
+static volatile int changes_count = 0;
 
 // is the mouse on right now?
 bool mouse_ready(void) {
@@ -72,7 +87,20 @@ static int clamp(int value, int low, int high) {
     return value;
 }
 
-// one byte from the mouse (the sink ps2_service calls, inside the IRQ). Three make a packet
+// note a change to the buttons on the end of the queue (inside the IRQ). If the queue is full,
+// the oldest change is forgotten to make room: the newest ones matter most
+static void note_change(void) {
+    changes[changes_next].x = pointer_x;
+    changes[changes_next].y = pointer_y;
+    changes[changes_next].buttons = held;
+    changes_next = (changes_next + 1) % MOUSE_CHANGES_KEPT;
+    if (changes_count < MOUSE_CHANGES_KEPT) {
+        changes_count++;
+    }
+}
+
+// one byte from the mouse (the sink ps2_service calls, inside the IRQ). Three make a packet, or
+// four with a scroll wheel
 static void mouse_byte(uint8_t byte) {
     // The first byte of a packet always has bit 3 set. A byte without it can't start one, so a
     // byte must have been lost: drop this one and wait for a byte that can
@@ -80,29 +108,45 @@ static void mouse_byte(uint8_t byte) {
         return;
     }
     packet[have++] = byte;
-    if (have < 3) {
+    if (have < (has_wheel ? 4 : 3)) {
         return;
     }
     have = 0;
 
     uint8_t flags = packet[0];
+    int buttons_before = held;
     held = flags & 0x07;
-    // an overflow bit means it moved further than a packet can say: the numbers are wrong, so
-    // the movement is left out (the buttons above are still right)
-    if (flags & 0xC0) {
-        return;
-    }
-    // Each movement is 9 bits: the byte, with its sign as bit 4 (x) or 5 (y) of the flags.
-    // Shifting the sign up to bit 8 and taking it away turns 0x1FF into -1, and so on
-    int dx = (int)packet[1] - ((flags << 4) & 0x100);
-    int dy = (int)packet[2] - ((flags << 3) & 0x100);
-    // the mouse counts up as positive, the screen counts down
-    dy = -dy;
 
-    moved_x += dx;
-    moved_y += dy;
-    pointer_x = clamp(pointer_x + dx, 0, area_width - 1);
-    pointer_y = clamp(pointer_y + dy, 0, area_height - 1);
+    // An overflow bit means it moved further than a packet can say: the numbers are wrong, so
+    // the movement is left out. Otherwise each movement is 9 bits: the byte, with its sign as
+    // bit 4 (x) or 5 (y) of the flags. Shifting the sign up to bit 8 and taking it away turns
+    // 0x1FF into -1, and so on
+    if (!(flags & 0xC0)) {
+        int dx = (int)packet[1] - ((flags << 4) & 0x100);
+        int dy = (int)packet[2] - ((flags << 3) & 0x100);
+        // the mouse counts up as positive, the screen counts down
+        dy = -dy;
+
+        moved_x += dx;
+        moved_y += dy;
+        pointer_x = clamp(pointer_x + dx, 0, area_width - 1);
+        pointer_y = clamp(pointer_y + dy, 0, area_height - 1);
+    }
+
+    // The wheel is the low 4 bits of the fourth byte, from -8 to 7: bit 3 is the sign, so taking
+    // 16 away when it is set turns 0x0F into -1, and so on
+    if (has_wheel) {
+        int notches = packet[3] & 0x0F;
+        if (notches & 0x08) {
+            notches -= 16;
+        }
+        wheel_turned += notches;
+    }
+
+    // a button went down or came up: note it, where the pointer is now
+    if (held != buttons_before) {
+        note_change();
+    }
 }
 
 // IRQ12: a byte from the mouse is waiting. ps2_service reads it and hands it to mouse_byte
@@ -158,6 +202,35 @@ static void drop_mouse_bytes(void) {
     }
 }
 
+// read the next byte from the mouse (with interrupts off), passing any key press that comes
+// first on to the keyboard. -1 if nothing comes
+static int mouse_read_byte(void) {
+    for (int tries = 0; tries < 8; tries++) {
+        if (!kbc_wait_read()) {
+            return -1;
+        }
+        if (!(inb(KBC_STATUS) & KBC_FROM_MOUSE)) {
+            ps2_service(); // a key press: let the keyboard have it
+            continue;
+        }
+        return inb(KBC_DATA);
+    }
+    return -1;
+}
+
+// Ask for the scroll wheel with the knock (sample rate 200, 100, 80), then ask the mouse who it
+// is now: ID 3 means it has a wheel, and from now on sends 4 byte packets. A mouse without a
+// wheel just sets those sample rates and stays as it was
+static bool try_wheel(void) {
+    bool knocked = mouse_send(MOUSE_SAMPLE_RATE) && mouse_send(200) &&
+                   mouse_send(MOUSE_SAMPLE_RATE) && mouse_send(100) &&
+                   mouse_send(MOUSE_SAMPLE_RATE) && mouse_send(80);
+    if (!knocked || !mouse_send(MOUSE_GET_ID)) {
+        return false;
+    }
+    return mouse_read_byte() == MOUSE_ID_WHEEL;
+}
+
 // switch the mouse on, see mouse.h and the steps at the top of this file
 bool mouse_start(void) {
     if (running) {
@@ -169,16 +242,23 @@ bool mouse_start(void) {
     bool were_on = interrupts_enabled();
     interrupts_disable();
 
-    // steps 1 to 3: the port, the configuration byte, then the mouse itself
+    // steps 1 to 3: the port, the configuration byte, then the mouse itself (with its wheel, if
+    // it has one, asked for before it starts sending)
     bool ok = kbc_write(KBC_COMMAND, KBC_ENABLE_MOUSE) && set_mouse_config(true) &&
-              mouse_send(MOUSE_DEFAULTS) && mouse_send(MOUSE_REPORTING_ON);
+              mouse_send(MOUSE_DEFAULTS);
+    if (ok) {
+        has_wheel = try_wheel();
+        ok = mouse_send(MOUSE_REPORTING_ON);
+    }
 
     if (ok) {
-        // step 4: start with no movement and no buttons, then let the bytes in
+        // step 4: start with no movement, no buttons and nothing waiting, then let the bytes in
         have = 0;
         held = 0;
         moved_x = 0;
         moved_y = 0;
+        wheel_turned = 0;
+        changes_count = 0;
         kb_set_mouse_sink(mouse_byte);
         irq_install_handler(MOUSE_IRQ, mouse_irq);
         pic_unmask(MOUSE_IRQ);
@@ -233,6 +313,17 @@ void mouse_set_area(int width, int height) {
     }
 }
 
+// move the pointer to x, y (kept inside the area), see mouse.h
+void mouse_put(int x, int y) {
+    bool were_on = interrupts_enabled();
+    interrupts_disable();
+    pointer_x = clamp(x, 0, area_width - 1);
+    pointer_y = clamp(y, 0, area_height - 1);
+    if (were_on) {
+        interrupts_enable();
+    }
+}
+
 // where the pointer is and which buttons are held (read together, with interrupts off)
 void mouse_position(int* x, int* y, int* buttons) {
     bool were_on = interrupts_enabled();
@@ -243,6 +334,38 @@ void mouse_position(int* x, int* y, int* buttons) {
     if (were_on) {
         interrupts_enable();
     }
+}
+
+// the wheel's notches since the last call, then back to 0 (see mouse.h)
+int mouse_wheel(void) {
+    bool were_on = interrupts_enabled();
+    interrupts_disable();
+    int notches = wheel_turned;
+    wheel_turned = 0;
+    if (were_on) {
+        interrupts_enable();
+    }
+    return notches;
+}
+
+// the oldest change to the buttons still waiting (see mouse.h)
+bool mouse_next_change(int* x, int* y, int* buttons) {
+    bool were_on = interrupts_enabled();
+    interrupts_disable();
+    bool found = changes_count > 0;
+    if (found) {
+        // the oldest is changes_count places behind the next free one (adding the size first
+        // keeps the number from going below 0 before the %)
+        int oldest = (changes_next - changes_count + MOUSE_CHANGES_KEPT) % MOUSE_CHANGES_KEPT;
+        *x = changes[oldest].x;
+        *y = changes[oldest].y;
+        *buttons = changes[oldest].buttons;
+        changes_count--;
+    }
+    if (were_on) {
+        interrupts_enable();
+    }
+    return found;
 }
 
 // the movement since the last call, then back to 0 (read and cleared with interrupts off, so a

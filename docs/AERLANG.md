@@ -173,6 +173,8 @@ encrypted file and `gopen` opens the graphics screen.
 `print(a, b, ...)` print, separated by spaces, then a new line ·
 `write(...)` the same without the new line ·
 `input(prompt)` read a line · `inpw(prompt)` the same, showing `*` (for passwords) ·
+`clip()` the text on the clipboard, "" if none · `setclip(text)` put text on it (the clipboard
+the mouse copies to at the prompt, sys/clipboard.h) ·
 `cls()` clear the screen ·
 `color(fg, bg)` text colours (`BLACK` ... `WHITE`, and `ORANGE`, the logo orange) ·
 `at(x, y)` move the cursor ·
@@ -331,7 +333,8 @@ Two ways to read keys, for two jobs: `keydown()` for things that last while a ke
 sees the moment it is asked, so a quick tap between two frames can slip past it, while every
 press waits for `key()` until it is read.
 
-**The mouse** (for programs only: the terminal never uses it)
+**The mouse** (a program has it to itself: the terminal only uses it for its pointer while the
+prompt waits, see `src/sys/terminal/pointer.c`)
 `mouse()` where the pointer is and which buttons are held, as `[x, y, buttons]`: pixels from
 the top left of the screen, starting in the middle, and `buttons` adds up `MOUSE_LEFT` (1),
 `MOUSE_RIGHT` (2) and `MOUSE_MIDDLE` (4). nil if there is no mouse · `mousemove()` how far the

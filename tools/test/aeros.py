@@ -221,18 +221,23 @@ class AerOS:
         """Move the mouse (right and down are positive)."""
         self.monitor(f'mouse_move {dx} {dy}')
 
+    def mouse_wheel(self, notches):
+        """Turn the scroll wheel: negative is up (away from you), positive down, the way the mouse
+        itself counts. (QEMU's mouse_move counts the other way round: positive is up)"""
+        self.monitor(f'mouse_move 0 0 {-notches}')
+
     def mouse_buttons(self, mask):
         """Set which mouse buttons are held: 1 left, 2 right, 4 middle, 0 none."""
         self.monitor(f'mouse_button {mask}')
 
     # ---- reading what AerOS shows ------------------------------------------------------------
 
-    def screen(self):
-        """The 80 x 25 text screen, as 25 lines (VGA text mode only, so boot with kernel=)."""
+    def _vga_memory(self):
+        """The 4000 bytes of VGA text memory: each cell is two bytes, the character, then its
+        colours (text colour in the low 4 bits, background in the high 4)."""
         path = os.path.join(self.workdir, 'vga.bin')
         if os.path.exists(path):
             os.remove(path)
-        # each cell is two bytes in VGA memory: the character, then its colours
         self.monitor(f'pmemsave 0xb8000 4000 "{path}"')
         for _ in range(50):
             if os.path.exists(path) and os.path.getsize(path) == 4000:
@@ -240,7 +245,15 @@ class AerOS:
             time.sleep(0.05)
         else:
             raise Failure('could not read the screen from QEMU')
-        data = open(path, 'rb').read()[0::2]
+        return open(path, 'rb').read()
+
+    def screen_colours(self):
+        """Each of the 2000 cells' colour byte, row by row (VGA text mode only)."""
+        return self._vga_memory()[1::2]
+
+    def screen(self):
+        """The 80 x 25 text screen, as 25 lines (VGA text mode only, so boot with kernel=)."""
+        data = self._vga_memory()[0::2]
         rows = []
         for row in range(25):
             cells = data[row * 80:(row + 1) * 80]

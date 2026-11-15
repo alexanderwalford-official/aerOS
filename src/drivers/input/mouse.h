@@ -1,9 +1,12 @@
 /*
-    mouse.h - the PS/2 mouse, for AerLang programs
+    mouse.h - the PS/2 mouse, for AerLang programs and the terminal's pointer
 
-    Only programs use the mouse: the terminal never does. The mouse is switched on the first time
-    a program asks about it (mouse(), mousemove() or mousedown() in lang/bi_graphics.c) and off
-    again when the program ends, so with no program running AerOS works just as it always has.
+    Two things switch the mouse on, never at the same time:
+    - a program, the first time it asks about it (mouse(), mousemove() or mousedown() in
+      lang/bi_graphics.c). It is switched off again when the program ends.
+    - the terminal, while its prompt waits for a line, to show a pointer (sys/terminal/pointer.c).
+      It is switched off before the line runs, so a program always finds it off and gets the
+      mouse to itself, with an area the size of its own screen.
 
     How a PS/2 mouse talks:
     - It sits on the 8042 controller's second port, next to the keyboard on the first. Its bytes
@@ -21,6 +24,11 @@
 
     - The movement is in "counts", about 4 a millimetre at the default settings. There is no
       position: the driver adds the movements up itself, keeping the pointer inside the screen.
+    - A mouse with a scroll wheel acts like a plain one until it is asked, with a "secret knock":
+      setting the sample rate to 200, then 100, then 80. If it has a wheel, its ID changes from
+      0 to 3, and every packet gets a fourth byte:
+
+          byte 3   the wheel, -8 to 7 notches (negative: turned away from you, "up")
 */
 
 #ifndef MOUSE_H
@@ -46,6 +54,9 @@ bool mouse_ready(void);
 // the pointer stays inside width x height pixels. This also puts it in the middle
 void mouse_set_area(int width, int height);
 
+// move the pointer to x, y (kept inside the area): the terminal puts it back where it was
+void mouse_put(int x, int y);
+
 // where the pointer is, in pixels from the top left, and which buttons are held (MOUSE_ bits)
 void mouse_position(int* x, int* y, int* buttons);
 
@@ -53,5 +64,16 @@ void mouse_position(int* x, int* y, int* buttons);
 // Unlike the position it never stops at the edge of the screen, which is what turning a camera
 // needs. The count starts again from 0 after each call
 void mouse_motion(int* dx, int* dy);
+
+// how many notches the scroll wheel has turned since the last call: negative is up (away from
+// you), positive down. Always 0 for a mouse with no wheel
+int mouse_wheel(void);
+
+// The next change to the buttons, oldest first: where the pointer was and which buttons were
+// held (MOUSE_ bits) just after it. False once there are none left. Each press and each release
+// is kept (up to MOUSE_CHANGES_KEPT waiting), so a quick click isn't missed by code that only
+// looks every so often, the way checking mouse_position can miss it
+#define MOUSE_CHANGES_KEPT 16
+bool mouse_next_change(int* x, int* y, int* buttons);
 
 #endif /* MOUSE_H */

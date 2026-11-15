@@ -23,6 +23,7 @@
 #include "../f_sys.h"
 #include "../ui.h"
 #include "../explain.h"
+#include "../clipboard.h"
 #include "../perm.h"
 #include "../accounts/auth.h"
 #include "../../lang/aerlang.h"
@@ -206,9 +207,10 @@ void cli_logout (char* arguments) {
         return;
     }
     // the next person shouldn't be able to see what this one did: forget the commands for
-    // the up arrow, the output for Page Up, the last problem (WHY) and the AerLang variables
-    // made at the prompt, and start them in the top folder
+    // the up arrow, the output for Page Up, the clipboard, the last problem (WHY) and the
+    // AerLang variables made at the prompt, and start them in the top folder
     ClearInputHistory();
+    clipboard_clear();
     console_forget_scrollback();
     explain_forget();
     aer_shell_stop();

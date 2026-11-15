@@ -24,6 +24,11 @@ extern bool cli_active;
 // times - already_done more happen). Waits while it flashes, returns 0
 int flash_pointer (int times, int already_done);
 
+// the mouse pointer at the prompt (pointer.c): pointer_begin shows it and makes it follow the
+// mouse while the prompt waits for a line, pointer_end hides it before the line runs
+void pointer_begin (void);
+void pointer_end (void);
+
 // start the terminal and run it. ask_login = 1 shows the login screen first (only in DISK
 // mode, when there is somewhere to keep accounts), 0 skips it and runs as "guest".
 // Only returns if cli_active is ever set to false, which nothing does yet

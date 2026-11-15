@@ -1484,7 +1484,7 @@ void aer_shell_run (const char* code) {
     aer->source = outer_source;
     aer->locals = outer_locals;
     aer_give_screen_back(); // a line that used graphics gives the screen back when it is done
-    // and one that used the mouse switches it off again: the terminal itself never has it
+    // and one that used the mouse switches it off again (the prompt's pointer switches it back on)
     if (shell_lines_running == 0) {
         mouse_stop();
     }

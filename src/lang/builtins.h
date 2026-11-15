@@ -9,7 +9,8 @@
                          BLACK, PI...), which built-ins need which part of AerOS (for app mode),
                          and the tidying up when a program ends
         bi_args.c        checking and unpacking arguments: int_arg, str_arg, file_arg...
-        bi_text.c        print, write, input, strings, conversions (str, int, chr...) and maths
+        bi_text.c        print, write, input, the clipboard (clip, setclip), strings, conversions
+                         (str, int, chr...) and maths
         bi_lists.c       lists and bytes
         bi_files.c       files, encrypted files, la and cwd
         bi_screen.c      the text screen and keys: cls, color, at, key, haskey, big, progress,
@@ -66,6 +67,8 @@ value_t bi_print (int argc, value_t* argv, int line);
 value_t bi_write (int argc, value_t* argv, int line);
 value_t bi_input (int argc, value_t* argv, int line);
 value_t bi_input_secret (int argc, value_t* argv, int line);
+value_t bi_clip (int argc, value_t* argv, int line);
+value_t bi_setclip (int argc, value_t* argv, int line);
 value_t bi_len (int argc, value_t* argv, int line);
 value_t bi_str (int argc, value_t* argv, int line);
 value_t bi_int (int argc, value_t* argv, int line);

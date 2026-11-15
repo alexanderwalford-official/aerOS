@@ -54,9 +54,16 @@ void ps2_service(void);
 // Mouse bytes are never treated as key presses, whether or not there is a sink
 void kb_set_mouse_sink(void (*sink)(uint8_t byte));
 
+// Called by getk() over and over while it waits for a key (about 1000 times a second, each time
+// the timer wakes it), when it isn't NULL. The terminal sets it while its prompt waits, to move
+// the mouse pointer (sys/terminal/pointer.c). It runs outside any interrupt, so it may draw, but
+// it must be quick: it's called even when nothing has changed
+extern void (*kb_idle_hook)(void);
+
 // special (non-ASCII) keys returned by getk()
 // they start at 0x80 so they can never be confused with a normal 7 bit ASCII character
 #define KEY_ESCAPE 27
+#define KEY_CTRL_V 22   // ctrl + V (ctrl + a letter gives 1 for A to 26 for Z): paste in GetLine
 #define KEY_UP     0x80
 #define KEY_DOWN   0x81
 #define KEY_LEFT   0x82
@@ -115,6 +122,17 @@ typedef int (*tab_complete_fn)(char* line, int length, int size);
 // getln, with Tab handed to complete (the terminal's command line uses it to fill in
 // commands and file names). complete may be NULL, which is exactly getln
 char* GetLine(char* in, int size, tab_complete_fn complete);
+
+// While GetLine is reading a line: where it is on screen (the cell its first character is in,
+// counting cells from the top left, row * 80 + column) and how many characters it has. False when
+// no line is being read. The mouse pointer uses it to put the cursor where you click
+bool getline_line(int* start_cell, int* length);
+
+// Type a key in, as if it had been pressed: getk() gives back keys typed this way before any from
+// the keyboard. A paste types each character (sys/clipboard.c), and a click on the line being
+// typed types Home then Right (sys/terminal/pointer.c). Not from an interrupt handler. False if
+// too many are already waiting (TYPED_MAX in IO.c, 512)
+bool kb_type(uint8_t key);
 
 // forget the up / down arrow history (done on logout)
 void ClearInputHistory(void);

@@ -36,6 +36,8 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("write", bi_write, 0, AER_MAX_ARGS),
     BUILTIN("input", bi_input, 0, 1),
     BUILTIN("inpw", bi_input_secret, 0, 1),
+    BUILTIN("clip", bi_clip, 0, 0),
+    BUILTIN("setclip", bi_setclip, 1, 1),
     BUILTIN("cls", bi_cls, 0, 0),
     BUILTIN("color", bi_color, 1, 2),
     BUILTIN("at", bi_at, 2, 2),
@@ -230,7 +232,7 @@ void aer_give_screen_back (void) {
 // a program that ends (or crashes) in graphics mode gets the terminal back automatically
 void aer_builtins_finish (void) {
     mixer_stop_all(); // sounds from splay() stop with the program (their memory is about to go)
-    mouse_stop();     // the mouse is only for programs: the terminal goes back to not having it
+    mouse_stop();     // the mouse was the program's: the terminal's pointer takes it back at the prompt
     database_finish(); // databases a program left open are closed
     aer_give_screen_back();
 }
