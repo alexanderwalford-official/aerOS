@@ -67,6 +67,7 @@ print(area(3, 4))               # 12
 | Type | Examples | Notes |
 | --- | --- | --- |
 | number | `42`, `-7`, `0xFF` | whole numbers, `/` drops the remainder |
+| decimal | `3.14`, `-0.5`, `2.5e3` | `7 / 2.0` is `3.5`: a decimal on either side gives a decimal |
 | string | `"hi\n"` | `s[0]` is the first character |
 | list | `[1, "two", [3]]` | `l[0] = 5` changes an item |
 | bytes | `bytes(100)` | raw bytes, e.g. from `rdb` |
@@ -75,6 +76,14 @@ print(area(3, 4))               # 12
 
 `nil`, `false` and `0` count as false. `and` / `or` give back one of their sides, so
 `input("Name? ") or "friend"` works. `+` joins strings: `"Score: " + 10`.
+
+Two whole numbers give a whole answer, as always (`7 / 2` is `3`). Decimals print with up to
+six places (`3.141593`), and a built-in that wants a whole number, like a screen position,
+rounds a decimal down, so a game can keep positions as decimals: `rect(x, y, 10, 10, c)`.
+
+**Maths:** `sqrt(x)`, `sin(a)`, `cos(a)` (angles in radians), `atan2(y, x)`, `floor(x)`,
+`round(x)`, `abs(x)`, `float(x)` (`float("2.5")`), and `PI`. A step of `speed` in direction
+`a` is `x = x + cos(a) * speed` and `y = y + sin(a) * speed`.
 
 ## Built-in functions
 
@@ -101,6 +110,14 @@ orange, also called `BROWN`), `BRIGHT`, `DARK_GRAY`, `LIGHT_BLUE`, `LIGHT_GREEN`
 file, and if you say no the function fails as if the file wasn't there. `rdf("notes.txt@2")`
 reads an [old version](versions.md) of a file.
 
+**Databases:** `dbopen(path)` (or `dbopen(path, "read")`, only to read), `dbrun(db, sql, values)`, `dbquery(db, sql, values)` (a list of
+rows) and `dbclose(db)` keep tables of rows in a file, in SQL: see [Databases](database.md).
+
+To change a file a piece at a time (a database's pages, say) rather than all of it:
+`rdat(path, offset, count)` reads `count` bytes from byte `offset`, `wrat(path, offset, data)`
+writes bytes or text there, in place, and `trunc(path, size)` makes the file that long. Writing
+past the end makes it longer, with zeros in any gap. These keep no old versions.
+
 The names are built like the terminal's commands: `rd` read, `wr` write, `ap` append,
 `del` delete, `is` "is there one?", then `f` file or `b` bytes. So `rdf` reads a file and
 `isf` asks if a file is there. `enc` / `dec` encrypt and decrypt, and `g` means graphics.
@@ -109,7 +126,9 @@ The names are built like the terminal's commands: `rd` read, `wr` write, `ap` ap
 `isenc(path)`, `rdenc(path, password)` (nil if the password is wrong).
 
 **System:** `sleep(ms)`, `time()` (ms since start), `random(n)` (0 to n - 1), `beep(hz)`,
-`play(path)`, `video(path)` (an .mpg, full screen: see [Video](video.md)), `exit()`.
+`play(path)`, `video(path)` (an .mpg, full screen: see [Video](video.md)), `logadd(message)`
+(adds to [AerOS's log](logs.md)), `logclear()` (clears it, after asking you),
+`setlogging(on)` and `islogging()` (turn it off or on, after asking), `exit()`.
 `args` is the list of words typed after the program's name.
 `sysinfo()` gives everything AerOS knows about the computer as a list of
 `[group, name, value]`, e.g. `["Processor", "Speed", "about 2400 MHz"]`.
@@ -178,7 +197,16 @@ key is held right now (`"a"`, `KEY_LEFT`, `KEY_SPACE`, `KEY_SHIFT`...), without 
 at once: up to 8 sounds play together. `sstop(n)` stops one, `isply(n)` asks if it still
 plays. Use `keydown` for things that last (moving) and `haskey()` / `key()` for single
 presses (jumping): every press waits there until it is read, so a quick tap is never missed.
-`/bin/move.aer` uses them all.
+`/bin/games/move.aer` uses them all.
+
+**The mouse:** `mouse()` gives `[x, y, buttons]`, where the pointer is in pixels and which
+buttons are held (`MOUSE_LEFT` 1, `MOUSE_RIGHT` 2, `MOUSE_MIDDLE` 4 added up), or nil if there
+is no mouse. `mousemove()` gives `[dx, dy]`, how far it moved since the last time: it never
+stops at the edge of the screen, so it is the one for turning a camera, and it gives `[0, 0]`
+with no mouse. `mousedown(MOUSE_LEFT)` asks if a button is held. AerOS draws no pointer, so a
+program draws its own. Only programs have the mouse: it switches on when one asks about it and
+off when it ends. In QEMU, click the window first (Ctrl+Alt+G lets go). `/bin/games/maze3d.aer`
+looks around with it.
 
 ```
 gopen()
@@ -200,9 +228,11 @@ end
 | File | Shows |
 | --- | --- |
 | `/bin/hello.aer` | input, functions, lists, loops |
-| `/bin/guess.aer` | random numbers and a game loop |
+| `/bin/games/guess.aer` | random numbers and a game loop |
 | `/bin/viewer.aer` | graphics, pictures and a menu |
-| `/bin/move.aer` | smooth movement, held keys and mixed sounds |
+| `/bin/games/move.aer` | smooth movement, held keys and mixed sounds |
+| `/bin/games/snake.aer` | a whole game: graphics, a back buffer, held keys, lists, and high scores in a database |
+| `/bin/games/maze3d.aer` | a 3D maze drawn with ray casting: decimals, sin / cos, sprites and mouse look |
 | `/bin/read.aer` | this reader: text handling, a whole app |
 | `/bin/sysinfo.aer` | system information: lists, layout and scrolling |
 | `/bin/anim.aer` | spinners, progress bars and moving text |

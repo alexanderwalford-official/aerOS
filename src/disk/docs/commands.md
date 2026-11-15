@@ -21,6 +21,7 @@ suggestion (`Did you mean DEL?`), and `why` explains any problem.
 | `la` | list the files and folders here |
 | `sd <dir>` | go to a folder: `sd /bin`, `sd ..`, `sd /` |
 | `rd <file>` | show a file (asks for the password if it is encrypted) |
+| `sql <file> [sql]` | run SQL on a database, or open a `sql>` prompt ([more](database.md)) |
 | `mkf <file> [text]` | make a file, with some text in it if you like |
 | `wr <file> <text>` | add a line to the end of a file |
 | `mkd <dir>` | make a folder |
@@ -38,6 +39,7 @@ suggestion (`Did you mean DEL?`), and `why` explains any problem.
 | `why` | explain the last thing that went wrong ([more](why.md)) |
 | `why <name>` | explain a command, an AerLang function or a C function: `why del` |
 | `src <name>` | show the code behind one, with line numbers: `src del`, `src fat.c` |
+| `show <command>` | run a command, then see step by step what AerOS did inside: `show del notes.txt` ([more](why.md)) |
 | `perm [del <n>]` | what [programs may always do](perms.md) with your files, or forget it |
 
 ## Encrypted files

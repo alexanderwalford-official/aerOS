@@ -32,6 +32,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "../input/GIO.h"
+#include "../../sys/sys_clck.h"
+#include "../../sys/trace.h"
 
 // I/O and control ports of bus 0 (primary) and bus 1 (secondary)
 #define ATA_IO(bus)   ((uint16_t)((bus) ? 0x170 : 0x1F0))
@@ -70,7 +72,16 @@
 
 // the highest sector number 28 bit LBA can address (2^28 - 1)
 #define ATA_LBA28_MAX 0x0FFFFFFF
-#define ATA_TIMEOUT   1000000 // status polls before giving up on a drive
+// How long a drive may stay busy before we give up on it. A cache flush can take a real disk a
+// few seconds, and in QEMU it is an fsync of the image file on the host, which is slow when the
+// host is busy. Giving up too early makes a write "fail" that would have worked, and a write that
+// fails between the two copies of the FAT leaves them disagreeing. (A count of status reads used
+// to be the limit, but how long a read takes depends on the machine, so it could be under a
+// second.) Drives that aren't there are caught straight away by drive_probe_info, not by this
+#define ATA_TIMEOUT_MS 10000
+// a backstop for when the timer isn't running, so clkuptms() stands still: give up after this many
+// status reads instead (far more than any working drive needs)
+#define ATA_MAX_POLLS  100000000u
 // a sector moves through the 16 bit data port as 256 words
 #define SECTOR_WORDS  (SECTOR_SIZE / 2)
 
@@ -98,10 +109,21 @@ static void ata_delay(uint16_t ctrl) {
     }
 }
 
+// has a wait that began at `start` (a clkuptms() time) gone on too long, after `polls` status
+// reads? The clock is only looked at every 1024 reads, which keeps the waiting loops quick
+static bool ata_timed_out(uint32_t start, uint32_t polls) {
+    if (polls >= ATA_MAX_POLLS) {
+        return true;
+    }
+    // unsigned subtraction still gives the right answer if the millisecond counter wraps round
+    return (polls & 1023) == 0 && clkuptms() - start > ATA_TIMEOUT_MS;
+}
+
 // poll the status register until BSY clears
-// io: the bus's I/O base. Returns false if the drive is still busy after ATA_TIMEOUT polls
+// io: the bus's I/O base. Returns false if the drive is still busy after ATA_TIMEOUT_MS
 static bool ata_wait_not_busy(uint16_t io) {
-    for (int i = 0; i < ATA_TIMEOUT; i++) {
+    uint32_t start = clkuptms();
+    for (uint32_t polls = 0; !ata_timed_out(start, polls); polls++) {
         if ((inb(io + ATA_REG_STATUS) & ATA_SR_BSY) == 0) {
             return true;
         }
@@ -113,7 +135,8 @@ static bool ata_wait_not_busy(uint16_t io) {
 // a timeout returns 0xFF, which has the error bit set just like a failed command
 // (0xFF has DF set too, so callers checking ERR | DF also see a timeout as a failure)
 static uint8_t ata_wait_data(uint16_t io) {
-    for (int i = 0; i < ATA_TIMEOUT; i++) {
+    uint32_t start = clkuptms();
+    for (uint32_t polls = 0; !ata_timed_out(start, polls); polls++) {
         uint8_t status = inb(io + ATA_REG_STATUS);
         if (status & (ATA_SR_DRQ | ATA_SR_ERR)) {
             return status;
@@ -204,6 +227,7 @@ int drive_probe_info(int bus, int slave, char* model, size_t model_size, uint32_
     if (status == 0 || status == 0xFF) {
         return DRIVE_NONE;
     }
+    // something answered but never finished: count it as there, but of an unknown kind
     if (!ata_wait_not_busy(io)) {
         return DRIVE_UNKNOWN;
     }
@@ -216,6 +240,9 @@ int drive_probe_info(int bus, int slave, char* model, size_t model_size, uint32_
     int type;
     bool ok;
 
+    // an ATA drive accepted IDENTIFY, so its answer is already waiting. The packet (CD) drives
+    // need the second command first. A SATA drive in this legacy mode can't be identified or used
+    // through these ports, so we only report that it is there
     if (mid == 0 && hi == 0) {
         type = DRIVE_ATA;
         ok = ata_read_identify(io, id);
@@ -231,6 +258,7 @@ int drive_probe_info(int bus, int slave, char* model, size_t model_size, uint32_
         return DRIVE_UNKNOWN;
     }
 
+    // the type is known even if the IDENTIFY data never came, so report it anyway
     if (!ok) {
         return type;
     }
@@ -259,11 +287,13 @@ static bool ata_pio_command(uint16_t io, uint16_t ctrl, int slave, uint32_t lba,
     if (!ata_wait_not_busy(io)) {
         return false;
     }
+    // keep the drive's IRQ off, we poll the status register instead
     outb(ctrl, ATA_CTRL_NIEN);
     // 0xE0 = the always-1 bits plus bit 6 (LBA mode), 0x10 for the slave, and the top 4 bits of the
     // 28 bit LBA go in the low nibble
     outb(io + ATA_REG_DRIVE, (uint8_t)(0xE0 | (slave ? 0x10 : 0x00) | ((lba >> 24) & 0x0F)));
     ata_delay(ctrl);
+    // READ / WRITE SECTORS take no features, 0 is the safe value
     outb(io + ATA_REG_FEATURES, 0);
     outb(io + ATA_REG_SECCOUNT, count);
     // the remaining 24 bits of the LBA, one byte per register
@@ -278,6 +308,7 @@ static bool ata_pio_command(uint16_t io, uint16_t ctrl, int slave, uint32_t lba,
 // wait until the drive is ready to transfer the next sector
 // true = DRQ is set and neither ERR nor DF is, so exactly one sector can now go through the data port
 static bool ata_pio_ready(uint16_t io, uint16_t ctrl) {
+    // give the status register its ~400ns to catch up with the last command / sector first
     ata_delay(ctrl);
     return ata_wait_not_busy(io) && (ata_wait_data(io) & (ATA_SR_ERR | ATA_SR_DF)) == 0;
 }
@@ -306,12 +337,14 @@ static bool ata_pio_transfer(int bus, int slave, uint32_t lba, uint32_t count, u
             if (!ata_pio_ready(io, ctrl)) {
                 return false;
             }
+            // 256 16 bit words = one 512 byte sector, moved with rep outsw / rep insw
             if (write) {
                 outsw(io + ATA_REG_DATA, data, SECTOR_WORDS);
             } else {
                 insw(io + ATA_REG_DATA, data, SECTOR_WORDS);
             }
         }
+        // move on to the next chunk (data has already been stepped forward by the loop above)
         lba += n;
         count -= n;
     }
@@ -331,7 +364,9 @@ bool drive_write(int bus, int slave, uint32_t lba, uint32_t count, const void* b
 
     // the buffer is only read from when writing
     // (so casting the const away for the shared transfer helper is safe)
+    uint32_t start = clkuptms();
     if (!ata_pio_transfer(bus, slave, lba, count, (uint8_t*)buffer, true)) {
+        TRACE("the drive didn't take %u sector(s) at %u", (unsigned int)count, (unsigned int)lba);
         return false;
     }
 
@@ -345,7 +380,14 @@ bool drive_write(int bus, int slave, uint32_t lba, uint32_t count, const void* b
     ata_delay(ctrl);
     // the flush keeps the drive busy until the cache is empty, then the status says how it went
     if (!ata_wait_not_busy(io)) {
+        TRACE("the drive was still flushing after %d seconds: giving up on it", ATA_TIMEOUT_MS / 1000);
         return false;
+    }
+    // a slow write is worth knowing about (a busy or failing drive), a quick one isn't
+    uint32_t took = clkuptms() - start;
+    if (took >= 100) {
+        TRACE("writing %u sector(s) at %u and flushing them took the drive %u ms", (unsigned int)count,
+              (unsigned int)lba, (unsigned int)took);
     }
     return (inb(io + ATA_REG_STATUS) & (ATA_SR_ERR | ATA_SR_DF)) == 0;
 }
@@ -360,6 +402,7 @@ bool drive_write(int bus, int slave, uint32_t lba, uint32_t count, const void* b
 // Real boot sectors pass easily, random data (or a non-FAT boot sector) almost never does.
 // The 0x55 0xAA signature is not checked here, drive_parse does that before calling us.
 bool drive_is_fat_boot_sector(const uint8_t* sector) {
+    // the 16 bit fields are little endian: low byte first, so the second byte is shifted up by 8
     uint16_t bytes_per_sector = (uint16_t)(sector[11] | (sector[12] << 8));
     uint8_t sectors_per_cluster = sector[13];
     uint16_t reserved = (uint16_t)(sector[14] | (sector[15] << 8));
@@ -394,6 +437,7 @@ static bool drive_is_fat_partition(uint8_t type) {
 int drive_parse(int bus, int slave, uint32_t* volume_lba) {
     uint8_t sector[SECTOR_SIZE];
 
+    // -1 = the drive couldn't even be read, which is different from "readable but not FAT"
     if (!drive_read(bus, slave, 0, 1, sector)) {
         return -1;
     }

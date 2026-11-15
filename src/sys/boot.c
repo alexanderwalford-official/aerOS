@@ -30,6 +30,7 @@
 #include "../drivers/input/IO.h"
 #include "../lib/aer_stdlib.h"
 #include "../lib/aer_stdio.h"
+#include "../lib/aer_string.h"
 #include "interrupts.h"
 #include "sys_clck.h"
 #include "f_sys.h"
@@ -38,6 +39,9 @@
 #include "../drivers/audio/ac97.h"
 #include "net.h"
 #include "rt.h"
+#include "syslog.h"
+#include "../lib/primary_definitions.h"
+#include <stdarg.h>
 
 // the value a multiboot bootloader leaves in eax (not the same as the 0x1BADB002 in our header)
 #define MULTIBOOT_BOOTLOADER_MAGIC 0x2BADB002
@@ -52,7 +56,9 @@ typedef struct __attribute__((packed)) multiboot_info {
     uint32_t flags; // which of the fields below are valid
     uint32_t mem_lower; // KB of memory below 1MB
     uint32_t mem_upper; // KB of memory above 1MB
-    uint32_t unused1[8]; // boot device, command line, modules, symbols
+    uint32_t boot_device;
+    uint32_t cmdline; // the command line (flags bit 2): the address of a '\0' terminated string
+    uint32_t unused1[6]; // modules, symbols
     uint32_t mmap_length; // the memory map (flags bit 6): its size in bytes
     uint32_t mmap_addr;   // and where it is
     uint32_t unused2[9];  // drives, config table, bootloader name, APM, VBE
@@ -68,6 +74,8 @@ typedef struct __attribute__((packed)) multiboot_info {
     uint8_t red_pos, red_size, green_pos, green_size, blue_pos, blue_size;
 } multiboot_info_t;
 
+// bit 2 of the info flags: the command line field is valid
+#define MULTIBOOT_INFO_CMDLINE     0x00000004
 // bit 6 of the info flags: the memory map fields are valid
 #define MULTIBOOT_INFO_MEMORY_MAP  0x00000040
 #define MULTIBOOT_MEMORY_AVAILABLE 1
@@ -87,7 +95,10 @@ uint32_t boot_heap_extra_kb = 0;
 // give the heap the biggest stretch of free RAM above the kernel (the built-in 4MB is only enough
 // to get going: pictures, programs and their data need far more)
 static void boot_add_memory (const multiboot_info_t* info) {
+    // the biggest usable stretch found so far (64 bit, as the map can describe memory past 4GB)
     uint64_t best_start = 0, best_end = 0;
+    // walk the entries one by one. They are stepped over by their own size field rather than
+    // sizeof, because a bootloader is allowed to make the entries bigger than this struct
     uint32_t offset = 0;
     while (offset + sizeof(multiboot_mmap_entry_t) <= info->mmap_length) {
         const multiboot_mmap_entry_t* e = (const multiboot_mmap_entry_t*)(uintptr_t)(info->mmap_addr + offset);
@@ -104,11 +115,13 @@ static void boot_add_memory (const multiboot_info_t* info) {
         if (stop > 0x100000000ULL) {
             stop = 0x100000000ULL;
         }
+        // keep it if anything is left after the trimming and it beats the best so far
         if (stop > start && stop - start > best_end - best_start) {
             best_start = start;
             best_end = stop;
         }
     }
+    // only worth adding if it is at least 1MB (on a tiny machine there may be nothing past the kernel)
     if (best_end - best_start >= 1024 * 1024) {
         heap_add_region((void*)(uintptr_t)best_start, (size_t)(best_end - best_start));
         boot_heap_extra_kb = (uint32_t)((best_end - best_start) / 1024);
@@ -131,6 +144,29 @@ uint32_t sys_mem_upper_kb = 0; // memory from 1MB up to the first hole in the me
 bool boot_framebuffer_valid = false; // GRUB gave us a graphics framebuffer instead of text mode
 vga_framebuffer_t boot_framebuffer;
 
+// Is `word` one of the words (split by spaces) in the bootloader's command line? The command line
+// is whatever follows the kernel in the bootloader's settings: QEMU passes "-append fast" on, which
+// is how the tests in tools/test/ skip the splash screen's wait and the boot log's pause. It
+// usually starts with the kernel's own path, which can never match a word like "fast"
+static bool boot_has_word (const char* line, const char* word) {
+    size_t length = slen(word);
+    while (*line != '\0') {
+        // skip the spaces before a word, then measure it
+        while (*line == ' ') {
+            line++;
+        }
+        size_t size = 0;
+        while (line[size] != '\0' && line[size] != ' ') {
+            size++;
+        }
+        if (size == length && strncmp(line, word, length) == 0) {
+            return true;
+        }
+        line += size;
+    }
+    return false;
+}
+
 // read what the bootloader told us about the machine
 // magic = eax from GRUB, info_addr = ebx from GRUB (the physical address of the structure)
 // called very early in kernel.c, before anything else could reuse the memory GRUB put the structure in
@@ -147,10 +183,17 @@ void boot_parse_multiboot (uint32_t magic, uint32_t info_addr) {
         sys_mem_lower_kb = info->mem_lower;
         sys_mem_upper_kb = info->mem_upper;
     }
+    // the word "fast" on the command line boots straight to the prompt (see boot_has_word)
+    if ((info->flags & MULTIBOOT_INFO_CMDLINE) && info->cmdline != 0 &&
+        boot_has_word((const char*)(uintptr_t)info->cmdline, "fast")) {
+        boot_option = BOOT_OPT_FAST;
+    }
     // a graphics framebuffer (UEFI PCs). Without paging we can only reach the first 4GB, so a
     // framebuffer above that can't be used and we stay with VGA text mode
     if ((info->flags & MULTIBOOT_INFO_FRAMEBUFFER) && info->framebuffer_type == MULTIBOOT_FRAMEBUFFER_RGB &&
         info->framebuffer_addr < 0x100000000ULL) {
+        // copy it all out, since GRUB's structure may be written over later. The *_pos and
+        // *_size pairs say which bits of a pixel hold each colour (e.g. red at bit 16, 8 bits)
         boot_framebuffer.address = (uint32_t)info->framebuffer_addr;
         boot_framebuffer.pitch = info->framebuffer_pitch;
         boot_framebuffer.width = info->framebuffer_width;
@@ -170,72 +213,114 @@ void boot_parse_multiboot (uint32_t magic, uint32_t info_addr) {
     }
 }
 
+// One line of the boot log: its tag ("[ OK ]", "[WARN]", "[FAIL]" or "[INFO]"), then the message,
+// written like prtf. It also goes in AerOS's log (sys/syslog.h): a [WARN] as a warning, a [FAIL]
+// as an error, and the rest as boot entries. source says what it is about ("sound", "disk")
+static void boot_report (const char* tag, const char* source, const char* format, ...) {
+    char message[128];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+
+    prtf("%s %s\n", tag, message);
+
+    const char* kind = "boot";
+    if (seq(tag, "[WARN]")) {
+        kind = "warning";
+    } else if (seq(tag, "[FAIL]")) {
+        kind = "error";
+    }
+    syslog_add(kind, source, "%s", message);
+}
+
 // the boot log
 // shows whether each part of kernel.c's hardware setup worked, starts the file system and waits
-// BOOT_LOG_DELAY ms so it can be read (skipped on fast boot). Returns 0
+// BOOT_LOG_DELAY ms so it can be read (skipped on fast boot). Each line also goes in AerOS's
+// log, which is written once the file system is up (syslog_start, near the end). Returns 0
 int init_boot (void) {
     // black text on a light grey screen, same as the splash screen
     colour(BLACK, BRIGHT);
     console_clear();
 
     prtf("[E:b1f1] AerOS boot sequence started\n\n");
+    syslog_add("boot", "aeros", "AerOS %s started", AEROS_VERSION);
 
     // each driver sets its *_ready flag at the end of its init function in kernel.c, so a [FAIL]
     // here means that step never ran (handy if someone reorders or removes a line in main())
     if (vga_framebuffer_active()) {
-        prtf("[ OK ] Screen: %ux%u framebuffer, %u bits per pixel\n", boot_framebuffer.width,
-               boot_framebuffer.height, (unsigned int)boot_framebuffer.bpp);
+        boot_report("[ OK ]", "screen", "Screen: %ux%u framebuffer, %u bits per pixel", boot_framebuffer.width,
+                    boot_framebuffer.height, (unsigned int)boot_framebuffer.bpp);
     } else {
-        prtf("[ OK ] Screen: VGA text mode\n");
+        boot_report("[ OK ]", "screen", "Screen: VGA text mode");
     }
-    prtf("%s Descriptor tables & interrupts (GDT / IDT / PIC)\n", interrupts_ready ? "[ OK ]" : "[FAIL]");
+    boot_report(interrupts_ready ? "[ OK ]" : "[FAIL]", "interrupts", "Descriptor tables & interrupts (GDT / IDT / PIC)");
     if (clck_ready) {
-        prtf("[ OK ] System timer at %u Hz\n", (unsigned int)PIT_HZ);
+        boot_report("[ OK ]", "timer", "System timer at %u Hz", (unsigned int)PIT_HZ);
     } else {
-        prtf("[WARN] System timer is not ticking, using busy waits instead\n");
+        boot_report("[WARN]", "timer", "System timer is not ticking, using busy waits instead");
     }
-    prtf("%s PS/2 keyboard\n", keyboard_ready ? "[ OK ]" : "[FAIL]");
+    boot_report(keyboard_ready ? "[ OK ]" : "[FAIL]", "keyboard", "PS/2 keyboard");
     // only a warning, nothing needs the memory size yet (the heap is a fixed size array)
     if (boot_multiboot_valid) {
-        prtf("[ OK ] Memory: %u KB lower, %u KB upper\n", sys_mem_lower_kb, sys_mem_upper_kb);
+        boot_report("[ OK ]", "memory", "Memory: %u KB lower, %u KB upper", sys_mem_lower_kb, sys_mem_upper_kb);
     } else {
-        prtf("[WARN] No memory information from the bootloader\n");
+        boot_report("[WARN]", "memory", "No memory information from the bootloader");
     }
-    prtf("[ OK ] Kernel heap: %u KB\n", (unsigned int)(heap_total() / 1024));
+    boot_report("[ OK ]", "memory", "Kernel heap: %u KB", (unsigned int)(heap_total() / 1024));
 
-    // rtc_datetime() fills in now and returns it, so it can go straight into prtf
+    // rtc_datetime() fills in now and returns it, so it can go straight into the line
     char now[FS_DATETIME_MAX];
-    prtf("[ OK ] Real time clock: %s\n", rtc_datetime(now, sizeof(now)));
+    boot_report("[ OK ]", "clock", "Real time clock: %s", rtc_datetime(now, sizeof(now)));
     // check SHA-256, HMAC, PBKDF2 and AES against published test vectors before trusting them with passwords
-    prtf("%s Crypto self-test (SHA-256, HMAC, PBKDF2, AES-256)\n", crypto_selftest() ? "[ OK ]" : "[FAIL]");
+    boot_report(crypto_selftest() ? "[ OK ]" : "[FAIL]", "crypto", "Crypto self-test (SHA-256, HMAC, PBKDF2, AES-256)");
     // a missing sound card isn't a problem, only PLY needs one
     if (ac97_init()) {
-        prtf("[ OK ] Sound: %s\n", ac97_name());
+        boot_report("[ OK ]", "sound", "Sound: %s", ac97_name());
     } else {
-        prtf("[WARN] No sound card found (AerOS supports AC'97), PLY won't work\n");
+        boot_report("[WARN]", "sound", "No sound card found (AerOS supports AC'97), PLY won't work");
     }
     // the firewall is always on: nothing is sent or let in that a rule (FW ALLOW) doesn't allow
     if (net_init()) {
-        prtf("[ OK ] Network: %s, firewall on\n\n", net_card_name());
+        boot_report("[ OK ]", "network", "Network: %s, firewall on", net_card_name());
     } else {
-        prtf("[INFO] No network card found (AerOS supports the Intel e1000)\n\n");
+        boot_report("[INFO]", "network", "No network card found (AerOS supports the Intel e1000)");
     }
+    prtf("\n");
     // RT mode (picked in the boot options): the real-time tasks start ticking from here
     if (boot_option == BOOT_OPT_RT) {
         rt_start();
-        prtf("[INFO] RT mode (experimental): %d real-time task(s), RT lists them\n\n", rt_count());
+        boot_report("[INFO]", "rt", "RT mode (experimental): %d real-time task(s), RT lists them", rt_count());
+        prtf("\n");
     }
 
     // initialise the file system (the disk, or the temporary one if there is no disk)
     // "n" = normal: mount a FAT disk labelled AEROS if there is one, otherwise use the VFS
     // "d" = demo: go straight to the VFS without probing the disks at all
     fs_init(boot_option == BOOT_OPT_DEMO ? "d" : "n");
+    if (fs_mode == FS_MODE_DISK) {
+        syslog_add("boot", "disk", "AEROS disk found: files are saved on it");
+    } else if (boot_option == BOOT_OPT_DEMO) {
+        syslog_add("boot", "disk", "demo mode: the disks aren't used, files are kept in memory");
+    } else {
+        syslog_add("boot", "disk", "no AEROS disk found: files only last until the computer is turned off");
+    }
 
     // the apps that come with AerOS, copied into /bin/ unless they are already there
     int installed = apps_install();
     if (installed > 0) {
         prtf("< APPS .. > %d built-in file(s) added or updated\n", installed);
+        syslog_add("boot", "apps", "%d built-in file(s) added or updated", installed);
     }
+    // a file that couldn't be written is tried again next boot, but say so rather than nothing
+    if (apps_failed() > 0) {
+        prtf("[ ! ] %d built-in file(s) couldn't be written to the disk (full, or a drive error): "
+             "they will be tried again next time\n", apps_failed());
+        syslog_add("error", "apps", "%d built-in file(s) couldn't be written to the disk", apps_failed());
+    }
+
+    // AerOS's log: start this boot's entry, and write everything above into it
+    syslog_start();
 
     // beep once
     //beep(0);

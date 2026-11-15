@@ -14,6 +14,8 @@ The other guides go deeper into one area each:
 * [SECURITY.md](SECURITY.md): user accounts, password hashing and file encryption
 * [AUDIO.md](AUDIO.md): the sound card driver, WAV / MP3 playback and the mixer
 * [VIDEO.md](VIDEO.md): playing MPEG-1 videos, and keeping picture and sound together
+* [LOGS.md](LOGS.md): AerOS's log, `/sys/logs.db`: what it records, how a boot's entries get
+  there, how a crash is noticed, and why only AerOS can change it
 
 ## The idea
 
@@ -54,6 +56,7 @@ src/
 
   drivers/              talking to hardware
     input/    IO.c        PS/2 keyboard: scancodes -> ring buffer -> getk / getln / GetSecret
+              mouse.c     PS/2 mouse on IRQ12, only on while a program uses it (mouse() in AerLang)
               GIO.h       inb / outb port I/O and other one-instruction helpers
     video/    VGA_linear.c  the text console: VGA text mode, or 80x25 cells drawn on a framebuffer
               gfx.c       pixels, rectangles, lines, text, BMP pictures and scaled pixel blocks for
@@ -77,6 +80,7 @@ src/
     source.c              the read-only /src/ folder: AerOS's own source, built into it
     versions.c            old versions of the files in home folders (VERS, UNDO, notes.txt@2)
     perm.c                programs ask before they touch your files (PERM)
+    syslog.c              AerOS's log, /sys/logs.db: every boot, warning and shutdown (an AerDB database)
     net.c                 the network stack: ARP, IPv4, UDP, DNS lookups (NET, MSG, LSN)
     firewall.c            the firewall's rules, everything blocked until FW ALLOW
     netseal.c             sealed messages: the only thing ever sent over the network
@@ -94,7 +98,12 @@ src/
     recovery.c            the boot options menu (press X on the splash)
     power.c               reboot and shut down
     accounts/auth.c       user accounts and the login screen
-    terminal/t_int.c      the terminal and all its commands
+    terminal/t_int.c      the terminal: the prompt, the table of every command, Tab, HLP
+    terminal/commands.h   which cmd_ file holds which command, and how to add one
+    terminal/cmd_files.c  LA, SD, RD, MKF, WR, DEL, VERS, UNDO, ENC, DEC, EDT
+    terminal/cmd_*.c      the other commands by topic: _accounts, _system, _network,
+                          _programs (RUN, QUE, GO), _help (DOC, WHY, SRC, SHOW)
+    trace.c               notes on what AerOS does, for SHOW (TRACE() in the code)
     terminal/editor.c     the text editor (EDT)
 
   lib/                  the kernel's own small C library
@@ -105,18 +114,30 @@ src/
     busy.c                busy(): long loops call it so a spinner can turn (see sys/ui.h)
     mp3.c + minimp3/      MP3 decoding
     mpg.c + pl_mpeg/      MPEG-1 video and MP2 sound decoding (pl_mpeg, MIT)
-    fpu.c                 switches the x87 FPU on, for the decoders' floats
+    fpu.c                 switches the x87 FPU on, for decimal numbers (AerLang's, the decoders')
+    aer_math.c            sqrt, sin, cos, atan2, floor on the x87, and decimals to text and back
     shim/                 <string.h> and <stdlib.h> for the decoders, pointing at the files above
     aer_comp.c            runs a process's line of code (the built-in "instructions")
+
+  db/                   AerDB, the database (see the top of aerdb.h)
+    aerdb.h               the file format, values, and every function
+    file.c, table.c       opening a database and its pages; tables, and adding / reading rows
+    value.c               values, and rows to bytes and back
+    sql.c, sql.h, run.c   SQL to words to a statement_t, and running it (and COMPACT)
 
   lang/                 the AerLang interpreter
     aer_lexer.c           source text -> tokens
     aer_parser.c          tokens -> syntax tree
     aer_interp.c          walks the tree; memory, values, variables; the shell's session
-    aer_builtins.c        print, rdf, play, gfx_... (every function a program can call)
+    aer_builtins.c        the table of every function a program can call, and the constants
+    builtins.h            how the built-ins are laid out, and how to add one
+    bi_args.c             checking a built-in's arguments (and asking permission for files)
+    bi_text.c, bi_lists.c, bi_files.c, bi_screen.c, bi_graphics.c, bi_sound.c, bi_system.c,
+    bi_network.c          the built-ins themselves, by topic: print, rdf, gopen, play, mouse...
 
-  apps/                 built-in apps and files, linked into the kernel and copied to /bin/ or /sys/
-  docs/                 the in-OS manual (Markdown and HTML), copied to /docs/ and shown by DOC
+  disk/                 the files built into AerOS, laid out as they are in it: disk/bin/ is /bin/
+                        (apps, and games in bin/games/), disk/docs/ the manual DOC shows,
+                        disk/sys/ the startup sound. Copied there at every boot (sys/apps.c)
   iso/boot/grub/grub.cfg  GRUB's menu: loads main.elf, restores the saved screen resolution
 ```
 
@@ -225,9 +246,17 @@ and every AerLang function gets them without doing anything:
 * **Permissions** aren't in `f_sys.c`: they are checked one level up, by AerLang's file
   functions, so the terminal (which is you) never asks. See `sys/perm.h`.
 
+Most writes replace a whole file, writing it into new clusters and freeing the old ones only
+once the directory entry points at the new data. `fs_write_at` and `fs_truncate` are the
+exception, for files changed a piece at a time (a database's pages): they change the bytes
+asked for in place (`fat_write_at`, `fat_truncate`). Their order keeps the disk consistent if
+the power goes part way: growing takes and zeros the new clusters first and puts the new size
+in the entry last; shrinking puts the new size in the entry first and frees clusters after.
+They keep no versions; a caller that wants one calls `versions_keep()` once first.
+
 ## The manual inside AerOS
 
-`src/docs/` holds the manual that ships inside the OS: short Markdown pages written for an
+`src/disk/docs/` holds the manual that ships inside the OS: short Markdown pages written for an
 80-column screen, plus an HTML sample. They are linked into the kernel like the apps and
 copied to `/docs/` at boot. Each page is **replaced whenever it differs** from the built-in
 copy, so the manual always matches the version that is running.
@@ -240,8 +269,8 @@ the top of `sys/apps.c`.
 
 `DOC [topic]` opens it in the reader, `/bin/read.aer`. The reader is an AerLang app that shows
 Markdown, HTML and plain text with colours, word wrapping, tables and links (Tab picks a link,
-Enter opens it, Backspace goes back). To change a page, edit it in `src/docs/` and rebuild. To
-add one, also add it to the table in `src/sys/apps.c` and link to it from `index.md`.
+Enter opens it, Backspace goes back). To change a page, edit it in `src/disk/docs/` and rebuild. To
+add one, put it there too and link to it from `index.md`: nothing else needs changing.
 
 ## The terminal
 
@@ -278,7 +307,7 @@ folder, and later words from the file system.
 ```
 source text --aer_lexer.c--> tokens --aer_parser.c--> syntax tree --aer_interp.c--> runs it
                                                                         |
-                                                   aer_builtins.c: print, rdf, play...
+                                       aer_builtins.c's table -> bi_*.c: print, rdf, play...
 ```
 
 The interpreter tracks every allocation, so when a program ends, normally or through an error,
@@ -303,6 +332,8 @@ make run        # boots the ISO in QEMU with a 64 MB AEROS disk (disk.img) and a
 make run-vfs    # without a disk
 make run-uefi   # as a UEFI PC (OVMF)
 make disk-put FILE=photo.bmp DIR=/bin   # copy a file onto the disk
+make check      # check the code keeps the conventions WHY and SRC rely on (see Style, below)
+make test       # boot AerOS in QEMU and check it works (see TESTING.md)
 ```
 
 The kernel is built with `-Os -ffunction-sections -fdata-sections` and linked with
@@ -318,18 +349,20 @@ should keep it that way. Useful QEMU options while testing:
 
 ### Add a terminal command
 
-In `src/sys/terminal/t_int.c`:
+The commands live in `src/sys/terminal/cmd_*.c`, one file per topic (the top of `commands.h`
+says which holds which). Write the command in the file for its topic, here `cmd_system.c`:
 
 ```c
 // VER: print the version
-static void cli_version (char* arguments) {
+void cli_version (char* arguments) {
     (void)arguments; // VER takes no arguments
     prtf("AerOS " AEROS_VERSION "\n");
 }
 ```
 
-and one line in `commands[]`: the name you type, what goes after it (for help and the "Usage:"
-message, "" if nothing), the description help shows, and the function:
+declare it in `commands.h` with the others from that file, and add one line to `commands[]` in
+`t_int.c`: the name you type, what goes after it (for help and the "Usage:" message, "" if
+nothing), the description help shows, and the function:
 
 ```c
     COMMAND("ver",  "",           "PRINT THE AEROS VERSION",                                    cli_version),
@@ -339,7 +372,8 @@ A command that needs something after it can call `show_usage(NULL)` when it is m
 prints e.g. `Usage: VER` built from the table. When something goes wrong, say so with
 `explain_say(PROBLEM_..., subject, "Couldn't ...")`, or `explain_say_fs(result, subject,
 "Couldn't ...")` for a file system result code, so `WHY` can explain it. The comment above the
-function is what `WHY VER` shows, so write it for the person typing the command.
+function is what `WHY VER` shows, so write it for the person typing the command. Where your
+code decides something worth knowing, a `TRACE("...")` line says so for `SHOW VER`.
 
 ### Explain a new kind of problem
 
@@ -350,19 +384,22 @@ named whatever the command is called today.
 
 ### Add an AerLang function
 
-In `src/lang/aer_builtins.c`, write the function in the right section:
+The built-ins are in `src/lang/bi_*.c`, one file per topic (`bi_text.c`, `bi_files.c`,
+`bi_graphics.c`...: the top of `src/lang/builtins.h` lists them). Write the function in the file
+for its topic:
 
 ```c
 // twice(n): n times two
-static value_t bi_twice (int argc, value_t* argv, int line) {
+value_t bi_twice (int argc, value_t* argv, int line) {
     (void)argc;
     return aer_int(int_arg(argv, 0, line, "twice") * 2);  // int_arg reports a wrong type for you
 }
 ```
 
-then add `BUILTIN("twice", bi_twice, 1, 1),` to `aer_builtins[]` (name, function, fewest and
-most arguments), and list it in [AERLANG.md](AERLANG.md). The comment above it, starting with
-how it is called, is what `WHY TWICE` shows.
+declare it in `builtins.h` with the others from that file, add
+`BUILTIN("twice", bi_twice, 1, 1),` to `aer_builtins[]` in `aer_builtins.c` (name, function,
+fewest and most arguments), and list it in [AERLANG.md](AERLANG.md). The comment above it,
+starting with how it is called, is what `WHY TWICE` shows.
 
 A function that takes a file's path gets it with `file_arg(..., PERM_READ or PERM_CHANGE, ...)`
 (or `allowed_path`), which asks the person at the keyboard if the program needs permission,
@@ -370,10 +407,45 @@ and fails the same way as a missing file if the answer is no.
 
 ### Add a built-in app or file
 
-Put the file in `src/apps/` (or `src/docs/` for a manual page), then add two lines to
-`src/sys/apps.c`: `EMBEDDED(apps_name_ext)` and a `FILE_ENTRY` saying which folder it goes in
-and whether to refresh it when it changes. The Makefile links it into the kernel automatically.
-On a disk, new names must fit 8.3 (`sample.htm`, not `sample.html`).
+Everything in `src/disk/` is built into AerOS and copied to the same place in AerOS every time
+it starts, so it is there on every computer and every new disk. The folder is laid out just
+like AerOS's own:
+
+| In the repository | In AerOS |
+| --- | --- |
+| `src/disk/bin/hello.aer` | `/bin/hello.aer` |
+| `src/disk/bin/games/snake.aer` | `/bin/games/snake.aer` |
+| `src/disk/docs/index.md` | `/docs/index.md` |
+| `src/disk/sys/startup.wav` | `/sys/startup.wav` |
+
+Using `snake.aer` as the example:
+
+1. **Name it.** On a FAT disk a name must fit 8.3: up to 8 letters or digits, a dot, up to 3
+   more (`snake.aer` is fine, `snakegame.aer` isn't). The name is also how it is run (`snake`),
+   so check it isn't already a command (`HLP` lists them): a command always wins.
+   **Pick its folder:** games go in `/bin/games/`, other apps in `/bin/`. Both are searched
+   when an app is run by its name (`aer_app_folders` in `lang/aerlang.h`, `/bin/` first), and
+   by Tab completion. To add another folder for apps, make it at boot (`make_base_folders` in
+   `sys/f_sys.c`) and add it to `aer_app_folders`. If an app moves to a new folder, the old
+   copy an earlier AerOS left in `/bin/` is deleted on the next boot, unless it was changed.
+2. **Put it in `src/disk/bin/games/`.** That is all: nothing else needs changing. The Makefile
+   picks up every file under `src/disk/`, wraps each in an object file with `ld -b binary`
+   (which gives two symbols for its first and last byte, `_binary_disk_bin_games_snake_aer_start`
+   and `_end`), and writes the table of them, `builtin_files[]`, into `obj/builtin_index.c`.
+   Files in `/docs/` are *refreshed* (replaced whenever they differ, so the manual matches the
+   running AerOS). Everything else is an app or system file: a copy someone has changed on their
+   disk is kept, and only an untouched one is replaced by a newer version (see the top of
+   `sys/apps.c`).
+3. **Build and run it:** `make run` (in `src/`). The boot log's `APPS` line counts what was
+   added, and then `snake` runs it, Tab completes its name, and `read /bin/games/snake.aer`
+   shows it. On your own disk image it is added on the first boot after the build, because it
+   isn't there yet.
+4. **Optional:** list it in the manual (the app table in `src/disk/docs/aerlang.md`) and in the
+   README.
+
+To try an app on your own disk without building it in, copy it there instead:
+`make disk-put FILE=disk/bin/games/snake.aer DIR=/bin/games`. It isn't then on new disks, or in
+the repository.
 
 ### Add a real-time task (RT mode)
 
@@ -411,8 +483,12 @@ millisecond the due ones run in order, shortest period first.
 
 * Every file starts with a comment saying what it is for and how it works.
 * Every function has a comment right above it (no blank line in between): `WHY` reads them,
-  so they are the explanation people see inside AerOS. A function's definition starts at
-  column 0 with its return type, `int fs_list (...) {`, which is how `SRC` finds it.
+  so they are the explanation people see inside AerOS. A function's definition is one line,
+  starting at column 0 with its return type and ending with its `{`, `int fs_list (...) {`, and
+  its closing `}` is at column 0: that is how `SRC` finds where it starts and ends. `make check`
+  (`tools/check.py`) checks all three, and says where anything breaks them.
+* Where a function decides something or does something worth knowing, a `TRACE("...")` line
+  says so in plain words, for `SHOW` (see `src/sys/trace.h`).
 * Comments explain **why**, and anything that isn't obvious from the code: the hardware's rules,
   the edge cases, the reasons for a choice.
 * Functions return a value or an `*_OK` / `*_ERR_*` code with a matching `*_strerror()` message.

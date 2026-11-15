@@ -9,7 +9,7 @@ It's an opensource operating system and its design is remarkably simple consider
 Like many other operating systems, apps that shape the user experience can be edited in realtime. If you don't like how the text editor works, change it using said editor and save your changes. Then reload the app to test said changes immediately. No recompiling needed.
 
 ## What makes it different
-- **It explains itself.** Type `why` after anything goes wrong and AerOS tells you what happened, why, and what to do. `why del` explains a command from the comments in its own source code, `src del` shows that code, and the whole source is built in as the read-only `/src/` folder.
+- **It explains itself.** Type `why` after anything goes wrong and AerOS tells you what happened, why, and what to do. `why del` explains a command from the comments in its own source code, `src del` shows that code, and the whole source is built in as the read-only `/src/` folder. `show del notes.txt` runs a command and then tells you, step by step, what AerOS did inside to carry it out.
 - **The prompt is a programming language.** Anything that isn't a command runs as AerLang: `let x = 2`, `x * 10`, `for f in la() do print(f) end`. `cmd("la")` turns a command's output into data.
 - **Apps ask before they touch your files.** Programs read AerOS's own files freely, but ask before reading yours or changing anything (yes, always, or no).
 - **Files remember their past.** Changing or deleting a file in your home folder keeps the old version: `vers notes.txt`, `rd notes.txt@2`, `undo notes.txt`.
@@ -27,6 +27,8 @@ AerOS is written to be read. Every source file starts with an explanation of wha
 - [AerLang](docs/AERLANG.md): the built-in programming language
 - [Security](docs/SECURITY.md): user accounts, password hashing and file encryption, with every algorithm explained
 - [Sound](docs/AUDIO.md): the AC'97 driver and WAV / MP3 playback
+- [The log](docs/LOGS.md): every boot, warning and shutdown kept in a database, how a crash is noticed, and why only AerOS can write to it
+- [Testing](docs/TESTING.md): `make test` boots AerOS in QEMU and checks it works, and how to write a test
 
 ## But why basic C?
 It offers a programming interface that is more convient than assembly language. However, assembly language will be used to implement lower level functionality as that is the only way this can be accomplished. 
@@ -51,7 +53,7 @@ I've decided to use inline assmembly in C with the GCC GNU99 standard for the mo
 - [x] Successful build for printing text.
 - [x] Implement boot process that calls the main methods.
 - [x] Implement a memory pool and a way to assign / un-assign memory. (kernel heap: malloc / free / realloc, a 4MB pool plus the free RAM found at boot)
-- [x] Hardware drivers for user input. (PS/2 keyboard on IRQ1)
+- [x] Hardware drivers for user input. (PS/2 keyboard on IRQ1, and a PS/2 mouse on IRQ12 for AerLang programs)
 - [x] Switch to interrupt instead of maths for delays. (PIT timer at 1000Hz)
 - [x] Sound driver for error reporting. (PC speaker beep)
 - [x] Implement local filesystem. (FAT16 / FAT32 on IDE disks labelled AEROS, temporary VFS without one)
@@ -68,10 +70,13 @@ I've decided to use inline assmembly in C with the GCC GNU99 standard for the mo
 - [x] Scrollback. (Page Up / Page Down in the terminal look back through the last 400 lines of output)
 - [x] Games groundwork. (a back buffer for smooth drawing, held keys, and a mixer playing up to 8 sounds at once)
 - [x] Video. (PLY plays MPEG-1 .mpg videos full screen with their sound in step, using pl_mpeg; see docs/VIDEO.md)
-- [x] An OS that explains itself. (WHY explains problems, commands and functions, SRC shows the code, /src/ holds it all)
+- [x] An OS that explains itself. (WHY explains problems, commands and functions, SRC shows the code, /src/ holds it all, and SHOW narrates what a command did inside)
 - [x] AerLang at the prompt. (variables, sums and code right in the terminal, "did you mean", and cmd() for a command's output)
 - [x] Programs ask first. (apps ask before reading your files or changing any, PERM remembers the answers)
 - [x] File versions. (the last 10 versions of every file in a home folder: VERS, file@N and UNDO)
 - [x] RT mode, experimental. (boot option 6: real-time tasks from the timer, a schedulability check and a watchdog; RT lists them)
+- [x] Decimal numbers in AerLang. (3.14, 7 / 2.0, sqrt, sin, cos, atan2, floor, round, PI, on the x87 FPU)
+- [x] A 3D game demo. (MAZE3D, a first-person maze drawn with ray casting, with mouse look, written in AerLang to show what it can do)
+- [x] A database. (AerDB: tables of rows in one file, a little SQL, the SQL command and dbopen / dbrun / dbquery in AerLang)
 - [x] Ethernet network driver. (Intel e1000, sealed messages only, and a firewall that blocks everything until FW ALLOW; see docs/NETWORK.md)
 - [ ] More in the pipeline coming soon..

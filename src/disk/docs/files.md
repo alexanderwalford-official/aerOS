@@ -6,11 +6,12 @@
 | --- | --- |
 | `/acc/` | the accounts file, `users`, and what programs may always do, `perms` |
 | `/bin/` | the apps: `hello.aer`, `read.aer`, pictures... |
+| `/bin/games/` | the games: `snake.aer`, `maze3d.aer`, `guess.aer`, `move.aer` |
 | `/docs/` | this manual |
 | `/home/<name>/` | each user's own folder, where the prompt starts |
 | `/home/<name>/versions/` | the [old versions](versions.md) of the files in it |
 | `/src/` | AerOS's own source code, read only ([more](why.md)) |
-| `/sys/` | system files, like `startup.wav` and `apps.lst` |
+| `/sys/` | system files, like `startup.wav`, `apps.lst` and [the log](logs.md), `logs.db` |
 | `/sys/cache/`, `/sys/tmp/` | room for the system to work in |
 | `/conf.aer` | settings (not used much yet) |
 

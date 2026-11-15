@@ -31,7 +31,8 @@
     The terminal's own commands, and code typed at its prompt, never ask: that is you. (So
     AerLang's cmd(), which runs a terminal command, only works at the prompt.)
 
-    The checks are made by AerLang's file functions (lang/aer_builtins.c), which call
+    The checks are made by AerLang's file functions (lang/bi_files.c, through file_arg and
+    allowed_path in lang/bi_args.c), which call
     perm_allows() before they do anything.
 */
 #ifndef PERM_H
@@ -49,6 +50,15 @@ typedef enum {
 // program's own file is ("/bin/", "viewer.aer"), args is what was typed after its name
 void perm_program_started (const char* folder, const char* name, const char* args);
 void perm_program_ended (void);
+
+// the running program's file name ("viewer.aer"), or "" when no program is running
+const char* perm_program_name (void);
+
+// Ask the person at the keyboard a yes / no question, in the same yellow "[ ? ]" style (or box
+// over graphics) as a permission question. Unlike those there's no "always": it is asked every
+// time, for things that should never be agreed to in advance (logclear() in lang/bi_system.c).
+// True only for Y; N, Esc, Ctrl+C or no keyboard are no
+bool perm_confirm (const char* question);
 
 // May the running program read (PERM_READ) or change (PERM_CHANGE) the file `name` in
 // `folder`? Asks if it needs to (see above). name is "" when it is about the folder itself

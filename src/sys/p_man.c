@@ -18,8 +18,9 @@
 #include "../lib/primary_definitions.h"
 #include "../lib/aer_comp.h"
 #include "sys_clck.h"
+#include "trace.h"
 
-int p_cnt = 0; // process count, automatic handler
+int p_cnt = 0; // process count, automatic handler (p_create adds one, p_destroy takes one off)
 struct process p_stack[P_STACK_SIZE]; // process stack
 static unsigned int p_next_seq = 1; // the queue position the next p_queue_add() hands out
 
@@ -74,20 +75,31 @@ int p_create (const char* c_p_inst) {
         p->p_et = (unsigned int)slen(p->p_inst) * 10; // 0.01 seconds per character
         p->p_rs = P_DEAD;
         p_cnt++;
+        TRACE("made process %d for \"%s\" (it waits until it is run)", id, p->p_inst);
         return id;
     }
     // every slot is in use
     return -1;
 }
 
-// destroy a process, its ID can then be re-used
-// zeroing the slot also clears p_used, which is what marks it as free for p_create()
-void p_destroy (int p_id) {
+// destroy a process, its ID can then be re-used. Returns false if there was nothing to destroy
+// or the process is RUNNING. Zeroing the slot also clears p_used, which is what marks it as free
+// for p_create()
+bool p_destroy (int p_id) {
     if (!p_valid(p_id)) {
-        return; // already free (or never existed), so the count must not go down twice
+        return false; // already free (or never existed), so the count must not go down twice
+    }
+    // A RUNNING process is further up the call stack, still inside compile(). If its slot were
+    // wiped here, p_create() could hand the slot to a new process, and when the old code finished
+    // p_stack_exec would mark that new process DEAD. So it stays: whoever started it destroys it
+    // once it has finished, as kernel.c and the RUN command do
+    if (p_stack[p_id].p_rs == P_RUNNING) {
+        return false;
     }
     memset(&p_stack[p_id], 0, sizeof(p_stack[p_id]));
     p_cnt--;
+    TRACE("process %d has finished, and its slot is free again", p_id);
+    return true;
 }
 
 // freeze a process (milliseconds)
@@ -126,7 +138,8 @@ void p_exec (int p_id) {
         return;
     }
 
-    // first, add to the process stack so that it can be queued for execution by setting its state to live
+    // first, queue it for execution by setting its state to live (it is already on the process
+    // stack from p_create(), this is what makes the scheduler pick it up)
     p_stack[p_id].p_rs = P_LIVE;
 
     // hand out tickets, then run everything that is live
@@ -202,7 +215,9 @@ void p_stack_exec (int p_id) {
         return;
     }
     struct process* p = &p_stack[p_id];
+    // RUNNING first, so a nested p_exec() of this same process (see p_exec) leaves it alone
     p->p_rs = P_RUNNING;
+    TRACE("running process %d: \"%s\"", p_id, p->p_inst);
 
     // a process with no code has nothing to compile (p_create("") makes one of these)
     if (p->p_inst[0] == '\0') {
@@ -249,17 +264,23 @@ void stack_print (void) {
 // ---- the queue ----------------------------------------------------------------------------------
 // see "The queue" in p_man.h
 
+// add code to the end of the queue, returns how many are now queued (-1 if the stack is full)
 int p_queue_add (const char* code) {
     int id = p_create(code);
     if (id < 0) {
         return -1;
     }
+    // WAITING rather than LIVE, so the scheduler leaves it alone until p_queue_run gets to it
     p_stack[id].p_rs = P_WAITING;
+    // slot IDs are re-used, so they can't tell us the order things were added in: every process
+    // gets the next number from an ever growing counter instead
     p_stack[id].p_seq = p_next_seq++;
     return p_queue_count();
 }
 
+// how many processes are waiting in the queue
 int p_queue_count (void) {
+    // there is no separate list, the queue is simply every WAITING slot
     int count = 0;
     for (int i = 0; i < P_STACK_SIZE; ++i) {
         if (p_stack[i].p_used && p_stack[i].p_rs == P_WAITING) {
@@ -271,6 +292,7 @@ int p_queue_count (void) {
 
 // the WAITING process that was queued first, -1 if the queue is empty
 static int p_queue_first (void) {
+    // the lowest p_seq is the oldest, wherever its slot happens to be
     int first = -1;
     for (int i = 0; i < P_STACK_SIZE; ++i) {
         if (p_stack[i].p_used && p_stack[i].p_rs == P_WAITING &&
@@ -281,10 +303,14 @@ static int p_queue_first (void) {
     return first;
 }
 
+// call fn with each queued process's code, in the order they will run (ctx is passed on to fn)
 void p_queue_each (void (*fn)(int position, const char* code, void* ctx), void* ctx) {
     // walk the queue in order by repeatedly finding the next sequence number after the last one
+    // (sequence numbers start at 1, so after = 0 finds the first one. Scanning the whole stack
+    // each time is slow in theory, but there are only P_STACK_SIZE slots, and it needs no sorting)
     unsigned int after = 0;
     for (int position = 1;; position++) {
+        // the WAITING process with the smallest sequence number that is still bigger than after
         int next = -1;
         for (int i = 0; i < P_STACK_SIZE; ++i) {
             if (p_stack[i].p_used && p_stack[i].p_rs == P_WAITING && p_stack[i].p_seq > after &&
@@ -292,6 +318,7 @@ void p_queue_each (void (*fn)(int position, const char* code, void* ctx), void* 
                 next = i;
             }
         }
+        // none left after the last one: the whole queue has been shown
         if (next < 0) {
             return;
         }
@@ -300,9 +327,11 @@ void p_queue_each (void (*fn)(int position, const char* code, void* ctx), void* 
     }
 }
 
+// take everything out of the queue without running it, returns how many there were
 int p_queue_clear (void) {
     int cleared = 0;
     for (int i = 0; i < P_STACK_SIZE; ++i) {
+        // only the WAITING ones: the running terminal and anything else on the stack stay
         if (p_stack[i].p_used && p_stack[i].p_rs == P_WAITING) {
             p_destroy(i);
             cleared++;
@@ -311,8 +340,10 @@ int p_queue_clear (void) {
     return cleared;
 }
 
+// run the queue, oldest first, until it is empty or stop() says to stop. Returns how many ran
 int p_queue_run (void (*before)(int number, int total, const char* code), bool (*stop)(void)) {
     int ran = 0;
+    // look for the oldest one afresh every time round, as a program may queue more while it runs
     for (;;) {
         int next = p_queue_first();
         if (next < 0) {
@@ -320,11 +351,16 @@ int p_queue_run (void (*before)(int number, int total, const char* code), bool (
         }
         ran++;
         // a program that queues more while it runs makes the total grow, so it is counted each time
+        // (the ones run so far, plus the ones still waiting, which includes this one: hence the - 1)
         if (before) {
             before(ran, ran + p_queue_count() - 1, p_stack[next].p_inst);
         }
+        // the scheduler only runs LIVE processes, so the rest of the queue stays WAITING for later
+        // turns of this loop
         p_exec(next); // WAITING -> LIVE -> RUNNING -> DEAD
+        // finished with: free the slot, so a long queue can't fill the stack with DEAD processes
         p_destroy(next);
+        // asked after each program, never in the middle of one
         if (stop && stop()) {
             break;
         }

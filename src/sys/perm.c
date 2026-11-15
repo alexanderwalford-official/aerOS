@@ -4,7 +4,7 @@
     perm_allows() goes through the rules in order, and stops at the first that decides:
 
         1. no program running (the terminal, code at the prompt)     allowed
-        2. /acc/ (the accounts)                                      refused
+        2. /acc/ (the accounts), or changing AerOS's log             refused
         3. reading the system's files, the program's own, or a
            file named after it on the command line                   allowed
         4. answered already while this program runs (Y or N)         that answer
@@ -26,6 +26,8 @@
 #include "../drivers/video/gfx.h"
 #include "../drivers/input/IO.h"
 #include "../lib/primary_definitions.h"
+#include "trace.h"
+#include "syslog.h"
 
 #define PERM_FILE_FOLDER "/acc/"
 #define PERM_FILE_NAME   "perms"
@@ -48,17 +50,26 @@ static struct {
 } decisions[DECISIONS_MAX];
 static int decision_count = 0;
 
+// a program is starting: remember who it is and what was typed after it, with no answers yet
 void perm_program_started (const char* folder, const char* name, const char* args) {
     program.running = true;
     scpy(program.folder, folder, sizeof(program.folder));
     scpy(program.name, name, sizeof(program.name));
     scpy(program.args, args != NULL ? args : "", sizeof(program.args));
+    // Y and N answers only last while one program runs, so a new one starts with none
     decision_count = 0;
 }
 
+// the program has finished: back to rule 1 (everything allowed) for the terminal
 void perm_program_ended (void) {
     program.running = false;
+    // forget its Y and N answers, so the next program can't use them
     decision_count = 0;
+}
+
+// the running program's file name (see perm.h)
+const char* perm_program_name (void) {
+    return program.running ? program.name : "";
 }
 
 // the words "read" and "change", as they are kept in /acc/perms and shown in questions
@@ -76,8 +87,12 @@ static bool covers (perm_kind_t given, perm_kind_t wanted) {
 //  Rule 3: what can be read without asking
 // =================================================================================================
 
+// is this folder one of the system's own, or inside one? Those hold nothing private, so any
+// program can read them
 static bool system_folder (const char* folder) {
     static const char* const free_to_read[] = { "/bin/", "/docs/", "/src/", "/sys/" };
+    // comparing only the first slen(system) characters means folders inside these count too,
+    // "/docs/aerlang/" starts with "/docs/". The trailing '/' stops "/binder/" matching "/bin/"
     for (size_t i = 0; i < sizeof(free_to_read) / sizeof(free_to_read[0]); i++) {
         const char* system = free_to_read[i];
         if (strncasecmp(folder, system, slen(system)) == 0) {
@@ -91,10 +106,14 @@ static bool system_folder (const char* folder) {
 // tried as a file ("notes.txt" -> this folder and that name) and as a folder ("pics" -> every
 // file in /home/alex/pics/)
 static bool named_by_you (const char* folder, const char* name) {
+    // strtok_r cuts up what it reads, so it works on a copy, keeping program.args whole for
+    // the next check
     char words[ARGS_MAX];
     scpy(words, program.args, sizeof(words));
     char* save = NULL;
     for (char* word = strtok_r(words, " ", &save); word != NULL; word = strtok_r(NULL, " ", &save)) {
+        // the word is turned into a full path the same way the file system would, so
+        // "notes.txt", "./notes.txt" and "/home/alex/notes.txt" all match the same file
         char word_folder[FS_PATH_MAX];
         char word_name[FS_NAME_MAX];
         bool same_file = fs_split_path(word, word_folder, sizeof(word_folder), word_name, sizeof(word_name))
@@ -128,18 +147,24 @@ static bool split_entry (char* line, entry_t* entry) {
     entry->program = strtok_r(NULL, " ", &save);
     const char* kind = strtok_r(NULL, " ", &save);
     entry->folder = strtok_r(NULL, " ", &save);
+    // a short or damaged line is skipped rather than half used
     if (entry->user == NULL || entry->program == NULL || kind == NULL || entry->folder == NULL) {
         return false;
     }
+    // anything other than "change" is read as "read", the smaller of the two, so a strange
+    // word can never give a program more than it was meant to have
     entry->kind = seq(kind, "change") ? PERM_CHANGE : PERM_READ;
     return true;
 }
 
+// the running program's full path, "/bin/viewer.aer", as it is written in /acc/perms
 static void program_path (char* out, size_t size) {
     sfmt(out, size, "%s%s", program.folder, program.name);
 }
 
+// rule 5: has the person logged in said "always" to this program for this folder before?
 static bool always_allowed (const char* folder, perm_kind_t kind) {
+    // no /acc/perms yet means nobody has ever said "always"
     char* text = fs_read_f(PERM_FILE_FOLDER, PERM_FILE_NAME);
     if (text == NULL) {
         return false;
@@ -147,6 +172,8 @@ static bool always_allowed (const char* folder, perm_kind_t kind) {
     char path[FS_PATH_MAX + FS_NAME_MAX];
     program_path(path, sizeof(path));
 
+    // stop at the first line that matches all four parts. The user has to match too: one
+    // person's "always" says nothing about what someone else would allow
     bool allowed = false;
     char* save = NULL;
     for (char* line = strtok_r(text, "\n", &save); line != NULL && !allowed; line = strtok_r(NULL, "\n", &save)) {
@@ -161,12 +188,15 @@ static bool always_allowed (const char* folder, perm_kind_t kind) {
     return allowed;
 }
 
+// an "always" answer: add a line for it to /acc/perms, so rule 5 finds it next time
 static void remember_always (const char* folder, perm_kind_t kind) {
     char path[FS_PATH_MAX + FS_NAME_MAX];
     program_path(path, sizeof(path));
+    // room for the program's path and the folder, plus the user name, the kind and the spaces
     char line[FS_PATH_MAX * 2 + FS_NAME_MAX + 48];
     sfmt(line, sizeof(line), "%s %s %s %s\n", auth_user, path, kind_word(kind), folder);
 
+    // added to the end if the file is there already, otherwise the file is made with this line
     if (fs_file_exists(PERM_FILE_FOLDER, PERM_FILE_NAME)) {
         bool append = true;
         fs_write_f(PERM_FILE_FOLDER, PERM_FILE_NAME, line, append);
@@ -175,11 +205,13 @@ static void remember_always (const char* folder, perm_kind_t kind) {
     }
 }
 
+// call fn for each "always" the logged in user has given, numbered from 1; returns how many
 int perm_each (perm_each_fn fn, void* ctx) {
     char* text = fs_read_f(PERM_FILE_FOLDER, PERM_FILE_NAME);
     if (text == NULL) {
         return 0;
     }
+    // only this user's lines are counted, so the numbers match what perm_forget() expects
     int count = 0;
     char* save = NULL;
     for (char* line = strtok_r(text, "\n", &save); line != NULL; line = strtok_r(NULL, "\n", &save)) {
@@ -193,12 +225,15 @@ int perm_each (perm_each_fn fn, void* ctx) {
     return count;
 }
 
+// forget the logged in user's "always" number `number` (as perm_each() numbers them), or all
+// of them for 0. Returns how many were forgotten
 int perm_forget (int number) {
     char* text = fs_read_f(PERM_FILE_FOLDER, PERM_FILE_NAME);
     if (text == NULL) {
         return 0;
     }
-    // write every line back, except the ones being forgotten
+    // write every line back, except the ones being forgotten. What is kept can never be longer
+    // than what was there, so the old file's size is enough room
     size_t size = slen(text) + 1;
     char* kept = malloc(size);
     if (kept == NULL) {
@@ -214,6 +249,7 @@ int perm_forget (int number) {
         scpy(copy, line, sizeof(copy)); // (split_entry cuts the line up)
         entry_t entry;
         bool is_mine = split_entry(copy, &entry) && strcasecmp(entry.user, auth_user) == 0;
+        // other people's lines (and any damaged ones) are always kept as they were
         if (is_mine) {
             mine++;
             if (number == 0 || number == mine) {
@@ -224,6 +260,7 @@ int perm_forget (int number) {
         scat(kept, line, size);
         scat(kept, "\n", size);
     }
+    // only rewrite the file if something actually changed (false = replace, not add to the end)
     if (forgotten > 0) {
         fs_write_f(PERM_FILE_FOLDER, PERM_FILE_NAME, kept, false);
     }
@@ -239,33 +276,44 @@ int perm_forget (int number) {
 
 typedef enum { ANSWER_NO, ANSWER_YES, ANSWER_ALWAYS } answer_t;
 
-// wait for Y, A or N (Esc and Ctrl+C count as N). With no keyboard (a command run by AerLang's
-// cmd(), where nobody can see the question) the answer is no
-static answer_t wait_for_answer (void) {
+// Wait for Y, A or N (Esc and Ctrl+C count as N). A only counts when can_always is true: a
+// question that has to be asked every time (perm_confirm) ignores it. With no keyboard (a
+// command run by AerLang's cmd(), where nobody can see the question) the answer is no
+static answer_t wait_for_answer (bool can_always) {
+    // any other key is ignored, so a stray press can't answer by accident
     for (;;) {
         int key = getk();
+        // getk() gives 0 when there is no keyboard to read from
         if (key == 0 || key == KEY_ESCAPE || kb_take_break()) {
             return ANSWER_NO;
         }
-        switch (tolower(key)) {
-            case 'y': return ANSWER_YES;
-            case 'a': return ANSWER_ALWAYS;
-            case 'n': return ANSWER_NO;
+        char answer = (char)tolower(key);
+        if (answer == 'y') {
+            return ANSWER_YES;
+        }
+        if (answer == 'a' && can_always) {
+            return ANSWER_ALWAYS;
+        }
+        if (answer == 'n') {
+            return ANSWER_NO;
         }
     }
 }
 
 // on the text screen: two lines, and the answer typed after them
-static answer_t ask_in_text (const char* question, const char* choices) {
+static answer_t ask_in_text (const char* question, const char* choices, bool can_always) {
+    // start on a fresh line, in case the program was half way through printing one
     uint8_t x, y;
     console_get_cursor(&x, &y);
     if (x != 0) {
         prtf("\n");
     }
+    // the question in yellow so it stands out from the program's own output, then the
+    // program's colour is put back afterwards
     enum color old_fg = console_fg;
     colour(YELLOW, console_bg);
     prtf("[ ? ] %s\n      %s  ", question, choices);
-    answer_t answer = wait_for_answer();
+    answer_t answer = wait_for_answer(can_always);
     colour(WHITE, console_bg);
     prtf("-> %s\n", answer == ANSWER_ALWAYS ? "always" : answer == ANSWER_YES ? "yes" : "no");
     colour(old_fg, console_bg);
@@ -273,27 +321,32 @@ static answer_t ask_in_text (const char* question, const char* choices) {
 }
 
 // over a program's graphics: a box in the middle of the screen, which leaves no trace
-static answer_t ask_in_graphics (const char* question, const char* choices) {
+static answer_t ask_in_graphics (const char* question, const char* choices, bool can_always) {
     const int margin = 16;        // pixels between the box's edge and the text
     const int line_height = 20;   // the font is 16 pixels tall, plus a gap
+    // the box is as wide as the longer of the two lines (8 pixels per character), and centred
     int text_width = 8 * (int)(slen(question) > slen(choices) ? slen(question) : slen(choices));
     int w = text_width + margin * 2;
     int h = line_height * 2 + margin * 2;
     int x = ((int)gfx_width() - w) / 2;
     int y = ((int)gfx_height() - h) / 2;
 
+    // the overlay saves the pixels under the box first, and gfx_overlay_end() puts them back,
+    // so the program's picture is just as it was once the question is answered
     gfx_overlay_t* overlay = gfx_overlay_begin(x, y, w, h);
     gfx_rect(x, y, w, h, 0xFF7F00);                       // an orange edge...
     gfx_rect(x + 2, y + 2, w - 4, h - 4, 0x202020);       // ...round a dark grey box
     gfx_text(x + margin, y + margin, question, 0xFFFFFF, 1);
     gfx_text(x + margin, y + margin + line_height, choices, 0xFFD080, 1);
-    answer_t answer = wait_for_answer();
+    answer_t answer = wait_for_answer(can_always);
     gfx_overlay_end(overlay);
     return answer;
 }
 
+// rule 6: put the question to the person, on whichever screen the program is using
 static answer_t ask (const char* folder, const char* name, perm_kind_t kind) {
     char question[FS_PATH_MAX + FS_NAME_MAX * 2 + 48];
+    // an empty name means the program wants the folder's list of files, not one file
     if (name[0] != '\0') {
         sfmt(question, sizeof(question), "%s wants to %s files in %s (%s)", program.name, kind_word(kind), folder, name);
     } else {
@@ -301,8 +354,23 @@ static answer_t ask (const char* folder, const char* name, perm_kind_t kind) {
     }
     const char* choices = "Y = yes, this time    A = always    N = no";
 
+    // a width of 0 means graphics mode isn't on, so the text screen is showing
     bool graphics = gfx_width() > 0;
-    return graphics ? ask_in_graphics(question, choices) : ask_in_text(question, choices);
+    return graphics ? ask_in_graphics(question, choices, true) : ask_in_text(question, choices, true);
+}
+
+// a yes / no question, asked like a permission question but every time (see perm.h)
+bool perm_confirm (const char* question) {
+    const char* choices = "Y = yes    N = no";
+    bool graphics = gfx_width() > 0;
+    answer_t answer;
+    if (graphics) {
+        answer = ask_in_graphics(question, choices, false);
+    } else {
+        answer = ask_in_text(question, choices, false);
+    }
+    TRACE("asked you \"%s\": %s", question, answer == ANSWER_YES ? "yes" : "no");
+    return answer == ANSWER_YES;
 }
 
 
@@ -310,23 +378,37 @@ static answer_t ask (const char* folder, const char* name, perm_kind_t kind) {
 //  The rules
 // =================================================================================================
 
+// may the running program read or change this file? Goes through rules 1 to 6 at the top
 bool perm_allows (const char* folder, const char* name, perm_kind_t kind) {
     // 1. the terminal and the code typed at it are you
     if (!program.running) {
         return true;
     }
-    // 2. the accounts: never
+    // 2. the accounts: never. This comes before any asking, so a program can't talk anyone
+    // into letting it read password hashes or write itself an "always" in /acc/perms
     if (strncasecmp(folder, PERM_FILE_FOLDER, slen(PERM_FILE_FOLDER)) == 0) {
+        TRACE("%s may never touch %s: the accounts are off limits to programs", program.name, folder);
+        return false;
+    }
+    // ...and AerOS's log can be read (rule 3) but never changed, so there's nothing to ask
+    bool is_log = strcasecmp(folder, SYSLOG_FOLDER) == 0 && strcasecmp(name, SYSLOG_FILE) == 0;
+    if (kind == PERM_CHANGE && is_log) {
+        TRACE("%s may not change %s%s: only AerOS adds to its log (dbopen(path, \"read\") reads it)",
+              program.name, folder, name);
         return false;
     }
     // 3. free to read
     if (kind == PERM_READ) {
         bool own_folder = strcasecmp(folder, program.folder) == 0;
         if (system_folder(folder) || own_folder || named_by_you(folder, name)) {
+            TRACE("%s may read %s%s without asking: %s", program.name, folder, name,
+                  own_folder ? "it is the program's own folder" :
+                  system_folder(folder) ? "it is one of AerOS's own folders" : "you named it");
             return true;
         }
     }
-    // 4. answered already
+    // 4. answered already. A yes to "change" covers reading too, but a no only rules out what
+    // was asked: after "no" to changing, the program may still be asked about reading
     for (int i = 0; i < decision_count; i++) {
         if (strcasecmp(decisions[i].folder, folder) != 0) {
             continue;
@@ -340,14 +422,19 @@ bool perm_allows (const char* folder, const char* name, perm_kind_t kind) {
     }
     // 5. "always", from before
     if (always_allowed(folder, kind)) {
+        TRACE("%s may use %s: you said \"always\" before (PERM lists it)", program.name, folder);
         return true;
     }
 
     // 6. ask
     answer_t answer = ask(folder, name, kind);
+    TRACE("asked you about %s%s for %s: %s", folder, name, program.name,
+          answer == ANSWER_NO ? "no" : answer == ANSWER_ALWAYS ? "always" : "yes, this time");
     if (answer == ANSWER_ALWAYS) {
         remember_always(folder, kind);
     }
+    // remember the answer for rule 4, so the same question isn't asked again and again. Once
+    // the list is full, new answers just aren't kept and the question is asked each time
     if (decision_count < DECISIONS_MAX) {
         scpy(decisions[decision_count].folder, folder, FS_PATH_MAX);
         decisions[decision_count].kind = kind;

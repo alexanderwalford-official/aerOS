@@ -68,9 +68,13 @@ coloured in, and a new line keeps the indentation of the one above.
 | arrows, Home, End, Page Up / Down | move around |
 
 Programs can also be written on another computer and copied onto the AerOS disk with
-`make disk-put FILE=myapp.aer` (see `src/README.md`).
+`make disk-put FILE=myapp.aer` (see `src/README.md`). For Visual Studio Code, the
+[AerLang extension](https://github.com/alexanderwalford-official/aerlang-vscode) colours AerLang
+in too, and suggests keywords, built-ins and their arguments as you type. Its README says how to
+install it, and which VS Code and AerOS versions each version of it works with. When a keyword,
+built-in or constant is added to AerLang, add it there as well.
 
-The apps in `src/apps/` are built into AerOS and copied to `/bin/` when it starts.
+The apps in `src/disk/bin/` are built into AerOS and copied to `/bin/` when it starts.
 
 ## The language
 
@@ -119,6 +123,7 @@ print(area(3, 4))           # 12
 | Type | Examples | Notes |
 | --- | --- | --- |
 | number | `42`, `-7`, `0xFF` | whole numbers, 32 bit. `/` drops the remainder, `%` is the remainder |
+| decimal number | `3.14`, `-0.5`, `2.5e3` | 64 bit floating point (a double), about 15 significant digits |
 | string | `"hi\n"` | escapes: `\n` `\t` `\"` `\\` `\0`. `s[0]` is the first character |
 | list | `[1, "two", [3]]` | `l[0]`, `l[0] = 5`, `l + [6]` makes a new list |
 | bytes | `bytes(100)` | a block of raw bytes (0 to 255), e.g. a file read with `rdb` |
@@ -128,6 +133,26 @@ print(area(3, 4))           # 12
 `nil`, `false` and `0` count as false. `and` / `or` give back one of their values, so
 `input("Name? ") or "friend"` works. `+` joins strings, and turns anything else into text when
 one side is a string: `"Score: " + 10`.
+
+#### Whole and decimal numbers
+
+A number with a decimal point or an exponent is a decimal (`2.0`, `1e6`); one without is whole.
+When both sides of `+ - * / %` are whole, the answer is whole, exactly as it always was:
+`7 / 2` is `3`. When either side is a decimal, so is the answer: `7 / 2.0` is `3.5`, and
+`10 % 3.5` is `3.0`. Comparisons and `==` work across both (`2 == 2.0` is true), and dividing
+by zero is an error either way.
+
+Decimals print with up to six decimal places and at least one (`2.0`, `3.141593`), or with an
+exponent when very big or very small (`1.0e+20`, `1.0e-6`). They keep their full precision
+inside; only the printing rounds.
+
+Anywhere a built-in function wants a whole number (a screen position, a size, a colour), a
+decimal is rounded down, so a game can keep its positions as decimals and still call
+`rect(x, y, 10, 10, colour)`. A list index or a `for` loop's numbers can be decimals only if
+they are whole (`l[1.0]` is fine, `l[1.5]` is an error).
+
+The decimals are worked out by the processor's x87 FPU, switched on when a program starts
+(`lib/fpu.c`); the maths functions are in `lib/aer_math.c`.
 
 ### Built-in functions
 
@@ -156,6 +181,13 @@ encrypted file and `gopen` opens the graphics screen.
 `KEY_ENTER`, `KEY_BACKSPACE`, `KEY_TAB`, `KEY_ESCAPE` ·
 `haskey()` true if a key is waiting
 
+**Maths** (angles are in radians: a whole turn is `2 * PI`)
+`sqrt(x)` · `sin(angle)` · `cos(angle)` · `atan2(y, x)` the angle to the point (x, y) ·
+`floor(x)` rounds down to a whole number · `round(x)` to the nearest · `abs(x)` ·
+`float(x)` a number or text as a decimal (`float("2.5")`, nil if it isn't one) ·
+`int(x)` a decimal with its decimals cut off (`int(-2.7)` is `-2`), or text as a whole number ·
+`PI` (3.14159...)
+
 **Text**
 `len(x)` · `str(x)` · `int("42")` (nil if it isn't a number) · `chr(65)` · `ord("A")` ·
 `sub(s, start, count)` · `find(s, part)` (-1 if missing) · `upper(s)` · `lower(s)` ·
@@ -168,6 +200,31 @@ encrypted file and `gopen` opens the graphics screen.
 `rdf(path)` (nil if missing) · `rdb(path)` · `wrf(path, text)` ·
 `apf(path, text)` · `isf(path)` · `delf(path)` ·
 `la(dir)` (directories end in `/`) · `cwd()` the current directory, e.g. `"/bin/"`
+
+**Databases** (AerDB, `src/db/`: tables of rows in one file, and a little SQL)
+`dbopen(path)` open a database, making it if need be: a number for it, nil if it can't ·
+`dbrun(db, sql, values)` run a statement, giving back how many rows it changed ·
+`dbquery(db, sql, values)` run a SELECT: a list of rows, each a list of its values ·
+`dbclose(db)` close it. Each `?` in the SQL takes the next of `values`, a list:
+
+```
+let db = dbopen("shop.db")
+dbrun(db, "CREATE TABLE items (name TEXT, price REAL)")
+dbrun(db, "INSERT INTO items VALUES (?, ?)", ["tea", 2.5])
+for row in dbquery(db, "SELECT name, price FROM items WHERE price < ?", [3]) do
+    print(row[0], row[1])
+end
+```
+
+The SQL it understands is in the manual inside AerOS (`doc database`); the terminal's `SQL`
+command runs it too. How AerDB works inside starts at the top of `src/db/aerdb.h`.
+
+**A piece of a file at a time** (for files changed in place, like a database's pages)
+`rdat(path, offset, count)` that many bytes from byte `offset`, as bytes (fewer at the end) ·
+`wrat(path, offset, data)` write bytes or text at `offset`, in place, making the file if need
+be (past the end makes it longer, and a gap is zeros) · `trunc(path, size)` make it `size`
+bytes long. They use `fs_write_at` / `fs_truncate` (`src/sys/f_sys.h`), and keep no old
+versions: a database changes pages too often to copy the whole file each time.
 
 `rdf("notes.txt@2")` (and `rdb`, `isf`) reach an old version of a file in a home folder (see
 VERS in the manual). A program asks the person at the keyboard before it reads anything
@@ -274,6 +331,20 @@ Two ways to read keys, for two jobs: `keydown()` for things that last while a ke
 sees the moment it is asked, so a quick tap between two frames can slip past it, while every
 press waits for `key()` until it is read.
 
+**The mouse** (for programs only: the terminal never uses it)
+`mouse()` where the pointer is and which buttons are held, as `[x, y, buttons]`: pixels from
+the top left of the screen, starting in the middle, and `buttons` adds up `MOUSE_LEFT` (1),
+`MOUSE_RIGHT` (2) and `MOUSE_MIDDLE` (4). nil if there is no mouse · `mousemove()` how far the
+mouse has moved since the last `mousemove()`, as `[dx, dy]` (right and down are positive). It
+never stops at the edge of the screen, so it is the one for turning a camera: `[0, 0]` with no
+mouse, so a game still works with the keys alone · `mousedown(button)` is that button held?
+AerOS draws no pointer: a program draws its own, e.g. `rect(m[0], m[1], 4, 4, 0xFFFFFF)`.
+
+The mouse switches on the first time a program asks about it and off when the program ends.
+It is a PS/2 mouse (`src/drivers/input/mouse.c`). In QEMU, click inside the window so it takes
+the mouse, and press Ctrl+Alt+G to let go. On a real computer a USB mouse usually works too, as
+long as the computer's firmware offers "legacy USB" (it then looks like a PS/2 mouse).
+
 ```
 gopen()
 gbuf(true)
@@ -296,10 +367,19 @@ while not keydown(KEY_ESCAPE) do
 end
 ```
 
-`/bin/move.aer` is a small example of all of these. How they work: the back buffer is in
+`/bin/games/move.aer` is a small example of all of these. How they work: the back buffer is in
 `src/drivers/video/gfx.c`, held keys in `src/drivers/input/IO.c`, and the mixer in
 `src/sys/mixer.c`, which feeds the sound card from the timer interrupt so sound keeps playing
 smoothly whatever the program is doing.
+
+`/bin/games/maze3d.aer` (run it with `maze3d`) goes further: a first-person 3D maze, drawn with
+ray casting the way early 3D games were. For each strip of the screen it sends a ray across a
+grid of squares until it hits a wall, and draws that wall shorter the further away it is. The
+crystals are sprites, placed with the same maths backwards and hidden behind nearer walls. It
+uses decimals, `sin` / `cos`, `keydown`, `mousemove` (for looking around), `gbuf` and `frame`,
+and its comments explain each step,
+so it is meant to be read and changed: draw your own maze in `MAP`, add wall colours, or widen
+`STRIP_WIDTH` for more speed on a slow computer.
 
 `/bin/viewer.aer` is a complete app built from these: a picture picker and viewer that zooms
 (`+` / `-`, `0` to fit) by drawing the picture bigger than the screen and moving it around.
