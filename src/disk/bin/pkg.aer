@@ -1,0 +1,263 @@
+# This app is part of the operating system's tooling to provide critical functionality to the user.
+# The operting system will automatically restore this file if it is missing, but the user will not be able to manage packages until it is restored.
+
+# Alexander Walford 2026
+
+# pkg: install extra apps from the package server (docs/PACKAGES.md)
+#
+#     pkg list             what is available
+#     pkg install <name>   check it, show what it could do, ask, then install it
+#     pkg remove <name>    take it off again
+#     pkg installed        what you have installed
+#
+# Everything fetched is checked with verify() against the key built into AerOS (packagekey())
+# before it is used, and nothing is written until you say yes.
+
+# where the packages come from (http://10.0.2.2:8000 is this computer, while testing in QEMU)
+let SERVER = "http://packages.intercon.network" # http://10.0.2.2:8000
+# one line for each installed package: "name version". (File names on AerOS's disk are at most
+# 8 letters, a dot and 3 more, so "installed.txt" wouldn't fit)
+let INSTALLED = "/apps/packages.txt"
+
+
+# ---- the index -----------------------------------------------------------------------------
+
+func fetch_index()
+    # get the index of packages from the server, check it, and return it as a string
+    if packagekey() == "" then
+        print("AerOS has no package key, so packages can't be checked.")
+        return nil
+    end
+
+    # definet he index and signature as the text of the index and its signature from the server
+    let index = httpget(SERVER + "/index.txt")
+    let signature = httpget(SERVER + "/index.sig")
+
+    # if either is nil: say the server can't be reached, and return nil
+    if index == nil or signature == nil then
+        print("Can't reach the package server: fw web packages.intercon.network 80 allows it.")
+        return nil
+    end
+
+    # if the signature doesn't check out: say the index can't be verified, and return nil
+    if verify(index, signature, packagekey()) == false then
+        print("The package index from the server can't be verified, so it won't be used.")
+        return nil
+    end
+    
+    return index
+end
+
+func find_package(index, name)
+    # The line for one package as [name, version, signature, description], or nil if the
+    # index has no such package. (Blank lines and lines starting with # aren't packages)
+    for line in split(index, chr(10)) do
+        # the same lines list_packages shows: not blank, and not a # comment
+        if line != "" and sub(line, 0, 1) != "#" then
+            let parts = split(line, " ")
+            # a package line has at least four parts: name, version, signature, description
+            if parts[0] == name and len(parts) >= 4 then
+                # the description is every word from parts[3] on, put back together
+                let description = parts[3]
+                for i = 4 to len(parts) - 1 do
+                    description = description + " " + parts[i]
+                end
+                return [parts[0], parts[1], parts[2], description]
+            end
+        end
+    end
+    # no line for that name
+    return nil
+end
+
+
+# ---- the commands --------------------------------------------------------------------------
+
+func list_packages()
+    # pkg list: every package in the (checked) index, with its version and description
+    
+    # check to make sure index is available
+    let index = fetch_index()
+    if index == nil then
+        return
+    end
+
+    # split the index into lines, and for each line that isn't blank or a comment, split it into parts
+    for line in split(index, chr(10)) do
+        if line != "" and sub(line, 0, 1) != "#" then
+            let parts = split(line, " ")
+            # the description is every word from parts[3] on, put back together
+            let description = parts[3]
+            for i = 4 to len(parts) - 1 do
+                description = description + " " + parts[i]
+            end
+            print(parts[0] + " " + parts[1] + ": " + description)
+        end
+    end
+
+end
+
+func install(name)
+    # pkg install <name>: docs/PACKAGES.md steps 4 to 8. Every check stops the install if it
+    # fails, and nothing is written until the very end
+
+    print("[ ! ] pkg install: " + name)
+
+    # the checked index (fetch_index says why, if it can't give one)
+    let index = fetch_index()
+    if index == nil then
+        return
+    end
+
+    # the package's line in it: [name, version, signature, description]
+    let package = find_package(index, name)
+    if package == nil then
+        print("There is no package called " + name + ".")
+        return
+    end
+
+    # its program, from the server
+    let program = httpget(SERVER + "/packages/" + name + ".aer")
+    if program == nil then
+        print("Couldn't fetch " + name + " from the package server.")
+        return
+    end
+
+    # verify the signature of the program against the signature in the index, using the built-in key
+    if verify(program, package[2], packagekey()) == false then
+        print(name + " isn't signed by the packages' maker, so it won't be installed.")
+        return
+    end
+
+    # show what it could do (scan gives [what it can do, what is worth a closer look])
+    let found = scan(program)
+    print(name + " " + package[1] + ": " + package[3])
+    if len(found[0]) == 0 then
+        print("  It only works with its own values, prints, and reads what you type.")
+    end
+    for line in found[0] do
+        print("  " + line)
+    end
+    for line in found[1] do
+        print("  ! " + line)
+    end
+
+    # confirm the correct package is being installed, and ask if the user wants to continue:
+    # anything but "y" cancels
+    let answer = input("Install " + name + " " + package[1] + "? (y/n) ")
+    if answer != "y" then
+        print("pkg install: cancelled")
+        return
+    end
+
+    # write the file /apps/<name>.aer
+    if wrf("/apps/" + name + ".aer", program) == false then
+        print("Couldn't write /apps/" + name + ".aer, so it isn't installed.")
+        return
+    end
+
+    # write a line to INSTALLED: "name version" (apf makes the file the first time)
+    if apf(INSTALLED, package[0] + " " + package[1] + chr(10)) == false then
+        print("Installed /apps/" + name + ".aer, but couldn't add it to " + INSTALLED + ".")
+        return
+    end
+    print("Installed " + name + " " + package[1] + ": type " + name + " to run it.")
+end
+
+func remove(name)
+    # pkg remove <name>: delete /apps/<name>.aer, and its line from INSTALLED
+    
+    # get the contents of INSTALLED, or say nothing is installed yet
+    let installed = rdf(INSTALLED)
+
+    # check if the file exists and has content: if not, say nothing is installed yet
+    if installed == nil or installed == "" then
+        print("Nothing is installed yet.")
+        return
+    end
+
+    # is it in the list? (each line is "name version", so the first word is the name)
+    let found = false
+    for line in split(installed, chr(10)) do
+        if line != "" then
+            if split(line, " ")[0] == name then
+                found = true
+            end
+        end
+    end
+
+    # if the package isn't found in INSTALLED, say so and return
+    if found == false then
+        print(name + " isn't installed.")
+        return
+    end
+
+    # delete the package's program (AerOS asks first; if the answer is no, it stays installed)
+    if delf("/apps/" + name + ".aer") == false then
+        print("Couldn't delete /apps/" + name + ".aer, so " + name + " is still installed.")
+        return
+    end
+
+    # rewrite INSTALLED without the package's line: build the new text first, then write it
+    # once, so the list is never left half written
+    let kept = ""
+    for line in split(installed, chr(10)) do
+        if line != "" and split(line, " ")[0] != name then
+            kept = kept + line + chr(10)
+        end
+    end
+    if wrf(INSTALLED, kept) == false then
+        print("Removed /apps/" + name + ".aer, but couldn't update " + INSTALLED + ".")
+        return
+    end
+
+    print("Removed " + name + ".")
+end
+
+func show_installed()
+    # pkg installed: the lines of INSTALLED, or "Nothing is installed yet."
+    
+    let installed = rdf(INSTALLED)
+
+    # check if the file exists and has content: if not, say nothing is installed yet
+    if installed == nil or installed == "" then
+        print("Nothing is installed yet.")
+        return
+    end
+
+    # split and print each line, skipping blank lines
+    print("Installed packages:")
+    for line in split(installed, chr(10)) do
+        if line != "" then
+            print("  " + line)
+        end
+    end
+end
+
+func show_help()
+    print("pkg list             what is available")
+    print("pkg install <name>   check a package, show what it could do, and install it")
+    print("pkg remove <name>    take an installed package off again")
+    print("pkg installed        what you have installed")
+end
+
+
+# ---- which command -------------------------------------------------------------------------
+#
+# args is the list of words typed after "pkg": "pkg install chess" gives ["install", "chess"].
+# len(args) is checked before args[1] is read: reading past the end of a list is an error
+
+if len(args) == 0 then
+    show_help()
+elif args[0] == "list" then
+    list_packages()
+elif args[0] == "installed" then
+    show_installed()
+elif args[0] == "install" and len(args) == 2 then
+    install(args[1])
+elif args[0] == "remove" and len(args) == 2 then
+    remove(args[1])
+else
+    print("pkg doesn't know \"" + join(args, " ") + "\".")
+    show_help()
+end
