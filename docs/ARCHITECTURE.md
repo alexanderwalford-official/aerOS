@@ -14,6 +14,8 @@ The other guides go deeper into one area each:
 * [SECURITY.md](SECURITY.md): user accounts, password hashing and file encryption
 * [AUDIO.md](AUDIO.md): the sound card driver, WAV / MP3 playback and the mixer
 * [VIDEO.md](VIDEO.md): playing MPEG-1 videos, and keeping picture and sound together
+* [PACKAGES.md](PACKAGES.md): installing extra apps from a package server: the format, signing and
+  publishing them, and what the pkg app checks
 * [LOGS.md](LOGS.md): AerOS's log, `/sys/logs.db`: what it records, how a boot's entries get
   there, how a crash is noticed, and why only AerOS can change it
 

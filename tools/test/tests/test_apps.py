@@ -179,3 +179,18 @@ def test_aerlog(t):
     aeros.expect_line('false')
     aeros.quit()
     t.check_disk(disk)
+
+
+def test_installed_apps_run_by_name(t):
+    # /apps/ is where installed packages go: made at boot, and searched after /bin/ and
+    # /bin/games/, so an app there runs by its name, but can't take the place of a built-in one
+    aeros = t.boot()
+    aeros.wait_for(GUEST_PROMPT, 60)
+    aeros.run('mkf /apps/hiya.aer print("hi from an installed app")')
+    aeros.run('mkf /apps/snake.aer print("not the real snake")')
+    aeros.cls()
+    aeros.run('hiya')
+    aeros.expect_line('hi from an installed app')
+    aeros.cls()
+    aeros.run('scan snake')
+    aeros.expect('/bin/games/snake.aer can:')

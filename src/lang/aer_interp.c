@@ -1293,7 +1293,9 @@ bool aer_is_program_name (const char* name, size_t length) {
     return strncasecmp(extension, ".aer", 4) == 0 || strncasecmp(extension, ".ren", 4) == 0;
 }
 
-const char* const aer_app_folders[] = { "/bin/", "/bin/games/", NULL };
+// the folders an app is looked for in (see aerlang.h). /apps/, where installed packages go, comes
+// last, so a package can never take the place of a built-in app with the same name
+const char* const aer_app_folders[] = { "/bin/", "/bin/games/", "/apps/", NULL };
 
 // look for a program: as given, then with ".aer" added, in the current directory and then in
 // each of aer_app_folders. Its source code (free() it), or NULL. folder_out and name_out get

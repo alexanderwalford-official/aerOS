@@ -7,6 +7,7 @@
 | `/acc/` | the accounts file, `users`, and what programs may always do, `perms` |
 | `/bin/` | the apps: `hello.aer`, `read.aer`, pictures... |
 | `/bin/games/` | the games: `snake.aer`, `maze3d.aer`, `guess.aer`, `move.aer` |
+| `/apps/` | apps you have installed with `pkg`: run by name like the built-in ones |
 | `/docs/` | this manual |
 | `/home/<name>/` | each user's own folder, where the prompt starts |
 | `/home/<name>/versions/` | the [old versions](versions.md) of the files in it |
