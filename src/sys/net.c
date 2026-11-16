@@ -34,6 +34,7 @@
 #include "../lib/crypto.h"
 #include "../lib/primary_definitions.h"
 #include "trace.h"
+#include "tcp.h"
 
 // where things are in a frame
 #define ETHERNET_HEADER 14
@@ -41,8 +42,10 @@
 #define UDP_HEADER      8
 #define TYPE_IPV4       0x0800
 #define TYPE_ARP        0x0806
+#define PROTOCOL_TCP    6
 #define PROTOCOL_UDP    17
 #define DNS_PORT        53
+#define IP_PACKET_MAX   1500   // the most an Ethernet frame can carry
 
 #define CONFIG_FOLDER "/acc/"
 #define CONFIG_FILE   "network"
@@ -355,15 +358,16 @@ static uint16_t ip_checksum (const uint8_t* header, size_t length) {
     return (uint16_t)~sum;
 }
 
-// send `length` bytes in a UDP packet, from our port `from_port` to `address`:`to_port`.
-// Nothing checks the firewall here: everything that calls this has
-static int send_udp (uint32_t address, uint16_t from_port, uint16_t to_port, const uint8_t* data, size_t length) {
-    // big enough for the largest sealed message and both headers (static: too big for the stack)
-    static uint8_t packet[IP_HEADER + UDP_HEADER + NET_MESSAGE_MAX + NETSEAL_OVERHEAD];
+// Send `length` bytes of `protocol` (PROTOCOL_UDP or PROTOCOL_TCP: what the bytes are, with
+// their own header first) to `address`, in one IPv4 packet. Nothing checks the firewall here:
+// everything that calls this has
+static int send_ip (uint32_t address, uint8_t protocol, const uint8_t* data, size_t length) {
+    // the whole packet, header and all (static: too big for the stack)
+    static uint8_t packet[IP_PACKET_MAX];
     // every packet gets its own id (it only matters to a receiver putting fragments back
     // together, which never happens here, but each packet should still have a different one)
     static uint16_t next_id = 1;
-    if (IP_HEADER + UDP_HEADER + length > sizeof(packet)) {
+    if (IP_HEADER + length > sizeof(packet)) {
         return NET_ERR_TOO_BIG;
     }
     // Which card the frame goes to: a neighbour's own, or for anywhere further away the
@@ -375,40 +379,51 @@ static int send_udp (uint32_t address, uint16_t from_port, uint16_t to_port, con
     }
 
     // IPv4: version 4 with a 5 word header, its total length, an id, "don't fragment",
-    // 64 hops to live, UDP inside, the checksum, and the two addresses
+    // 64 hops to live, what is inside, the checksum, and the two addresses
     //
     //     0   version (top 4 bits) and header length in 32 bit words (bottom 4)
     //     1   type of service, 0          8   time to live (hops)
-    //     2   total length (2)            9   protocol, 17 for UDP
+    //     2   total length (2)            9   protocol: 6 TCP, 17 UDP
     //     4   id (2)                      10  header checksum (2)
     //     6   flags and fragment (2)      12  source address (4)
     //                                     16  destination address (4)
-    uint16_t total = (uint16_t)(IP_HEADER + UDP_HEADER + length);
-    memset(packet, 0, IP_HEADER + UDP_HEADER);
+    uint16_t total = (uint16_t)(IP_HEADER + length);
+    memset(packet, 0, IP_HEADER);
     packet[0] = 0x45;                    // 4 = IPv4, 5 words = 20 bytes, no options
     put16(packet + 2, total);
     put16(packet + 4, next_id++);
     put16(packet + 6, 0x4000);           // bit 14, "don't fragment"; fragment offset 0
     packet[8] = 64;                      // each router takes one off, and drops it at 0
-    packet[9] = PROTOCOL_UDP;
+    packet[9] = protocol;
     put32(packet + 12, config.address);
     put32(packet + 16, address);
     // the checksum last, over the finished header, with its own place still 0 (the memset)
     put16(packet + 10, ip_checksum(packet, IP_HEADER));
+    memcpy(packet + IP_HEADER, data, length);
 
+    // and an Ethernet header round the lot
+    return send_frame(mac, TYPE_IPV4, packet, total) ? NET_OK : NET_ERR_SEND;
+}
+
+// send `length` bytes in a UDP packet, from our port `from_port` to `address`:`to_port`.
+// Nothing checks the firewall here: everything that calls this has
+static int send_udp (uint32_t address, uint16_t from_port, uint16_t to_port, const uint8_t* data, size_t length) {
+    // big enough for the largest sealed message and the header (static: too big for the stack)
+    static uint8_t udp[UDP_HEADER + NET_MESSAGE_MAX + NETSEAL_OVERHEAD];
+    if (UDP_HEADER + length > sizeof(udp)) {
+        return NET_ERR_TOO_BIG;
+    }
     // UDP: the ports and the length. The checksum is left 0 ("none"), which IPv4 allows:
     // the seal checks the message far more thoroughly
     //
     //     0   source port (2)     4   length, header included (2)
     //     2   destination port    6   checksum (2)
-    uint8_t* udp = packet + IP_HEADER;
     put16(udp, from_port);
     put16(udp + 2, to_port);
     put16(udp + 4, (uint16_t)(UDP_HEADER + length));
+    put16(udp + 6, 0);
     memcpy(udp + UDP_HEADER, data, length);
-
-    // and an Ethernet header round the lot
-    return send_frame(mac, TYPE_IPV4, packet, total) ? NET_OK : NET_ERR_SEND;
+    return send_ip(address, PROTOCOL_UDP, udp, UDP_HEADER + length);
 }
 
 
@@ -513,9 +528,9 @@ static void handle_udp (uint32_t from, const uint8_t* udp, size_t length) {
         return;
     }
 
-    // everything else needs a rule, and a seal that opens with the rule's key
+    // everything else needs a rule with a key (not a web rule), and a seal that opens with it
     const fw_rule_t* rule = fw_find(from, to_port);
-    if (rule == NULL) {
+    if (rule == NULL || rule->web) {
         char text[16];
         net_format_address(from, text);
         TRACE("blocked a packet from %s to port %u: no firewall rule allows it", text, to_port);
@@ -561,11 +576,19 @@ static void handle_ipv4 (const uint8_t* packet, size_t length) {
     // the lengths must agree with each other and with what arrived. total can be less than
     // length: a short packet arrives padded out to Ethernet's 60 byte minimum frame
     bool sound = header_length >= IP_HEADER && total >= header_length && total <= length;
-    if (!sound || fragment || packet[9] != PROTOCOL_UDP) {
-        block(from, 0); // TCP, ICMP (ping), pieces of a bigger packet: never let in
+    bool known = packet[9] == PROTOCOL_UDP || packet[9] == PROTOCOL_TCP;
+    if (!sound || fragment || !known) {
+        block(from, 0); // ICMP (ping), pieces of a bigger packet: never let in
         return;
     }
-    // the UDP packet starts after the IP header (options and all), and ends where total says
+    // what is inside starts after the IP header (options and all), and ends where total says.
+    // TCP has its own file, which only lets in answers on the connections AerOS opened
+    if (packet[9] == PROTOCOL_TCP) {
+        if (!tcp_handle(from, packet + header_length, total - header_length)) {
+            block(from, 0);
+        }
+        return;
+    }
     handle_udp(from, packet + header_length, total - header_length);
 }
 
@@ -611,8 +634,33 @@ const char* net_strerror (int error) {
         case NET_ERR_TOO_BIG: return "too long for one message";
         case NET_ERR_NO_NAME: return "the DNS server knows no such name";
         case NET_ERR_SEND: return "the network card wouldn't send it";
+        case NET_ERR_REFUSED: return "the other computer refused the connection";
+        case NET_ERR_CLOSED: return "the connection was closed";
         default: return "unknown error";
     }
+}
+
+// ---- for TCP (sys/tcp.c), which builds its own packets but sends and collects them here ----
+
+// the card is running and the settings are read (see ready)
+bool net_up (void) {
+    return ready();
+}
+
+// AerOS's own address, which TCP puts in its checksum
+uint32_t net_own_address (void) {
+    load_config();
+    return config.address;
+}
+
+// send a finished TCP segment (header and data) to an address, in an IPv4 packet
+int net_send_tcp (uint32_t address, const uint8_t* segment, size_t length) {
+    return send_ip(address, PROTOCOL_TCP, segment, length);
+}
+
+// collect whatever the card has received, and deal with it (see poll)
+void net_poll (void) {
+    poll();
 }
 
 // find the card and start it, at boot. The settings wait until the network is first used
@@ -693,8 +741,9 @@ int net_send (uint32_t address, uint16_t port, const void* message, size_t lengt
     const fw_rule_t* rule = fw_find(address, port);
     char text[16];
     net_format_address(address, text);
-    if (rule == NULL) {
-        TRACE("not sending to %s port %u: the firewall has no rule for it, so nothing goes out", text, port);
+    if (rule == NULL || rule->web) {
+        TRACE("not sending to %s port %u: the firewall has no rule with a password for it, so nothing goes out",
+              text, port);
         return NET_ERR_BLOCKED;
     }
     TRACE("the firewall allows %s port %u: sealing %u bytes with the rule's key", text, port,

@@ -251,7 +251,9 @@ prompt it puts away everything it can. `MEM` shows what app mode did for the las
 
 **Network** (sealed messages, to and from computers the firewall allows: see NETWORK.md)
 `nsend(host, port, text)` true if it was sent (host is an address, or a name a rule was made
-for) · `nrecv(port, ms)` wait up to ms milliseconds: the message, or nil
+for) · `nrecv(port, ms)` wait up to ms milliseconds: the message, or nil ·
+`httpget(url)` fetch a web page (http:// only) from a computer a web rule (`FW WEB`) allows: its
+text if the status was 2xx, or nil
 
 **Encrypted files** (AES-256 with a password, the file keeps its name)
 `enc(path, password)` · `dec(path, password)` (both true if it worked) ·

@@ -7,6 +7,7 @@
         # AerOS firewall: everything is blocked except these
         allow 10.0.2.2 5000 3f9c...e1                (address, port, shared key in hex)
         allow 93.184.215.14 5000 77a0...12 example.com   (and the name, if it was given as one)
+        web 93.184.215.14 80 example.com             (a web rule: plain TCP, so no key)
 */
 
 #include "firewall.h"
@@ -23,16 +24,32 @@ static fw_rule_t rules[FW_RULES_MAX];
 static int rule_count = 0;
 static bool loaded = false;   // has /acc/firewall been read yet? (see load)
 
-// "allow 10.0.2.2 5000 <64 hex digits> [name]" -> a rule. False if the line isn't one
+// "allow 10.0.2.2 5000 <64 hex digits> [name]" or "web 10.0.2.2 80 [name]" -> a rule. False if
+// the line isn't one
 static bool parse_rule (char* line, fw_rule_t* rule) {
     // split the line into its words (strtok_r writes '\0's into the line as it goes)
     char* save = NULL;
     const char* word = strtok_r(line, " ", &save);
     const char* address = strtok_r(NULL, " ", &save);
     const char* port = strtok_r(NULL, " ", &save);
+    if (word == NULL || address == NULL || port == NULL) {
+        return false;
+    }
+
+    // a web rule: an address, a port and maybe a name, but no key
+    memset(rule, 0, sizeof(fw_rule_t));
+    if (seq(word, "web")) {
+        const char* name = strtok_r(NULL, " ", &save);
+        int port_number = atoi(port);
+        rule->web = true;
+        rule->port = (uint16_t)port_number;
+        scpy(rule->name, name != NULL ? name : "", sizeof(rule->name));
+        return net_parse_address(address, &rule->address) && port_number > 0 && port_number <= 65535;
+    }
+
     const char* key = strtok_r(NULL, " ", &save);
     const char* name = strtok_r(NULL, " ", &save);
-    if (word == NULL || !seq(word, "allow") || address == NULL || port == NULL || key == NULL) {
+    if (!seq(word, "allow") || key == NULL) {
         return false;
     }
     // Every part must make sense: a real address, a port from 1 to 65535 (0 isn't one), and
@@ -95,8 +112,12 @@ static void save (void) {
         crypto_to_hex(rules[i].key, NETSEAL_KEY_SIZE, key);
         // the name, if there is one, goes on the end after a space; otherwise nothing at all,
         // so the line doesn't end with a stray space
-        sfmt(line, sizeof(line), "allow %s %u %s%s%s\n", address, rules[i].port, key,
-             rules[i].name[0] != '\0' ? " " : "", rules[i].name);
+        const char* space = rules[i].name[0] != '\0' ? " " : "";
+        if (rules[i].web) {
+            sfmt(line, sizeof(line), "web %s %u%s%s\n", address, rules[i].port, space, rules[i].name);
+        } else {
+            sfmt(line, sizeof(line), "allow %s %u %s%s%s\n", address, rules[i].port, key, space, rules[i].name);
+        }
         scat(text, line, size);
         // these held the key too, and are on the stack where the next function would find them
         wipe(key, sizeof(key));
@@ -154,7 +175,28 @@ bool fw_allow (uint32_t address, uint16_t port, const char* name, const uint8_t 
     rule->address = address;
     rule->port = port;
     scpy(rule->name, name, sizeof(rule->name));
+    rule->web = false;
     memcpy(rule->key, key, NETSEAL_KEY_SIZE);
+    save();
+    return true;
+}
+
+// add a web rule (FW WEB), or replace the one for the same address and port, and save them all
+bool fw_allow_web (uint32_t address, uint16_t port, const char* name) {
+    load();
+    fw_rule_t* rule = (fw_rule_t*)fw_find(address, port);
+    if (rule == NULL) {
+        if (rule_count == FW_RULES_MAX) {
+            return false;
+        }
+        rule = &rules[rule_count++];
+    }
+    // (wiped first: a sealed rule it replaces had a key, which a web rule mustn't keep)
+    wipe(rule, sizeof(fw_rule_t));
+    rule->address = address;
+    rule->port = port;
+    scpy(rule->name, name, sizeof(rule->name));
+    rule->web = true;
     save();
     return true;
 }
@@ -189,11 +231,12 @@ const fw_rule_t* fw_rule (int number) {
     return number >= 1 && number <= rule_count ? &rules[number - 1] : NULL;
 }
 
-// does any rule, for any address, allow this port? If none does, nothing can ever arrive on it
+// does any rule, for any address, allow sealed messages on this port? If none does, none can
+// ever arrive on it (web rules don't count: see firewall.h)
 bool fw_port_open (uint16_t port) {
     load();
     for (int i = 0; i < rule_count; i++) {
-        if (rules[i].port == port) {
+        if (rules[i].port == port && !rules[i].web) {
             return true;
         }
     }

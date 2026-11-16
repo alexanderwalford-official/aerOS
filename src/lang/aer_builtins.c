@@ -98,6 +98,7 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("cmd", bi_cmd, 1, 1),
     BUILTIN("nsend", bi_net_send, 3, 3),
     BUILTIN("nrecv", bi_net_receive, 2, 2),
+    BUILTIN("httpget", bi_http_get, 1, 1),
     BUILTIN("dbopen", bi_dbopen, 1, 2),
     BUILTIN("dbrun", bi_dbrun, 2, 3),
     BUILTIN("dbquery", bi_dbquery, 2, 3),
@@ -156,7 +157,7 @@ static const struct {
     { APP_FILES,    { "rdf", "rdb", "wrf", "apf", "isf", "delf", "la", "cwd", "enc", "dec",
                       "isenc", "rdenc", "rdat", "wrat", "trunc", "dbopen", "dbrun", "dbquery",
                       "dbclose", NULL } },
-    { APP_NETWORK,  { "nsend", "nrecv", NULL } },
+    { APP_NETWORK,  { "nsend", "nrecv", "httpget", NULL } },
 };
 
 // the part a built-in's name belongs to, 0 for the ones every program has (print, len...)

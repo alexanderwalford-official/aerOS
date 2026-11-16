@@ -205,10 +205,12 @@ static const explanation_t explanations[PROBLEM_COUNT] = {
         "The firewall blocks that: it has no rule for that address and port.",
         "The firewall is always on, and starts with everything blocked both ways. Nothing is "
         "sent to a computer, or let in from it, until you allow its address (or name) and port "
-        "yourself, and even then only messages sealed with the password you gave are let in.",
-        "@cli_firewall ALLOW <address> <port> allows a computer (it asks for the password both "
-        "ends will use). @cli_firewall lists what is allowed, and @cli_network shows the last "
-        "thing that was blocked.",
+        "yourself. A rule with a password lets sealed messages through; a web rule lets AerOS "
+        "fetch web pages (plain TCP) from that computer. Neither stands in for the other.",
+        "@cli_firewall ALLOW <address> <port> allows sealed messages (it asks for the password "
+        "both ends will use). @cli_firewall WEB <name> allows fetching web pages from it with "
+        "@cli_get. @cli_firewall lists what is allowed, and @cli_network shows the last thing "
+        "that was blocked.",
         "net_send", NULL,
     },
     [PROBLEM_NO_ANSWER] = {
@@ -293,6 +295,7 @@ problem_t explain_net_problem (int net_error) {
         case NET_ERR_BLOCKED:   return PROBLEM_BLOCKED;
         case NET_ERR_NO_ANSWER: return PROBLEM_NO_ANSWER;
         case NET_ERR_NO_NAME:   return PROBLEM_UNKNOWN_HOST;
+        case NET_ERR_REFUSED:   return PROBLEM_NO_ANSWER;
         default:                return PROBLEM_OTHER;
     }
 }

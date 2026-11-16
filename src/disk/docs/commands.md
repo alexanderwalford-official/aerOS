@@ -106,9 +106,11 @@ go
 | `net ip <address> <gateway> <dns>` | set AerOS's address: `net ip 10.0.2.15/24 10.0.2.2 10.0.2.3` |
 | `fw` | what the firewall allows (nothing, to start with) |
 | `fw allow <address or name> <port>` | allow one computer on one port, with a shared password |
+| `fw web <address or name> [port]` | allow fetching web pages from one computer (port 80 unless given) |
 | `fw del <n>` | block it again |
 | `msg <address> <port> <text>` | send a sealed message |
 | `lsn <port>` | show the messages that arrive on a port, until Esc |
+| `get <url> [file]` | fetch a web page: show it, or save it in a file (`get http://example.com/`) |
 
 See [The network](network.md).
 

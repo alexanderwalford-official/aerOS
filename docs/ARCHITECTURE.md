@@ -83,8 +83,10 @@ src/
     clipboard.c           the clipboard: copied text, pasted at the prompt or read with clip()
     syslog.c              AerOS's log, /sys/logs.db: every boot, warning and shutdown (an AerDB database)
     net.c                 the network stack: ARP, IPv4, UDP, DNS lookups (NET, MSG, LSN)
-    firewall.c            the firewall's rules, everything blocked until FW ALLOW
-    netseal.c             sealed messages: the only thing ever sent over the network
+    tcp.c                 TCP connections out (for web pages), through web rules
+    http.c                fetching a web page over TCP (GET, httpget)
+    firewall.c            the firewall's rules, everything blocked until FW ALLOW or FW WEB
+    netseal.c             sealed messages: what UDP carries, never in the clear
     appmode.c             app mode: a program gets the memory of the parts of AerOS it doesn't use
     rt.c                  RT mode (boot option 6, experimental): real-time tasks from the timer
     explain.c             WHY and SRC: the last problem, its explanation, and reading the source

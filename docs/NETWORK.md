@@ -1,21 +1,23 @@
 # The network
 
-AerOS's network does one job: sending short messages that can't be read or changed on the way,
-to and from computers you have allowed, and nothing else. There is no way to send anything in
-the clear, and the firewall starts with everything blocked.
+AerOS's network does two jobs: sending short messages that can't be read or changed on the way
+(sealed), and fetching web pages over plain HTTP. Each only talks to computers you have allowed,
+and the firewall starts with everything blocked. Sealed messages are never sent in the clear;
+web pages always are, because web servers know nothing of seals (see "TCP and web pages").
 
 ```
-+------------------------------------------------+
-| your message                                   |  MSG / LSN, nsend() / nrecv()
-+------------------------------------------------+
-| sealed: AES-256-CTR + HMAC-SHA-256 tag         |  sys/netseal.c
-+------------------------------------------------+
-| UDP, if the firewall has a rule for it         |  sys/firewall.c
-+------------------------------------------------+
-| IPv4, ARP                                      |  sys/net.c
-+------------------------------------------------+
-| Ethernet: the Intel e1000 card                 |  drivers/net/e1000.c
-+------------------------------------------------+
++----------------------------------------+   +------------------------------------+
+| your message  MSG / LSN, nsend / nrecv |   | a web page    GET, httpget()       |
++----------------------------------------+   +------------------------------------+
+| sealed: AES-256-CTR + HMAC-SHA-256 tag |   | HTTP                 sys/http.c    |
+|                        sys/netseal.c   |   +------------------------------------+
++----------------------------------------+   | TCP, out only        sys/tcp.c     |
+| UDP, if a sealed rule allows it        |   | ...if a web rule allows it         |
++----------------------------------------+---+------------------------------------+
+| IPv4, ARP                                                      sys/net.c        |
++---------------------------------------------------------------------------------+
+| Ethernet: the Intel e1000 card                       drivers/net/e1000.c        |
++---------------------------------------------------------------------------------+
 ```
 
 ## Using it
@@ -104,6 +106,47 @@ files ([SECURITY.md](SECURITY.md)).
 A message can be up to 1428 bytes: a 1500 byte packet less 20 bytes of IPv4 header, 8 of UDP
 and 44 of seal.
 
+## TCP and web pages
+
+`FW WEB example.com` makes the other kind of firewall rule: a web rule, with no password. It
+allows exactly one thing, AerOS opening TCP connections to that computer and port (80 unless
+given). A web rule is marked `web` in `/acc/firewall` and has no key; `net_send` refuses to seal
+a message for it, and `handle_udp` won't let a message in through it. The other way round,
+`tcp_connect` and `tcp_handle` only accept web rules. So the two kinds never stand in for each
+other.
+
+### TCP (`sys/tcp.c`)
+
+The top of `sys/tcp.h` explains TCP with a picture of a whole connection. AerOS's TCP is the
+smallest that is still correct on a real network:
+
+| | |
+| --- | --- |
+| connecting | SYN with the MSS option, a random port (49152 and up) and a random first sequence number, sent again after 1, 2, 4, 8 and 16 seconds |
+| sending | one segment at a time, each sent again until it is acknowledged (`send_and_wait`). Slow for big uploads, but AerOS only sends requests |
+| receiving | in order only: an early segment (one after a lost one) is dropped and the last acknowledgement repeated, so the other side sends the gap again |
+| the window | the room left in a 16 KB buffer, so what is on its way always fits in the card's 32 receive buffers. Reading makes room, and a window update tells the other side |
+| closing | FIN, then a short wait for its acknowledgement. No TIME_WAIT: each connection has a new random port |
+| never | listening: nothing can connect to AerOS. A segment that isn't for one of its own connections is blocked like any other packet |
+
+Like everything on the network it is polled: `tcp_handle` is called by `net.c` for each TCP
+segment, but only while `tcp_connect`, `tcp_send`, `tcp_receive` or `tcp_close` is waiting and
+calling `net_poll`. `net.c` gives TCP four functions: `net_up`, `net_own_address`,
+`net_send_tcp` (one segment in an IPv4 packet, via the same `send_ip` UDP uses) and `net_poll`.
+
+### HTTP (`sys/http.c`)
+
+`http_get(url, &response)` parses the address, sends `GET <path> HTTP/1.1` with
+`Connection: close`, reads everything until the server closes the connection, and only then takes
+the answer apart: the status line, the headers (`Content-Type`, `Content-Length`,
+`Transfer-Encoding`, `Location`), and the body, put back together first if it was chunked.
+Redirects (301, 302, 303, 307, 308) to another `http://` address are followed up to 5 times.
+Pages are limited to 4 MB.
+
+There is no TLS, so `https://` is turned away with a clear message, and a page can be read or
+changed on the way. That is the right trade for things that are checked once they arrive (a
+package with a signature, for example), and the wrong one for anything private.
+
 ## Inside the stack
 
 `net_init()` finds the card at boot. The settings and rules are read from `/acc/` the first time
@@ -126,9 +169,11 @@ each descriptor pointing at a 2 KB buffer. See the top of `drivers/net/e1000.c`.
 * **ARP.** To send to an address on the local network AerOS has to ask which card has it, and
   it answers when someone asks for AerOS's address. ARP carries addresses, never data, and
   AerOS only asks when it is about to send something a rule allows.
-* **DNS.** `FW ALLOW example.com 5000` asks the DNS server for the address once, when the rule
+* **DNS.** `FW ALLOW example.com 5000` (or `FW WEB example.com`) asks the DNS server for the address once, when the rule
   is made, and says so on the screen, because DNS has no encryption. Nothing else uses DNS:
   `MSG example.com 5000 hi` uses the address saved in the rule.
+* **Web pages.** Everything sent and received over a web rule's TCP connections is plain text,
+  as HTTP is: see "TCP and web pages" above.
 * **No DHCP.** Asking the network for an address would mean sending before anything is
   allowed, so the address is set by hand (`NET IP`), with QEMU's usual one to start.
 
@@ -141,6 +186,7 @@ each descriptor pointing at a 2 KB buffer. See the top of `drivers/net/e1000.c`.
   the same key everywhere: use a different password for each rule.
 * **Keys on the disk.** `/acc/firewall` holds the keys. Programs can't read it, but anyone at the
   terminal, or with the disk, can.
-* **No TCP, IPv6, fragments, or broadcast messages.** So no web pages, and one packet per message.
+* **No HTTPS, IPv6, fragments, broadcast messages, or listening.** Web pages come in the clear,
+  nothing can connect to AerOS, and a sealed message is one packet.
 * **Polling.** Nothing arrives in the background: a message that comes while AerOS is busy with
   something else waits in the card (32 frames at most) until AerOS next looks.

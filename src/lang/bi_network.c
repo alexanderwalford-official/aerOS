@@ -1,7 +1,8 @@
 /*
     bi_network.c
-    AerLang's built-in functions for the network: sending a message to another computer (nsend)
-    and waiting for one (nrecv). Messages are sealed (sys/netseal.c), and only go to and come
+    AerLang's built-in functions for the network: sending a message to another computer (nsend),
+    waiting for one (nrecv), and fetching a web page (httpget). Messages are sealed
+    (sys/netseal.c); web pages come over plain TCP (sys/http.h). Both only go to and come
     from computers the firewall allows (sys/firewall.h, the FW command).
 
     How a built-in works, and how to add one, is at the top of builtins.h.
@@ -11,6 +12,7 @@
 #include "../drivers/input/IO.h"
 #include "../sys/net.h"
 #include "../sys/firewall.h"
+#include "../sys/http.h"
 
 // nsend(host, port, text): send text, sealed, to a computer the firewall allows (FW ALLOW).
 // host is an address ("10.0.2.2") or the name a rule was made for. True if it was sent
@@ -62,4 +64,20 @@ value_t bi_net_receive (int argc, value_t* argv, int line) {
             return aer_nil();
         }
     }
+}
+
+// httpget(url): fetch a web page (sys/http.h) from a computer a web rule allows (FW WEB): the
+// page's text if it came back with a 2xx status ("OK"), nil if not (no web rule, no answer, no
+// such page...). http:// only: AerOS can't do HTTPS yet
+value_t bi_http_get (int argc, value_t* argv, int line) {
+    (void)argc;
+    const char* url = str_arg(argv, 0, line, "httpget")->data.chars;
+    http_response_t page;
+    int result = http_get(url, &page);
+    value_t text = aer_nil();
+    if (result == NET_OK && page.status >= 200 && page.status <= 299) {
+        text = aer_string(page.body, (uint32_t)page.length);
+    }
+    http_free(&page);
+    return text;
 }

@@ -1,20 +1,23 @@
 /*
-    net.h - the network: sealed messages to and from the computers you have allowed
+    net.h - the network: sealed messages, and web pages, to and from computers you have allowed
 
-    A very small network stack, built for one job: sending short messages that can't be read
-    or changed on the way, to and from computers you have allowed, and nothing else.
+    A small network stack, built for two jobs: sending short messages that can't be read or
+    changed on the way (sealed), and fetching web pages over plain TCP (HTTP). Each only ever
+    talks to computers a firewall rule allows.
 
-        +----------------------------------------------+
-        | your message                                 |   net_send / net_receive
-        +----------------------------------------------+
-        | sealed: AES-256 + HMAC tag (sys/netseal.h)   |   the only thing ever sent
-        +----------------------------------------------+
-        | UDP, on the port the firewall allows         |   sys/firewall.h
-        +----------------------------------------------+
-        | IPv4, ARP (finding a neighbour's card)       |   this file
-        +----------------------------------------------+
-        | Ethernet: the e1000 card                     |   drivers/net/e1000.c
-        +----------------------------------------------+
+        +---------------------------------------------+   +--------------------------------+
+        | your message                                |   | a web page: HTTP, sys/http.h   |
+        +---------------------------------------------+   +--------------------------------+
+        | sealed: AES-256 + HMAC tag (sys/netseal.h)  |   | TCP connections, sys/tcp.h     |
+        +---------------------------------------------+   +--------------------------------+
+        | UDP, on a port a sealed rule allows         |   | to a computer a web rule allows|
+        +---------------------------------------------+---+--------------------------------+
+        | IPv4, ARP (finding a neighbour's card)                                this file  |
+        +----------------------------------------------------------------------------------+
+        | Ethernet: the e1000 card                                    drivers/net/e1000.c  |
+        +----------------------------------------------------------------------------------+
+
+    (The firewall's two kinds of rule, sealed and web, are in sys/firewall.h.)
 
     The firewall is always on and starts with everything blocked: until you make a rule with
     FW ALLOW, AerOS sends nothing at all and throws away everything that arrives.
@@ -40,9 +43,11 @@
 
     WHAT IT DOESN'T DO
 
-    No TCP (so no web pages), no IPv6, no DHCP, no fragments: a message must fit in one packet
-    (NET_MESSAGE_MAX bytes). Nothing arrives in the background: packets are collected whenever
-    AerOS is waiting for one (the card keeps the last 32 meanwhile).
+    No IPv6, no DHCP, no fragments: a sealed message must fit in one packet (NET_MESSAGE_MAX
+    bytes). TCP only connects out: nothing can connect to AerOS. No HTTPS (TLS): a web page
+    comes as plain text, which can be read on the way. Nothing arrives in the background:
+    packets are collected whenever AerOS is waiting for one (the card keeps the last 32
+    meanwhile).
 */
 #ifndef NET_H
 #define NET_H
@@ -63,8 +68,17 @@
 #define NET_ERR_TOO_BIG   -4   // longer than NET_MESSAGE_MAX
 #define NET_ERR_NO_NAME   -5   // the DNS server says there is no such name
 #define NET_ERR_SEND      -6   // the card wouldn't send it
+#define NET_ERR_REFUSED   -7   // TCP: the other computer refused the connection (nothing listens there)
+#define NET_ERR_CLOSED    -8   // TCP: the connection was closed, or reset, before it was done
 
 const char* net_strerror (int error);
+
+// ---- for TCP (sys/tcp.c), which builds its own segments, but sends and collects them here ----
+
+bool net_up (void);                       // is the card running (starting it if need be)?
+uint32_t net_own_address (void);          // AerOS's own address
+int net_send_tcp (uint32_t address, const uint8_t* segment, size_t length);   // in an IPv4 packet
+void net_poll (void);                     // collect what has arrived, and deal with it
 
 // find the network card and start it (at boot, before the file system: the settings in
 // /acc/network are read the first time the network is used). False if there isn't one

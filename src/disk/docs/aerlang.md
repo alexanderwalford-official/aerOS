@@ -150,7 +150,8 @@ shows what app mode did for the last program.
 
 **Network:** `nsend(host, port, text)` sends a sealed message to a computer the firewall
 allows (true if it was sent), and `nrecv(port, ms)` waits up to `ms` milliseconds for one:
-the message, or nil. See [The network](network.md).
+the message, or nil. `httpget(url)` fetches a web page from a computer a web rule allows
+(`fw web`): its text, or nil. See [The network](network.md).
 
 When a name isn't known, the error suggests the closest one that is:
 `unknown name 'prnt' (did you mean print?)`. `why` after an error shows the lines around it,
