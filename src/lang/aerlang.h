@@ -36,6 +36,12 @@ int aer_run_source (const char* source, const char* name, const char* args);
 // the interactive AerLang prompt, lines are run as they are typed until "exit"
 void aer_repl (void);
 
+// Read a program (its source, without running it) and print what it can do: the built-ins it
+// names, grouped by what they let it do and what keeps each in check, then anything in its
+// text that looks like it is trying to fool you. name is what to call it ("game.aer").
+// Gives back how many of those suspicious things it found (0: nothing). See aer_scan.c
+int aer_scan (const char* source, const char* name);
+
 // was the last program stopped with Ctrl+C? (asking clears it)
 bool aer_take_stopped (void);
 

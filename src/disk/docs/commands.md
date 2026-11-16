@@ -72,6 +72,7 @@ See [Accounts and encryption](security.md).
 | `anim` | a demo of the animations AerLang can draw |
 | `run <code>` | run code as a process: `run s:hi` |
 | `que <app> [args]` | line a program up to run later (`que` lists them, `que clear` empties it) |
+| `scan <app>` | what a program can do, read before it runs, and any tricks in it (see [Programs ask first](perms.md)) |
 | `go` | run everything queued, in order (Ctrl+C stops the rest) |
 
 AerOS runs one program at a time, so instead of running several together you can queue them

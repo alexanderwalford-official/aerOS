@@ -1,0 +1,8 @@
+# A harmless program for SCAN (tools/test/tests/test_scan.py). It mentions delf in this comment
+# and in a string, but never names it in its code, so it can't delete anything.
+print("delf is only a word in here")
+let total = 0
+for i = 1 to 10 do
+    total = total + i
+end
+print(total)

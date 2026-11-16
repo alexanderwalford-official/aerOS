@@ -9,7 +9,7 @@
         cmd_files.c      LA SD RD MKF WR MKD DEL VERS UNDO ENC DEC EDT
         cmd_system.c     ECH CLS CLK UP MEM DRV BP PLY RES RT RBT OFF
         cmd_network.c    NET FW MSG LSN
-        cmd_programs.c   AER RUN PM QUE GO, and running an app by its name ("hello")
+        cmd_programs.c   AER RUN PM QUE GO SCAN, and running an app by its name ("hello")
         cmd_database.c   SQL (AerDB databases, db/aerdb.h)
         cmd_help.c       DOC WHY SRC SHOW
         cmd_accounts.c   ME USRS MKU DELU PW OUT PERM
@@ -136,6 +136,7 @@ void cli_run (char* arguments);
 void cli_pman (char* arguments);
 void cli_queue (char* arguments);
 void cli_go (char* arguments);
+void cli_scan (char* arguments);
 
 // cmd_database.c
 void cli_sql (char* arguments);

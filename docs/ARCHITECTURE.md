@@ -132,6 +132,7 @@ src/
     aer_parser.c          tokens -> syntax tree
     aer_interp.c          walks the tree; memory, values, variables; the shell's session
     aer_builtins.c        the table of every function a program can call, and the constants
+    aer_scan.c            SCAN: what a program can do, found by reading it before it runs
     builtins.h            how the built-ins are laid out, and how to add one
     bi_args.c             checking a built-in's arguments (and asking permission for files)
     bi_text.c, bi_lists.c, bi_files.c, bi_screen.c, bi_graphics.c, bi_sound.c, bi_system.c,

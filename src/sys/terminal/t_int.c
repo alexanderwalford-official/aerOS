@@ -322,6 +322,7 @@ static const command_t commands[] = {
     COMMAND("que",  "[PROGRAM]",  "QUEUE A PROGRAM FOR GO, OR LIST THE QUEUE (QUE CLEAR)",       cli_queue),
     COMMAND("go",   "",           "RUN EVERYTHING IN THE QUEUE, IN ORDER (CTRL+C STOPS IT)",     cli_go),
     COMMAND("run",  "<CODE>",     "RUN CODE AS A PROCESS (e.g. run print_stack, run s:hi)",      cli_run),
+    COMMAND("scan", "<APP>",      "WHAT A PROGRAM CAN DO, BEFORE YOU RUN IT (e.g. SCAN SNAKE)",  cli_scan),
     COMMAND("rd",   "<FILE>",     "READ A FILE",                                                 cli_read_file),
     COMMAND("sql",  "<FILE> [SQL]", "RUN SQL ON A DATABASE (SQL SHOP.DB SELECT * FROM ITEMS)",     cli_sql),
     COMMAND("mkf",  "<FILE> [T]", "MAKE A FILE, WITH OPTIONAL TEXT",                             cli_make_file),

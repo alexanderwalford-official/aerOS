@@ -47,4 +47,30 @@ perm del all      forget them all
 They are kept in `/acc/perms`, one line each. No program can ever touch `/acc/`, so no
 program can give itself permission.
 
+## Before you run a program: SCAN
+
+`scan` reads a program without running it, and says what it can do:
+
+```
+scan game
+
+/home/alex/game.aer can:
+  read files (rdf, la)
+      asks before reading your files (AerOS's own it may read)
+  ask you to type a secret (inpw)
+      type your password only into AerOS's own questions, never a program's
+
+  ! line 5: it asks for a password: only AerOS itself should ask for yours
+1 thing(s) worth a closer look: read it with RD before running it.
+```
+
+It is exact, not a guess: a program can only use a built-in function by writing its name, so
+if `delf` isn't in the file (outside comments and text), the program can't delete anything.
+"Worth a closer look" is different: those are tricks a program might use to fool you, like
+printing something that looks like AerOS's own `[ ? ]` questions or the login screen and then
+asking for a password. Read such a program with `rd` before you trust it.
+
+A program that writes another program and queues it can make that one do anything: SCAN says
+so, and you can scan the other one too.
+
 See also: [AerLang](aerlang.md), [Accounts and encryption](security.md).
