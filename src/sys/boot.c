@@ -273,7 +273,7 @@ int init_boot (void) {
     char now[FS_DATETIME_MAX];
     boot_report("[ OK ]", "clock", "Real time clock: %s", rtc_datetime(now, sizeof(now)));
     // check SHA-256, HMAC, PBKDF2 and AES against published test vectors before trusting them with passwords
-    boot_report(crypto_selftest() ? "[ OK ]" : "[FAIL]", "crypto", "Crypto self-test (SHA-256, HMAC, PBKDF2, AES-256)");
+    boot_report(crypto_selftest() ? "[ OK ]" : "[FAIL]", "crypto", "Crypto self-test (SHA-256, SHA-512, HMAC, PBKDF2, AES-256, Ed25519)");
     // a missing sound card isn't a problem, only PLY needs one
     if (ac97_init()) {
         boot_report("[ OK ]", "sound", "Sound: %s", ac97_name());

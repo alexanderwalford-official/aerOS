@@ -73,4 +73,7 @@ asking for a password. Read such a program with `rd` before you trust it.
 A program that writes another program and queues it can make that one do anything: SCAN says
 so, and you can scan the other one too.
 
+A program can scan another too, with `scan(text)` in [AerLang](aerlang.md): an installer can show
+you what a program could do before it puts it on the disk.
+
 See also: [AerLang](aerlang.md), [Accounts and encryption](security.md).

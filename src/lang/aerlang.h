@@ -42,6 +42,21 @@ void aer_repl (void);
 // Gives back how many of those suspicious things it found (0: nothing). See aer_scan.c
 int aer_scan (const char* source, const char* name);
 
+// What a scan finds, as lines of text (what SCAN prints, and what AerLang's scan() gives back)
+#define AER_SCAN_ABILITIES_MAX 16
+#define AER_SCAN_HINTS_MAX     4
+typedef struct {
+    int ability_count;
+    char abilities[AER_SCAN_ABILITIES_MAX][96];       // "delete files (delf)"
+    char kept_in_check[AER_SCAN_ABILITIES_MAX][80];   // "asks you first ...", or ""
+    int hint_count;
+    char hints[AER_SCAN_HINTS_MAX][100];              // "line 5: it asks for a password: ..."
+    int cmd_line;                                     // the line naming cmd(), 0 if none
+} aer_scan_result_t;
+
+// read a program and fill in *out, without printing anything
+void aer_scan_read (const char* source, aer_scan_result_t* out);
+
 // was the last program stopped with Ctrl+C? (asking clears it)
 bool aer_take_stopped (void);
 

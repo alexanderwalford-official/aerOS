@@ -21,6 +21,7 @@
 #include "crypto.h"
 #include "aer_string.h"
 #include "busy.h"
+#include "ed25519.h"
 
 // ---- small helpers ----------------------------------------------------------------------------
 
@@ -679,5 +680,8 @@ bool crypto_selftest (void) {
     aes256_encrypt_block(&aes, block, block);
     ok &= check_hex(block, 16, "8ea2b7ca516745bfeafc49904b496089");
     wipe(&aes, sizeof(aes));
+
+    // SHA-512 and Ed25519 signatures (lib/ed25519.c), against their own test vectors
+    ok &= ed25519_selftest();
     return ok;
 }

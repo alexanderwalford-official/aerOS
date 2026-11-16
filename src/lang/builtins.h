@@ -20,6 +20,7 @@
         bi_system.c      sleep, time, random, sysinfo, queue, cmd, appmode, the log (logadd, logclear,
                          setlogging, islogging) and exit
         bi_network.c     nsend, nrecv and httpget
+        bi_trust.c       verify, packagekey and scan: deciding whether to trust something
         bi_database.c    dbopen, dbrun, dbquery and dbclose: databases (db/aerdb.h)
 
     How a built-in works: it gets its arguments as an array of values, which it must not release
@@ -172,6 +173,11 @@ value_t bi_exit (int argc, value_t* argv, int line);
 value_t bi_net_send (int argc, value_t* argv, int line);
 value_t bi_net_receive (int argc, value_t* argv, int line);
 value_t bi_http_get (int argc, value_t* argv, int line);
+
+// bi_trust.c
+value_t bi_verify (int argc, value_t* argv, int line);
+value_t bi_package_key (int argc, value_t* argv, int line);
+value_t bi_scan (int argc, value_t* argv, int line);
 
 // bi_database.c
 value_t bi_dbopen (int argc, value_t* argv, int line);

@@ -153,6 +153,12 @@ allows (true if it was sent), and `nrecv(port, ms)` waits up to `ms` millisecond
 the message, or nil. `httpget(url)` fetches a web page from a computer a web rule allows
 (`fw web`): its text, or nil. See [The network](network.md).
 
+**Trust:** `verify(data, signature, key)` checks a signature (Ed25519, as hex) made with the
+private key that goes with `key`: true only if `data` is exactly what was signed. `packagekey()`
+is the key AerOS trusts packages from. `scan(source)` reads a program's text without running it,
+like [the SCAN command](perms.md): a list of what it can do, and a list of anything that looks
+like a trick.
+
 When a name isn't known, the error suggests the closest one that is:
 `unknown name 'prnt' (did you mean print?)`. `why` after an error shows the lines around it,
 and `why gopen` (or any built-in's name) explains a function from the C code behind it.

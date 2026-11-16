@@ -255,6 +255,13 @@ for) · `nrecv(port, ms)` wait up to ms milliseconds: the message, or nil ·
 `httpget(url)` fetch a web page (http:// only) from a computer a web rule (`FW WEB`) allows: its
 text if the status was 2xx, or nil
 
+**Trust** (`src/lang/bi_trust.c`)
+`verify(data, signature, key)` was data (text or bytes) signed by the private key that goes with
+key? signature (128 hex digits) and key (64) are hex; anything malformed is false ·
+`packagekey()` the public key packages are checked against (`src/sys/package_key.h`, "" until set) ·
+`scan(source)` what a program could do, read without running it: `[abilities, warnings]`, two lists
+of text
+
 **Encrypted files** (AES-256 with a password, the file keeps its name)
 `enc(path, password)` · `dec(path, password)` (both true if it worked) ·
 `isenc(path)` · `rdenc(path, password)` the contents, without changing the file

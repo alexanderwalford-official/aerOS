@@ -63,6 +63,7 @@ are skipped rather than failed.
 | `test_logs.py` | AerOS's log: boots, the boot log's entries, OFF, noticing a boot that didn't end properly, reading it from a program (`files/logs.aer`), that only AerOS can change it, and clearing it or turning it off (the question and password) |
 | `test_network.py` | the firewall and sealed messages, against `tools/aernet.py` |
 | `test_web.py` | TCP and HTTP: GET and httpget() against a web server started by the test (a page, a 216 KB file checked line by line, chunked, a redirect, a 404), web rules, and HTTPS turned away |
+| `test_trust.py` | verify() against signatures made by Python's cryptography package and by `tools/aersign.py` (and four wrong ones), packagekey(), scan(), and the boot self-test line |
 
 Every test that writes to a disk finishes by checking the disk is still a consistent FAT volume:
 `tools/test/fatcheck.py` walks every folder and checks the FAT copies agree, each file's

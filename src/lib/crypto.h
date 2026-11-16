@@ -10,6 +10,7 @@
       That is slow on purpose: anyone guessing passwords has to pay that cost for every guess.
     - AES-256 in CTR mode: the standard cipher, used to encrypt file contents.
     - crypto_random: unpredictable bytes for salts and nonces.
+    - SHA-512 and Ed25519 signature checking are in lib/ed25519.h, and checked here too.
 
     They follow the published standards (FIPS 180-4, RFC 2104, RFC 8018, FIPS 197 and NIST
     SP 800-38A for CTR) and crypto_selftest() checks them against the standards' test vectors

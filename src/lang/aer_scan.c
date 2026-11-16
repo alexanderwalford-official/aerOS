@@ -84,6 +84,8 @@ static const ability_t abilities[] = {
       NULL },
 };
 #define ABILITY_COUNT ((int)(sizeof(abilities) / sizeof(abilities[0])))
+// (aer_scan_result_t has room for AER_SCAN_ABILITIES_MAX of them: this stops the build if not)
+_Static_assert(sizeof(abilities) / sizeof(abilities[0]) <= AER_SCAN_ABILITIES_MAX, "aer_scan_result_t needs room for every ability");
 
 // ---- what the scan finds ------------------------------------------------------------------------
 
@@ -222,77 +224,99 @@ static void read_words (findings_t* f, const char* source) {
     }
 }
 
-// ---- the report ---------------------------------------------------------------------------------
+// ---- the findings, as lines of text -------------------------------------------------------------
 
-// one ability the program has: what it is, the built-ins it used for it, and what keeps it in check
-static void print_ability (const findings_t* f, int a) {
-    prtf("  %s (", abilities[a].can);
-    bool first = true;
-    for (int n = 0; abilities[a].names[n] != NULL; n++) {
-        if (f->names_used[a] & (1 << n)) {
-            prtf("%s%s", first ? "" : ", ", abilities[a].names[n]);
-            first = false;
-        }
-    }
-    prtf(")\n");
-    if (abilities[a].kept_in_check != NULL) {
-        prtf("      %s\n", abilities[a].kept_in_check);
+// note one thing worth a closer look
+static void add_hint (aer_scan_result_t* out, int line, const char* what) {
+    if (out->hint_count < AER_SCAN_HINTS_MAX) {
+        sfmt(out->hints[out->hint_count], sizeof(out->hints[0]), "line %d: %s", line, what);
+        out->hint_count++;
     }
 }
 
-// say one thing worth a closer look, and count it
-static void hint (int* count, int line, const char* what) {
-    prtf("  ! line %d: %s\n", line, what);
-    (*count)++;
-}
-
-// scan a program and print what it can do (see aerlang.h)
-int aer_scan (const char* source, const char* name) {
+// read a program and put what it can do, and what is worth a closer look, into *out (aerlang.h)
+void aer_scan_read (const char* source, aer_scan_result_t* out) {
     findings_t f;
     memset(&f, 0, sizeof(f));
+    memset(out, 0, sizeof(aer_scan_result_t));
     read_words(&f, source);
 
-    // what it can do
-    bool any = false;
+    // each ability it has: "delete files (delf)", and what keeps it in check
     for (int a = 0; a < ABILITY_COUNT; a++) {
         if (f.ability_line[a] == 0) {
             continue;
         }
-        if (!any) {
-            prtf("%s can:\n", name);
-            any = true;
+        char* what = out->abilities[out->ability_count];
+        size_t size = sizeof(out->abilities[0]);
+        scpy(what, abilities[a].can, size);
+        scat(what, " (", size);
+        bool first = true;
+        for (int n = 0; abilities[a].names[n] != NULL; n++) {
+            if (f.names_used[a] & (1 << n)) {
+                if (!first) {
+                    scat(what, ", ", size);
+                }
+                scat(what, abilities[a].names[n], size);
+                first = false;
+            }
         }
-        print_ability(&f, a);
-    }
-    if (!any) {
-        prtf("%s only works with its own values, prints, and reads what you type. It can't\n"
-             "touch files, the network, the clipboard, the log or the whole screen.\n", name);
-    }
-    prtf("No program can run terminal commands, read the accounts or change AerOS's log.\n");
-    if (f.uses_cmd != 0) {
-        prtf("(Line %d uses cmd(), which only works at the prompt: in a program it stops there.)\n",
-             f.uses_cmd);
+        scat(what, ")", size);
+        scpy(out->kept_in_check[out->ability_count],
+             abilities[a].kept_in_check != NULL ? abilities[a].kept_in_check : "", sizeof(out->kept_in_check[0]));
+        out->ability_count++;
     }
 
-    // what is worth a closer look: patterns that suggest it is trying to fool you
-    int hints = 0;
-    prtf("\n");
+    // the patterns that suggest it is trying to fool you
     if (f.looks_like_question != 0) {
-        hint(&hints, f.looks_like_question, "it prints something that looks like AerOS's own questions");
+        add_hint(out, f.looks_like_question, "it prints something that looks like AerOS's own questions");
     }
     if (f.looks_like_login != 0) {
-        hint(&hints, f.looks_like_login, "it prints something that looks like the login screen");
+        add_hint(out, f.looks_like_login, "it prints something that looks like the login screen");
     }
     if (f.mentions_password != 0 && f.asks_for_typing != 0) {
-        hint(&hints, f.mentions_password, "it asks for a password: only AerOS itself should ask for yours");
+        add_hint(out, f.mentions_password, "it asks for a password: only AerOS itself should ask for yours");
     }
     if (f.mentions_program != 0 && f.writes_files != 0 && f.queues != 0) {
-        hint(&hints, f.mentions_program, "it writes programs and queues them: those can't be seen here");
+        add_hint(out, f.mentions_program, "it writes programs and queues them: those can't be seen here");
     }
-    if (hints == 0) {
+    out->cmd_line = f.uses_cmd;
+}
+
+// ---- the report SCAN prints ---------------------------------------------------------------------
+
+// scan a program and print what it can do (see aerlang.h)
+int aer_scan (const char* source, const char* name) {
+    aer_scan_result_t result;
+    aer_scan_read(source, &result);
+
+    // what it can do, each with what keeps it in check underneath
+    if (result.ability_count == 0) {
+        prtf("%s only works with its own values, prints, and reads what you type. It can't\n"
+             "touch files, the network, the clipboard, the log or the whole screen.\n", name);
+    } else {
+        prtf("%s can:\n", name);
+        for (int i = 0; i < result.ability_count; i++) {
+            prtf("  %s\n", result.abilities[i]);
+            if (result.kept_in_check[i][0] != '\0') {
+                prtf("      %s\n", result.kept_in_check[i]);
+            }
+        }
+    }
+    prtf("No program can run terminal commands, read the accounts or change AerOS's log.\n");
+    if (result.cmd_line != 0) {
+        prtf("(Line %d uses cmd(), which only works at the prompt: in a program it stops there.)\n",
+             result.cmd_line);
+    }
+
+    // and what is worth a closer look
+    prtf("\n");
+    for (int i = 0; i < result.hint_count; i++) {
+        prtf("  ! %s\n", result.hints[i]);
+    }
+    if (result.hint_count == 0) {
         prtf("Nothing looks suspicious.\n");
     } else {
-        prtf("%d thing(s) worth a closer look: read it with RD before running it.\n", hints);
+        prtf("%d thing(s) worth a closer look: read it with RD before running it.\n", result.hint_count);
     }
-    return hints;
+    return result.hint_count;
 }

@@ -115,6 +115,7 @@ src/
     aer_stdio.c           prtf, sfmt                 aer_ctype.h   isdigit, toupper...
     aer_setjmp.c          setjmp / longjmp (AerLang errors) primary_definitions.c  seq, split, trim
     crypto.c              SHA-256, HMAC, PBKDF2, AES-256, random numbers
+    ed25519.c             SHA-512 and checking Ed25519 signatures (verify)
     busy.c                busy(): long loops call it so a spinner can turn (see sys/ui.h)
     mp3.c + minimp3/      MP3 decoding
     mpg.c + pl_mpeg/      MPEG-1 video and MP2 sound decoding (pl_mpeg, MIT)
@@ -135,6 +136,7 @@ src/
     aer_interp.c          walks the tree; memory, values, variables; the shell's session
     aer_builtins.c        the table of every function a program can call, and the constants
     aer_scan.c            SCAN: what a program can do, found by reading it before it runs
+    bi_trust.c            verify, packagekey and scan: deciding whether to trust something
     builtins.h            how the built-ins are laid out, and how to add one
     bi_args.c             checking a built-in's arguments (and asking permission for files)
     bi_text.c, bi_lists.c, bi_files.c, bi_screen.c, bi_graphics.c, bi_sound.c, bi_system.c,

@@ -2,11 +2,12 @@
 
 This document explains, from the ground up, how AerOS protects passwords and files: which
 algorithms it uses, why, how they fit together, and where their limits are. Everything described
-here is in four files:
+here is in these files:
 
 | File | What it does |
 | --- | --- |
 | [`src/lib/crypto.c`](../src/lib/crypto.c) | the algorithms: SHA-256, HMAC, PBKDF2, AES-256, CTR mode, random numbers |
+| [`src/lib/ed25519.c`](../src/lib/ed25519.c) | checking signatures: SHA-512 and Ed25519 |
 | [`src/sys/accounts/auth.c`](../src/sys/accounts/auth.c) | user accounts and the login screen |
 | [`src/sys/fcrypt.c`](../src/sys/fcrypt.c) | password protected files |
 | [`src/sys/terminal/cmd_files.c`](../src/sys/terminal/cmd_files.c), [`cmd_accounts.c`](../src/sys/terminal/cmd_accounts.c) | the `ENC`, `DEC`, `RD` commands, and `PW`, `MKU`, `DELU`... |
@@ -29,6 +30,8 @@ shows `[ OK ] Crypto self-test`.
 | AES-256 | FIPS 197 | encrypting file contents |
 | CTR mode | NIST SP 800-38A | turning AES into a stream cipher |
 | SHA-256 based random generator | (AerOS design, section 5) | salts and nonces |
+| SHA-512 | FIPS 180-4 | the hash inside Ed25519 |
+| Ed25519 signatures (checking only) | RFC 8032 | checking that a package came from its maker, unchanged |
 
 ### SHA-256: a fingerprint of any data
 
@@ -133,6 +136,45 @@ data:
 * **The one rule:** a key and nonce pair must never encrypt two different things. AerOS
   makes a new random salt for every encryption, so every file gets a key that has never been
   used before. The rule can't be broken even if a nonce repeats.
+
+### Ed25519: checking who made something
+
+Everything above uses one secret that both ends share. A signature is different: the maker has
+a **private key** and gives everyone the matching **public key**. Signing with the private key
+gives a 64 byte signature; anyone with the public key can check it, but nobody can make one with
+it. AerOS only ever checks (`ed25519_verify` in [`src/lib/ed25519.c`](../src/lib/ed25519.c));
+signing is done on the maker's own computer, with `tools/aersign.py`.
+
+```
+on the maker's computer:  signature = sign(private key, package)
+in AerOS:                 verify(package, signature, packagekey())   true / false
+```
+
+That is what lets packages come over plain HTTP, which anyone in between could change: they can
+change the package, but they can't make the signature fit it.
+
+How it works, briefly (the top of `ed25519.c` has more): points on a curve can be added, so a
+point B can be multiplied by a number. The private key is a secret number a, and the public key
+is A = a x B; going back from A to a is impossibly slow. A signature is a point R and a number s
+made so that s x B = R + h x A, where h is a SHA-512 digest of R, A and the message. Only someone
+who knew a could arrange that, and changing the message changes h.
+
+Details that matter:
+
+* **SHA-512** is SHA-256's 64 byte relative, inside Ed25519. Its 88 constants are defined as the
+  fractional parts of square and cube roots of primes, and AerOS works them out rather than
+  typing them in (`work_out_constants`), so none can be mistyped.
+* **No constant of the curve is typed in either:** d, the square root of -1 and the base point
+  are worked out from their definitions in `setup_curve`. Only L (the number of points B
+  reaches) is written out, and the self-test would catch a mistake in it.
+* **Anything malformed is refused:** a key that isn't a point on the curve, an s that isn't
+  below L (which would let a signature be written two ways), a signature or key of the wrong
+  length, and an empty key (which is what `packagekey()` gives until one is set).
+* **The package key is built in** (`src/sys/package_key.h`), not kept in a file, so no program
+  can replace it with one of its own.
+* **The private key** lives only in a file on the maker's computer (`aersign.py keygen` makes it
+  readable by its owner only). Anyone with it can sign packages every AerOS will trust, so it
+  must never go in the repository or on the package server.
 
 ---
 
@@ -448,6 +490,8 @@ unpredictable it can find:
 | HMAC-SHA-256, key `"Jefe"` | RFC 4231 test case 2 |
 | PBKDF2-HMAC-SHA-256, `"password"` / `"salt"`, 1 and 2 rounds | widely published reference values |
 | AES-256 encryption of `00 11 22 ... ff` with key `00 01 ... 1f` | FIPS 197 appendix C.3 |
+| SHA-512 of `"abc"` and of the 112-byte two-block message | FIPS 180-4 examples |
+| Ed25519: the three test signatures, and each with one bit changed (which must fail) | RFC 8032 section 7.1, tests 1 to 3 |
 
 A mistake anywhere in the code, or a compiler problem, would turn the boot log line into
 `[FAIL]`.
