@@ -22,6 +22,6 @@
 #ifndef PACKAGE_KEY_H
 #define PACKAGE_KEY_H
 
-#define AEROS_PACKAGE_KEY ""
+#define AEROS_PACKAGE_KEY "bea6359354bdd70b4015cce571c56486963e0d9ed6a1adcdb707506ccd06161c"
 
 #endif /* PACKAGE_KEY_H */

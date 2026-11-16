@@ -18,6 +18,8 @@ let SERVER = "http://packages.intercon.network" # http://10.0.2.2:8000
 # one line for each installed package: "name version". (File names on AerOS's disk are at most
 # 8 letters, a dot and 3 more, so "installed.txt" wouldn't fit)
 let INSTALLED = "/apps/packages.txt"
+# the highest serial number of an index that has been installed from (see index_serial)
+let SERIAL = "/apps/serial.txt"
 
 
 # ---- the index -----------------------------------------------------------------------------
@@ -46,6 +48,36 @@ func fetch_index()
     end
     
     return index
+end
+
+func index_serial(index)
+    # The number on the index's "#serial <number>" line, or 0 if it has none. Every index the
+    # server publishes has a higher number than the one before, and the line is signed with
+    # the rest of the index. So an index with a lower number than one used before is an old
+    # one, sent again by someone in the way to bring back an old version of a package
+    for line in split(index, chr(10)) do
+        if sub(line, 0, 8) == "#serial " then
+            let number = int(sub(line, 8, len(line) - 8))
+            if number != nil then
+                return number
+            end
+        end
+    end
+    return 0
+end
+
+func seen_serial()
+    # the highest serial number installed from so far: the number in SERIAL, or 0 if there
+    # isn't one yet
+    let saved = rdf(SERIAL)
+    if saved == nil then
+        return 0
+    end
+    let number = int(saved)
+    if number == nil then
+        return 0
+    end
+    return number
 end
 
 func find_package(index, name)
@@ -109,6 +141,15 @@ func install(name)
         return
     end
 
+    # not older than an index installed from before (index_serial says why)
+    let serial = index_serial(index)
+    let seen = seen_serial()
+    if serial < seen then
+        print("The package index from the server is older than one used before")
+        print("(number " + serial + ", but " + seen + " was seen), so it won't be used.")
+        return
+    end
+
     # the package's line in it: [name, version, signature, description]
     let package = find_package(index, name)
     if package == nil then
@@ -160,6 +201,12 @@ func install(name)
     if apf(INSTALLED, package[0] + " " + package[1] + chr(10)) == false then
         print("Installed /apps/" + name + ".aer, but couldn't add it to " + INSTALLED + ".")
         return
+    end
+    # remember this index's serial number, so an older index is refused from now on
+    if serial > seen then
+        if wrf(SERIAL, str(serial)) == false then
+            print("Couldn't write " + SERIAL + ": older package lists won't be noticed.")
+        end
     end
     print("Installed " + name + " " + package[1] + ": type " + name + " to run it.")
 end

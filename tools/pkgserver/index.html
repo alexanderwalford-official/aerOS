@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AerOS packages</title>
+<style>
+  /* light and dark, following the visitor's system setting */
+  :root { --bg: #f7f7f5; --text: #1d1d1b; --muted: #6b6b66; --line: #ddddd8; --accent: #1f6feb; --code: #ececE8; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --text: #e8e8e4; --muted: #9a9a94; --line: #2e2e2b; --accent: #58a6ff; --code: #22221f; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 16px; }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 40px 0 12px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  code, pre { font: 14px/1.5 ui-monospace, Consolas, monospace; background: var(--code); border-radius: 6px; }
+  code { padding: 1px 5px; }
+  pre { padding: 12px 14px; overflow-x: auto; margin: 0 0 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 13px; color: var(--muted); font-weight: 600; }
+  td:first-child { font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>AerOS packages</h1>
+  <p class="muted">Extra apps for AerOS, installed with its <code>pkg</code> app.</p>
+
+  <h2>Installing one</h2>
+  <p>At the AerOS prompt, allow this site through the firewall, then use <code>pkg</code>:</p>
+  <pre>fw web packages.intercon.network 80
+pkg list
+pkg install &lt;name&gt;</pre>
+  <p>Every package is signed by its maker. AerOS checks the signature with a key built into it
+     before installing anything, shows you what the program could do, and asks first.
+     A package changed by a single byte is refused.</p>
+
+  <h2>Available</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Version</th><th>What it does</th></tr></thead>
+    <tbody id="packages"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
+  </table>
+  <p class="muted" style="margin-top:12px">From <a href="index.txt">index.txt</a> (signed in
+     <a href="index.sig">index.sig</a>). This page only displays it; AerOS does the checking.</p>
+</main>
+<script>
+  // Show the packages in index.txt: one line each, "name version signature description",
+  // with blank lines and # comments skipped (the same rules as pkg.aer)
+  const body = document.getElementById('packages');
+  function row(cells) {
+    const tr = document.createElement('tr');
+    for (const text of cells) {
+      const td = document.createElement('td');
+      td.textContent = text;          // text only: nothing from the index is treated as HTML
+      tr.appendChild(td);
+    }
+    return tr;
+  }
+  fetch('index.txt').then(r => r.ok ? r.text() : Promise.reject())
+    .then(text => {
+      body.textContent = '';
+      for (const line of text.split('\n')) {
+        if (line === '' || line.startsWith('#')) continue;
+        const parts = line.split(' ');
+        if (parts.length < 4) continue;
+        const name = parts[0];
+        const tr = row([name, parts[1], parts.slice(3).join(' ')]);
+        body.appendChild(tr);
+      }
+      if (!body.children.length) body.appendChild(row(['', '', 'No packages yet.']));
+    })
+    .catch(() => { body.textContent = ''; body.appendChild(row(['', '', 'Couldn\'t load index.txt.'])); });
+</script>
+</body>
+</html>

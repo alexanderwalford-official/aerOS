@@ -39,7 +39,7 @@ When a test fails, the report says what it expected and shows the screen as it w
 is kept in `tools/test/out/<test name>/`, with AerOS's serial log (everything AerOS printed)
 and any screenshots, so you can see what happened.
 
-The network test and the test of the decryptor in `docs/SECURITY.md` need Python's
+The network test, the package tests and the test of the decryptor in `docs/SECURITY.md` need Python's
 `cryptography` package (`pip install cryptography`), like `tools/aernet.py`. Without it, they
 are skipped rather than failed.
 
@@ -63,6 +63,7 @@ are skipped rather than failed.
 | `test_logs.py` | AerOS's log: boots, the boot log's entries, OFF, noticing a boot that didn't end properly, reading it from a program (`files/logs.aer`), that only AerOS can change it, and clearing it or turning it off (the question and password) |
 | `test_network.py` | the firewall and sealed messages, against `tools/aernet.py` |
 | `test_web.py` | TCP and HTTP: GET and httpget() against a web server started by the test (a page, a 216 KB file checked line by line, chunked, a redirect, a 404), web rules, and HTTPS turned away |
+| `test_packages.py` | the package server (`tools/pkgserver/server.py`) and `aerpkg.py publish`/`unpublish`, with a test key: what is served, and every upload it must refuse (wrong token, an old serial, a changed program, a stranger's key); then AerOS in QEMU running `pkg list` and `pkg install` from it, a new version, and an old index sent again being refused |
 | `test_trust.py` | verify() against signatures made by Python's cryptography package and by `tools/aersign.py` (and four wrong ones), packagekey(), scan(), and the boot self-test line |
 
 Every test that writes to a disk finishes by checking the disk is still a consistent FAT volume:
