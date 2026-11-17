@@ -671,6 +671,8 @@ static int take_arrived (int listener, uint32_t* from) {
         return NET_ERR_CLOSED;
     }
     net_poll();
+    // of the connections ready to be taken, the one that arrived first: first come, first served
+    int oldest = -1;
     for (int i = 0; i < TCP_CONNECTIONS_MAX; i++) {
         connection_t* c = &connections[i];
         // one that was reset before anyone took it (they gave up) is cleared away
@@ -680,16 +682,23 @@ static int take_arrived (int listener, uint32_t* from) {
         }
         // (one that has already sent its request and finished, THEY_CLOSED, is just as ready)
         bool open = c->state == OPEN || c->state == THEY_CLOSED;
-        if (c->used && c->listener == listener && c->waiting && open && !c->reset) {
-            c->waiting = false;
-            if (from != NULL) {
-                *from = c->address;
+        if (c->used && c->listener == listener && c->waiting && open) {
+            // (int32_t)(a - b) < 0 is "a came before b", even when the time wraps round
+            if (oldest < 0 || (int32_t)(c->arrived - connections[oldest].arrived) < 0) {
+                oldest = i;
             }
-            TRACE("accepted the connection from port %u", c->port);
-            return i;
         }
     }
-    return NET_ERR_NO_ANSWER;
+    if (oldest < 0) {
+        return NET_ERR_NO_ANSWER;
+    }
+    connection_t* c = &connections[oldest];
+    c->waiting = false;
+    if (from != NULL) {
+        *from = c->address;
+    }
+    TRACE("accepted the connection from port %u", c->port);
+    return oldest;
 }
 
 // take a connection that has arrived (see tcp.h): take_arrived, with the network lock held

@@ -97,7 +97,8 @@ void tcp_close (int connection);
 // NET_ERR_SEND (TCP_LISTENERS_MAX listen already), NET_ERR_NO_CARD
 int tcp_listen (uint16_t port);
 
-// One look for a connection that has finished its handshake on this listener, without waiting.
+// One look for a connection that has finished its handshake on this listener (the one that
+// arrived first, if several have), without waiting.
 // Gives back its number, for tcp_receive / tcp_send / tcp_close, and puts the address it came
 // from in *from (may be NULL); or NET_ERR_NO_ANSWER if none has arrived yet. (One look rather
 // than a wait: a program waiting for visitors mustn't hold the network lock all that time, so

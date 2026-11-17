@@ -5,8 +5,8 @@
 #     bg webserve 8080                    serve the folder you are in, in the background
 #     bg webserve 8080 /home/alex/site/   ...or another folder
 #
-# Then http://<AerOS's address>:8080/ in a web browser (NET shows the address; in QEMU, start
-# it with hostfwd=tcp::8080-:8080 and use http://localhost:8080/ on your computer). / shows
+# Then http://<AerOS's address>:8080/ in a web browser (NET shows the address; in QEMU started
+# with make run, http://localhost:8080/ on your computer reaches port 8080 here). / shows
 # index.html if the folder has one, or a list of its files if not. Each request shows up at the
 # prompt as a line: "GET /index.html 200". STOP (or Ctrl+C, if it isn't in the background)
 # stops it.
@@ -15,11 +15,16 @@
 # freely, yours only if you allow it. In the background it can't ask, so run it once without BG
 # and answer A (always) for the folder first.
 #
-# How it works: tcplisten() opens the port, tcpaccept() waits for the next visitor, tcprecv()
+# How it works: tcplisten() opens the port, tcpaccept() takes each new visitor, tcprecv()
 # reads their request, and tcpsend() sends the answer: a status line, a few headers, a blank
 # line, then the file. HTTP is all text up to the file itself.
+#
+# It looks after all its visitors at once, rather than one at a time (see "the visitors" at the
+# end). A browser opens a spare connection or two ahead of time, which may not say anything for
+# a while: served one at a time, a page would wait behind those for nothing.
 
 let CRLF = chr(13) + chr(10)     # HTTP ends each line with these two characters
+let QUIET_MS = 10000             # a visitor that sends no request for this long is let go
 
 
 # ---- the folder ------------------------------------------------------------------------------
@@ -87,22 +92,9 @@ func answer(connection, status, type, body)
     tcpsend(connection, body)
 end
 
-func read_request(connection)
-    # what the browser sent, up to the blank line that ends its headers (or "" if it gave up)
-    let request = ""
-    while find(request, CRLF + CRLF) < 0 do
-        let more = tcprecv(connection, 5000)
-        if more == nil or more == "" then
-            return request
-        end
-        request = request + more
-    end
-    return request
-end
-
-func serve(connection, folder)
-    # read one request, answer it, and say what happened at the prompt
-    let request = read_request(connection)
+func serve(connection, request, folder)
+    # answer a whole request (everything up to the blank line after its headers), and say what
+    # happened at the prompt
     # the first line is "GET /path HTTP/1.1": the method, the path, and the version
     let words = split(split(request, CRLF)[0], " ")
     if len(words) < 2 then
@@ -158,11 +150,51 @@ if listener == nil then
 end
 print("Serving " + folder + " on port " + port + ".")
 
-# one visitor at a time, for as long as it runs: wait a second for the next, then wait again
+
+# ---- the visitors ----------------------------------------------------------------------------
+#
+# Everyone connected right now is in `visitors`, each as [connection, what they have sent so far,
+# when they connected]. Round and round, never waiting on any one of them:
+#
+#     1. a quick look for a new visitor (tcpaccept with 0 ms: it doesn't wait)
+#     2. a quick look at what each visitor has sent (tcprecv with 0 ms): once a whole request
+#        is there (it ends with a blank line), it is answered and the visitor let go
+#     3. a visitor that has gone, or sent nothing for QUIET_MS, is let go too
+#     4. if nothing at all happened, a short sleep, so it doesn't keep the processor busy
+#
+# So a quiet visitor (a browser's spare connection) just waits in the list, holding nobody up.
+
+let visitors = []
 while true do
-    let connection = tcpaccept(listener, 1000)
+    let busy = false
+
+    let connection = tcpaccept(listener, 0)
     if connection != nil then
-        serve(connection, folder)
-        tcpclose(connection)
+        push(visitors, [connection, "", time()])
+        busy = true
+    end
+
+    # the ones still here after this round
+    let staying = []
+    for visitor in visitors do
+        let more = tcprecv(visitor[0], 0)
+        if more != nil and more != "" then
+            visitor[1] = visitor[1] + more
+            busy = true
+        end
+        if find(visitor[1], CRLF + CRLF) >= 0 then
+            serve(visitor[0], visitor[1], folder)
+            tcpclose(visitor[0])
+        elif more == "" or time() - visitor[2] > QUIET_MS then
+            # they went away, or never asked for anything
+            tcpclose(visitor[0])
+        else
+            push(staying, visitor)
+        end
+    end
+    visitors = staying
+
+    if not busy then
+        sleep(10)
     end
 end

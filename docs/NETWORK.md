@@ -153,8 +153,10 @@ fw serve 8080                   once: anyone may connect to AerOS's port 8080
 bg webserve 8080 /docs/         serve the manual, in the background
 ```
 
-then `http://<AerOS's address>:8080/` in a browser. In QEMU, add `hostfwd=tcp::8080-:8080` to
-the `-nic` setting, and it is `http://localhost:8080/` on the computer QEMU runs on.
+then `http://<AerOS's address>:8080/` in a browser. `make run` passes TCP port 8080 on the
+computer QEMU runs on through to AerOS's 8080 (`hostfwd=tcp::8080-:8080` in the Makefile's
+`QEMU_NET`), so there it is `http://localhost:8080/`. (In a QEMU started without it, the
+monitor, Ctrl+Alt+2, can add it while it runs: `hostfwd_add tcp::8080-:8080`.)
 
 How a connection from outside arrives (`tcp_handle` and `arrive` in `sys/tcp.c`; the picture is
 under LISTENING in `sys/tcp.h`):
@@ -165,7 +167,8 @@ under LISTENING in `sys/tcp.h`):
    that computer in, `arrive` makes a new connection, ARRIVING, with a random first sequence
    number, and sends SYN + ACK.
 3. Their ACK makes it OPEN. It waits, and anything they send (a request) goes into its buffer.
-4. The program takes it with `tcp_accept`, and from then on it is a connection like any other.
+4. The program takes it with `tcp_accept` (the one that arrived first, if several are waiting),
+   and from then on it is a connection like any other.
 
 So that someone can't use up AerOS's eight connections by starting handshakes and never
 finishing them (a "SYN flood"), at most 4 can wait to be accepted on each port, and one whose
@@ -192,8 +195,13 @@ of AerOS can use the network meanwhile (see "The network lock" in [threads](THRE
 
 `webserve` (`src/disk/bin/webserve.aer`) is a web server in about 150 lines of AerLang, written
 to be read:
-- it takes one visitor at a time, reads the request up to its blank line, and answers with a
-  status line, a few headers and the file;
+- it looks after all its visitors at once, in one loop: a quick look for a new one
+  (`tcpaccept` with 0 ms, which doesn't wait), then a quick look at what each has sent
+  (`tcprecv` with 0 ms). Once a whole request is there (it ends with a blank line), it answers
+  with a status line, a few headers and the file. Browsers open spare connections ahead of
+  time that may say nothing for a while: one at a time, a page would wait behind those (it
+  did: about 5 seconds), but in the loop they just wait their turn, and are let go after 10
+  seconds of saying nothing;
 - it shows `index.html` for `/`, or a list of the folder's files if there isn't one;
 - it refuses any path with `..` in it, which would climb out of the folder;
 - it prints a line for each request (`GET /index.md 200`), which shows up at the prompt.
@@ -261,7 +269,9 @@ each descriptor pointing at a 2 KB buffer. See the top of `drivers/net/e1000.c`.
   terminal, or with the disk, can.
 * **No HTTPS, IPv6, fragments or broadcast messages.** Web pages, and anything a server in AerOS
   sends, go in the clear, and a sealed message is one packet.
-* **A server takes one visitor at a time** (`webserve` does), and sends each piece of an answer
-  only once the last is acknowledged: fine for a page or two, slow for big files.
+* **One answer at a time.** A server sends each piece of an answer only once the last is
+  acknowledged, and `webserve` answers one request before looking at the next: fine for pages,
+  slow for big files. (Threads inside a program, still to come, would let each visitor have
+  its own.)
 * **Polling.** Nothing arrives in the background: a message that comes while AerOS is busy with
   something else waits in the card (32 frames at most) until AerOS next looks.

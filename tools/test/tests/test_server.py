@@ -93,6 +93,24 @@ def test_a_web_server(t):
         if page is None or page[1] != expected:
             aeros.fail('a later visit did not get the page')
 
+    # A browser opens spare connections ahead of time, which say nothing. webserve looks after
+    # all its visitors at once, so a page asked for meanwhile doesn't wait behind them (served
+    # one at a time, it waited about 5 seconds)
+    spares = [socket.create_connection(('127.0.0.1', port), timeout=30) for _ in range(2)]
+    time.sleep(0.5)
+    began = time.time()
+    page = fetch(port, '/index.md')
+    if page is None or page[1] != expected:
+        aeros.fail('the page did not come while spare connections were open')
+    if time.time() - began > 2:
+        aeros.fail(f'the page waited {time.time() - began:.1f} s behind the spare connections')
+    # and a spare that never asks for anything is let go after 10 seconds (QUIET_MS)
+    for spare in spares:
+        spare.settimeout(30)
+        if spare.recv(100) != b'':
+            aeros.fail('a spare connection was sent something')
+        spare.close()
+
     # the prompt still answers while it serves, and each request has shown up there (the serial
     # port keeps everything shown, even what has since been cleared off the screen)
     began = time.time()

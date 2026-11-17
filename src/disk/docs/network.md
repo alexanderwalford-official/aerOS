@@ -99,8 +99,9 @@ fw serve 8080 10.0.2.2                 or only that computer may
 bg webserve 8080 /docs/                serve the manual, in the background
 ```
 
-Then `http://<AerOS's address>:8080/` in a browser shows it (in QEMU, add
-`hostfwd=tcp::8080-:8080` to its `-nic` setting, and use `http://localhost:8080/`). Each visit
+Then `http://<AerOS's address>:8080/` in a browser shows it. In QEMU started with `make run`,
+port 8080 on your computer is passed through to AerOS's, so it is `http://localhost:8080/`
+there. Each visit
 shows up at the prompt: `[webserve] GET /index.md 200`. `/` shows `index.html`, or a list of the
 files if there isn't one. `stop` stops it, and `fw del` shuts the port again at once.
 

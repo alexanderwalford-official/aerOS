@@ -47,8 +47,10 @@ AUDIO = pa
 QEMU_AUDIO = -audiodev $(AUDIO),id=snd0 -device AC97,audiodev=snd0
 
 # an Intel e1000 network card on QEMU's own little network, where this computer is 10.0.2.2.
-# UDP port 5001 here is passed on to AerOS's port 5000, so tools/aernet.py can send to it
-QEMU_NET = -nic user,model=e1000,hostfwd=udp::5001-:5000
+# UDP port 5001 here is passed on to AerOS's port 5000, so tools/aernet.py can send to it, and
+# TCP port 8080 here to AerOS's 8080, so a browser on this computer can reach a web server in
+# AerOS (fw serve 8080, then bg webserve 8080): http://localhost:8080/
+QEMU_NET = -nic user,model=e1000,hostfwd=udp::5001-:5000,hostfwd=tcp::8080-:8080
 
 .PHONY: all clean clean-disk move run run-kernel run-img run-vfs run-uefi disk-ls disk-put setup-dev test check FORCE
 
