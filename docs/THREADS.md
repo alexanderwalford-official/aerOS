@@ -173,8 +173,10 @@ prints a lot slows down until its lines are shown, rather than losing them.
 **Logging out** stops every program in the background, and throws away what they printed, so
 nothing of yours runs, or shows up, for the next person.
 
-**`nrecv`, `httpget` and `sleep`** let the other threads run while they wait, so a program in
-the background can wait for sealed messages, or for a web server, without holding anything up.
+**`nrecv`, `httpget`, `tcpaccept`, `tcprecv` and `sleep`** let the other threads run while they
+wait, so a program in the background can wait for sealed messages, for a web server, or for
+visitors to a web server of its own (`bg webserve 8080`, see [the network](NETWORK.md)), without
+holding anything up.
 
 ## The network lock
 
@@ -250,10 +252,6 @@ saying which thread, rather than carry on with memory that may be damaged.
   a large job of its own, and would bring back the need for locks.
 - **Protection.** All threads share all memory: a thread that goes wrong can damage what others
   use. Keeping programs apart needs paging and real processes.
-- **A web server.** A program in the background can now fetch pages (a web client), but serving
-  them needs AerOS's TCP to accept connections, not only make them, and it can't yet ("No
-  listening" in [the network](NETWORK.md)). With that, a server would be a program in the
-  background waiting for connections, as `nrecv` waits for messages.
 - **One network job at a time.** The lock means two threads using the network take turns at
   it, a whole request each. Several at once would need the network code to keep each one's
   work apart.

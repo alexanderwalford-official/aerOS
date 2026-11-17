@@ -133,8 +133,14 @@ static void list_rules (void) {
         const fw_rule_t* rule = fw_rule(i);
         char address[16];
         net_format_address(rule->address, address);
-        // sealed: messages with the rule's password. web: fetching web pages (plain TCP)
-        prtf("  %2d. %-15s port %-5u %-7s %s\n", i, address, rule->port, rule->web ? "web" : "sealed", rule->name);
+        // sealed: messages with the rule's password. web: fetching web pages (plain TCP).
+        // serve: others connecting to AerOS's own port (from anyone, for address 0)
+        if (rule->serve) {
+            prtf("  %2d. %-15s port %-5u %-7s connecting to AerOS\n", i, rule->address == 0 ? "anyone" : address,
+                 rule->port, "serve");
+        } else {
+            prtf("  %2d. %-15s port %-5u %-7s %s\n", i, address, rule->port, rule->web ? "web" : "sealed", rule->name);
+        }
     }
     prtf("%s DEL <number> removes one.\n", command_name(cli_firewall));
 }
@@ -189,6 +195,34 @@ static void allow_web (char* arguments) {
     prtf("They aren't sealed, so anything fetched from it can be read on the way.\n");
 }
 
+// FW SERVE <PORT> [ADDRESS]: let other computers connect to AerOS's own port (plain TCP), for a
+// program serving web pages there (tcplisten): anyone, or only the address given
+static void allow_serving (char* arguments) {
+    char* address_text;
+    char* port_text = split_first_word(arguments, &address_text);
+    int port = atoi(port_text);
+    uint32_t address = 0;   // anyone
+    bool good = port >= 1 && port <= 65535;
+    if (good && address_text[0] != '\0') {
+        good = net_parse_address(address_text, &address) && address != 0;
+    }
+    if (!good) {
+        show_usage("e.g. FW SERVE 8080 (anyone may connect), or FW SERVE 8080 10.0.2.2");
+        return;
+    }
+    if (!fw_allow_serve(address, (uint16_t)port)) {
+        prtf("The firewall already has %d rules, the most it can have.\n", FW_RULES_MAX);
+        return;
+    }
+    if (address == 0) {
+        prtf("Allowed other computers to connect to AerOS's port %d: any that can reach it.\n", port);
+    } else {
+        prtf("Allowed %s to connect to AerOS's port %d.\n", address_text, port);
+    }
+    prtf("A program listening there (tcplisten) can now answer them. It isn't sealed, so what is\n"
+         "sent can be read on the way.\n");
+}
+
 // FW ALLOW <ADDRESS OR NAME> <PORT>: allow one computer on one port, with a password both ends
 // know (a name is looked up now, see rule_address)
 static void allow_computer (char* arguments) {
@@ -237,8 +271,8 @@ static void allow_computer (char* arguments) {
     wipe(again, sizeof(again));
 }
 
-// FW [ALLOW <ADDRESS OR NAME> <PORT> | WEB <ADDRESS OR NAME> [PORT] | DEL <N>]: the firewall's rules
-// (sys/firewall.h)
+// FW [ALLOW <ADDRESS OR NAME> <PORT> | WEB <ADDRESS OR NAME> [PORT] | SERVE <PORT> [ADDRESS] |
+// DEL <N>]: the firewall's rules (sys/firewall.h)
 void cli_firewall (char* arguments) {
     char* rest;
     char* word = split_first_word(arguments, &rest);
@@ -248,6 +282,8 @@ void cli_firewall (char* arguments) {
         allow_computer(rest);
     } else if (strcasecmp(word, "web") == 0) {
         allow_web(rest);
+    } else if (strcasecmp(word, "serve") == 0) {
+        allow_serving(rest);
     } else if (strcasecmp(word, "del") == 0 && atoi(rest) > 0) {
         if (fw_remove(atoi(rest))) {
             prtf("Removed rule %d: that computer is blocked again.\n", atoi(rest));
@@ -255,7 +291,7 @@ void cli_firewall (char* arguments) {
             prtf("There is no rule %s (%s lists them).\n", rest, command_name(cli_firewall));
         }
     } else {
-        show_usage("FW, FW ALLOW 10.0.2.2 5000, FW WEB example.com or FW DEL 1");
+        show_usage("FW, FW ALLOW 10.0.2.2 5000, FW WEB example.com, FW SERVE 8080 or FW DEL 1");
     }
 }
 

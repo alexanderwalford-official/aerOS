@@ -1,18 +1,22 @@
 # The network
 
-AerOS's network does two jobs: sending short messages that can't be read or changed on the way
-(sealed), and fetching web pages over plain HTTP. Each only talks to computers you have allowed,
-and the firewall starts with everything blocked. Sealed messages are never sent in the clear;
-web pages always are, because web servers know nothing of seals (see "TCP and web pages").
+AerOS's network does three jobs: sending short messages that can't be read or changed on the
+way (sealed), fetching web pages over plain HTTP, and letting other computers connect to a
+program in AerOS (a web server, say). Each only talks to computers you have allowed, and the
+firewall starts with everything blocked. Sealed messages are never sent in the clear; TCP
+always is, because web servers and browsers know nothing of seals (see "TCP and web pages").
 
 ```
 +----------------------------------------+   +------------------------------------+
 | your message  MSG / LSN, nsend / nrecv |   | a web page    GET, httpget()       |
-+----------------------------------------+   +------------------------------------+
-| sealed: AES-256-CTR + HMAC-SHA-256 tag |   | HTTP                 sys/http.c    |
++----------------------------------------+   | a server      tcplisten() and the  |
+| sealed: AES-256-CTR + HMAC-SHA-256 tag |   |               rest, webserve       |
 |                        sys/netseal.c   |   +------------------------------------+
-+----------------------------------------+   | TCP, out only        sys/tcp.c     |
-| UDP, if a sealed rule allows it        |   | ...if a web rule allows it         |
++----------------------------------------+   | HTTP                 sys/http.c    |
+| UDP, if a sealed rule allows it        |   +------------------------------------+
+|                                        |   | TCP, both ways       sys/tcp.c     |
+|                                        |   | out if a web rule allows it, in if |
+|                                        |   | a serve rule does                  |
 +----------------------------------------+---+------------------------------------+
 | IPv4, ARP                                                      sys/net.c        |
 +---------------------------------------------------------------------------------+
@@ -28,6 +32,8 @@ web pages always are, because web servers know nothing of seals (see "TCP and we
 | `NET IP 10.0.2.15/24 10.0.2.2 10.0.2.3` | set the address, gateway and DNS server (kept in `/acc/network`) |
 | `FW` | the firewall's rules |
 | `FW ALLOW <address or name> <port>` | allow one computer on one port, with a password both ends know |
+| `FW WEB <address or name> [port]` | allow fetching web pages from a computer (plain TCP out, port 80 unless given) |
+| `FW SERVE <port> [address]` | allow other computers (anyone, or that one) to connect to AerOS's own port (plain TCP in) |
 | `FW DEL <n>` | remove a rule |
 | `MSG <address or name> <port> <text>` | send a sealed message |
 | `LSN <port>` | print the sealed messages that arrive on a port, until Esc |
@@ -108,12 +114,18 @@ and 44 of seal.
 
 ## TCP and web pages
 
-`FW WEB example.com` makes the other kind of firewall rule: a web rule, with no password. It
+`FW WEB example.com` makes the second kind of firewall rule: a web rule, with no password. It
 allows exactly one thing, AerOS opening TCP connections to that computer and port (80 unless
 given). A web rule is marked `web` in `/acc/firewall` and has no key; `net_send` refuses to seal
 a message for it, and `handle_udp` won't let a message in through it. The other way round,
-`tcp_connect` and `tcp_handle` only accept web rules. So the two kinds never stand in for each
-other.
+`tcp_connect` and `tcp_handle` only accept web rules for connections AerOS opens.
+
+`FW SERVE 8080` makes the third kind: a serve rule, also with no password. It is about AerOS's
+own port, not another computer's: it lets other computers (anyone, or only the address given)
+connect to AerOS's port 8080, where a program listens. It is kept as `serve 0.0.0.0 8080` in
+`/acc/firewall` (0.0.0.0 is "anyone"). `fw_find`, which every sealed message and web connection
+is checked with, never finds a serve rule; only `fw_serves` does. So the three kinds never stand
+in for each other.
 
 ### TCP (`sys/tcp.c`)
 
@@ -127,12 +139,67 @@ smallest that is still correct on a real network:
 | receiving | in order only: an early segment (one after a lost one) is dropped and the last acknowledgement repeated, so the other side sends the gap again |
 | the window | the room left in a 16 KB buffer, so what is on its way always fits in the card's 32 receive buffers. Reading makes room, and a window update tells the other side |
 | closing | FIN, then a short wait for its acknowledgement. No TIME_WAIT: each connection has a new random port |
-| never | listening: nothing can connect to AerOS. A segment that isn't for one of its own connections is blocked like any other packet |
+| listening | only on a port a serve rule allows. A SYN for it starts a connection (below); any other segment that isn't for one of AerOS's connections is blocked like any other packet, and `NET` shows which port it was for |
 
 Like everything on the network it is polled: `tcp_handle` is called by `net.c` for each TCP
-segment, but only while `tcp_connect`, `tcp_send`, `tcp_receive` or `tcp_close` is waiting and
-calling `net_poll`. `net.c` gives TCP four functions: `net_up`, `net_own_address`,
+segment, but only while `tcp_connect`, `tcp_send`, `tcp_receive`, `tcp_close` or `tcp_accept` is
+waiting or looking, and calling `net_poll`. `net.c` gives TCP four functions: `net_up`, `net_own_address`,
 `net_send_tcp` (one segment in an IPv4 packet, via the same `send_ip` UDP uses) and `net_poll`.
+
+### Listening, and a web server
+
+```
+fw serve 8080                   once: anyone may connect to AerOS's port 8080
+bg webserve 8080 /docs/         serve the manual, in the background
+```
+
+then `http://<AerOS's address>:8080/` in a browser. In QEMU, add `hostfwd=tcp::8080-:8080` to
+the `-nic` setting, and it is `http://localhost:8080/` on the computer QEMU runs on.
+
+How a connection from outside arrives (`tcp_handle` and `arrive` in `sys/tcp.c`; the picture is
+under LISTENING in `sys/tcp.h`):
+
+1. A program calls `tcp_listen(8080)`, which notes the port, if a serve rule allows it. A
+   program can't make a serve rule itself, so it can't open a port you haven't.
+2. Another computer sends SYN to port 8080. If something listens there and a serve rule lets
+   that computer in, `arrive` makes a new connection, ARRIVING, with a random first sequence
+   number, and sends SYN + ACK.
+3. Their ACK makes it OPEN. It waits, and anything they send (a request) goes into its buffer.
+4. The program takes it with `tcp_accept`, and from then on it is a connection like any other.
+
+So that someone can't use up AerOS's eight connections by starting handshakes and never
+finishing them (a "SYN flood"), at most 4 can wait to be accepted on each port, and one whose
+handshake doesn't finish within 10 seconds is forgotten when the next SYN comes. Removing the
+serve rule (`FW DEL`) blocks the port at once, for connections already open too.
+
+In AerLang:
+
+| | |
+| --- | --- |
+| `tcplisten(port)` | listen on AerOS's port: a number for `tcpaccept`, or `nil` (no serve rule, or something listens there already) |
+| `tcpaccept(listener, ms)` | wait up to `ms` for a visitor: a connection number, or `nil` |
+| `tcpconnect(host, port)` | connect to another computer's port, which a web rule must allow: a connection number, or `nil` |
+| `tcprecv(connection, ms)` | what has arrived (up to 16 KB at a time), `""` once they have finished, or `nil` if nothing came in time |
+| `tcpsend(connection, data)` | send a string or bytes: `true` once they have it all |
+| `tcpclose(connection)` | finish a connection |
+| `tcpunlisten(listener)` | stop listening |
+
+The numbers belong to the program that got them, as `dbopen`'s do, and whatever a program
+leaves open is closed when it ends. `tcpaccept` and `tcprecv` look once and then sleep, again
+and again, so a server waiting for visitors holds the network lock only for each look: the rest
+of AerOS can use the network meanwhile (see "The network lock" in [threads](THREADS.md)).
+`SCAN` says a program "can let other computers connect to it".
+
+`webserve` (`src/disk/bin/webserve.aer`) is a web server in about 150 lines of AerLang, written
+to be read:
+- it takes one visitor at a time, reads the request up to its blank line, and answers with a
+  status line, a few headers and the file;
+- it shows `index.html` for `/`, or a list of the folder's files if there isn't one;
+- it refuses any path with `..` in it, which would climb out of the folder;
+- it prints a line for each request (`GET /index.md 200`), which shows up at the prompt.
+
+It reads the folder the way any program does: AerOS's own folders freely, yours only where you
+have allowed it (in the background, only with an "always").
 
 ### HTTP (`sys/http.c`)
 
@@ -192,7 +259,9 @@ each descriptor pointing at a 2 KB buffer. See the top of `drivers/net/e1000.c`.
   the same key everywhere: use a different password for each rule.
 * **Keys on the disk.** `/acc/firewall` holds the keys. Programs can't read it, but anyone at the
   terminal, or with the disk, can.
-* **No HTTPS, IPv6, fragments, broadcast messages, or listening.** Web pages come in the clear,
-  nothing can connect to AerOS, and a sealed message is one packet.
+* **No HTTPS, IPv6, fragments or broadcast messages.** Web pages, and anything a server in AerOS
+  sends, go in the clear, and a sealed message is one packet.
+* **A server takes one visitor at a time** (`webserve` does), and sends each piece of an answer
+  only once the last is acknowledged: fine for a page or two, slow for big files.
 * **Polling.** Nothing arrives in the background: a message that comes while AerOS is busy with
   something else waits in the card (32 frames at most) until AerOS next looks.

@@ -1,0 +1,168 @@
+# webserve: a small web server. It shows the files in one folder to web browsers on other
+# computers, while you carry on using AerOS
+#
+#     fw serve 8080                       once: let other computers connect to port 8080
+#     bg webserve 8080                    serve the folder you are in, in the background
+#     bg webserve 8080 /home/alex/site/   ...or another folder
+#
+# Then http://<AerOS's address>:8080/ in a web browser (NET shows the address; in QEMU, start
+# it with hostfwd=tcp::8080-:8080 and use http://localhost:8080/ on your computer). / shows
+# index.html if the folder has one, or a list of its files if not. Each request shows up at the
+# prompt as a line: "GET /index.html 200". STOP (or Ctrl+C, if it isn't in the background)
+# stops it.
+#
+# It can only read the folder the way any program can (PERM): AerOS's own folders (like /docs/)
+# freely, yours only if you allow it. In the background it can't ask, so run it once without BG
+# and answer A (always) for the folder first.
+#
+# How it works: tcplisten() opens the port, tcpaccept() waits for the next visitor, tcprecv()
+# reads their request, and tcpsend() sends the answer: a status line, a few headers, a blank
+# line, then the file. HTTP is all text up to the file itself.
+
+let CRLF = chr(13) + chr(10)     # HTTP ends each line with these two characters
+
+
+# ---- the folder ------------------------------------------------------------------------------
+
+func folder_to_serve()
+    # the folder given after the port, or the current one; always ending in "/"
+    let folder = cwd()
+    if len(args) > 1 then
+        folder = args[1]
+    end
+    if sub(folder, len(folder) - 1, 1) != "/" then
+        folder = folder + "/"
+    end
+    return folder
+end
+
+func content_type(name)
+    # what kind of file it is, by its ending (what comes after its last "."), for the browser
+    let parts = split(lower(name), ".")
+    let ending = ""
+    if len(parts) > 1 then
+        ending = "." + parts[len(parts) - 1]
+    end
+    if ending == ".html" or ending == ".htm" then
+        return "text/html"
+    elif ending == ".txt" or ending == ".md" or ending == ".aer" then
+        return "text/plain"
+    elif ending == ".css" then
+        return "text/css"
+    elif ending == ".js" then
+        return "application/javascript"
+    elif ending == ".bmp" then
+        return "image/bmp"
+    elif ending == ".png" then
+        return "image/png"
+    elif ending == ".jpg" or ending == ".jpeg" then
+        return "image/jpeg"
+    elif ending == ".wav" then
+        return "audio/wav"
+    end
+    return "application/octet-stream"
+end
+
+func file_list(folder)
+    # a page listing the folder's files, each a link, for when there is no index.html
+    let page = "<html><body><h1>" + folder + "</h1><ul>"
+    for name in la(folder) do
+        if sub(name, len(name) - 1, 1) != "/" then
+            page = page + "<li><a href=" + chr(34) + "/" + name + chr(34) + ">" + name + "</a></li>"
+        end
+    end
+    return page + "</ul></body></html>"
+end
+
+
+# ---- one visitor -----------------------------------------------------------------------------
+
+func answer(connection, status, type, body)
+    # send the status line and headers, then the body (a string or bytes)
+    let head = "HTTP/1.0 " + status + CRLF
+    head = head + "Content-Type: " + type + CRLF
+    head = head + "Content-Length: " + len(body) + CRLF
+    head = head + "Connection: close" + CRLF + CRLF
+    tcpsend(connection, head)
+    tcpsend(connection, body)
+end
+
+func read_request(connection)
+    # what the browser sent, up to the blank line that ends its headers (or "" if it gave up)
+    let request = ""
+    while find(request, CRLF + CRLF) < 0 do
+        let more = tcprecv(connection, 5000)
+        if more == nil or more == "" then
+            return request
+        end
+        request = request + more
+    end
+    return request
+end
+
+func serve(connection, folder)
+    # read one request, answer it, and say what happened at the prompt
+    let request = read_request(connection)
+    # the first line is "GET /path HTTP/1.1": the method, the path, and the version
+    let words = split(split(request, CRLF)[0], " ")
+    if len(words) < 2 then
+        return
+    end
+    let path = words[1]
+    # anything after a ? is for a program, not a file: this server only has files
+    let question = find(path, "?")
+    if question >= 0 then
+        path = sub(path, 0, question)
+    end
+
+    let status = "200 OK"
+    if words[0] != "GET" then
+        status = "405 Method Not Allowed"
+        answer(connection, status, "text/plain", "Only GET works here." + CRLF)
+    elif find(path, "..") >= 0 then
+        # ".." would climb out of the folder, to files that weren't meant to be shown
+        status = "403 Forbidden"
+        answer(connection, status, "text/plain", "Not outside the folder." + CRLF)
+    elif path == "/" and not isf(folder + "index.html") then
+        answer(connection, status, "text/html", file_list(folder))
+    else
+        if path == "/" then
+            path = "/index.html"
+        end
+        let name = sub(path, 1, len(path) - 1)
+        let file = rdb(folder + name)
+        if file == nil then
+            status = "404 Not Found"
+            answer(connection, status, "text/plain", "There is no " + path + " here." + CRLF)
+        else
+            answer(connection, status, content_type(name), file)
+        end
+    end
+    print(words[0] + " " + path + " " + split(status, " ")[0])
+end
+
+
+# ---- the port --------------------------------------------------------------------------------
+
+if len(args) == 0 or int(args[0]) == nil then
+    print("webserve <port> [folder]: e.g. webserve 8080, after FW SERVE 8080")
+    exit()
+end
+let port = int(args[0])
+let folder = folder_to_serve()
+
+let listener = tcplisten(port)
+if listener == nil then
+    print("Other computers can't connect to port " + port + " yet: FW SERVE " + port + " allows it.")
+    exit()
+end
+print("Serving " + folder + " on port " + port + ".")
+
+# one visitor at a time, for as long as it runs: wait a second for the next, then wait again
+while true do
+    let connection = tcpaccept(listener, 1000)
+    if connection != nil then
+        serve(connection, folder)
+        tcpclose(connection)
+    end
+end

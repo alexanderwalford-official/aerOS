@@ -583,10 +583,14 @@ static void handle_ipv4 (const uint8_t* packet, size_t length) {
         return;
     }
     // what is inside starts after the IP header (options and all), and ends where total says.
-    // TCP has its own file, which only lets in answers on the connections AerOS opened
+    // TCP has its own file, which only lets in answers on the connections AerOS opened, and
+    // new connections to a port a program listens on that a serve rule allows. What it blocks
+    // is counted with the port it was for (bytes 2 and 3 of the TCP header), so NET can say
+    // which port someone tried: FW SERVE <port> is what would let them in
     if (packet[9] == PROTOCOL_TCP) {
-        if (!tcp_handle(from, packet + header_length, total - header_length)) {
-            block(from, 0);
+        const uint8_t* segment = packet + header_length;
+        if (!tcp_handle(from, segment, total - header_length)) {
+            block(from, total - header_length >= 4 ? get16(segment + 2) : 0);
         }
         return;
     }
@@ -668,6 +672,7 @@ const char* net_strerror (int error) {
         case NET_ERR_SEND: return "the network card wouldn't send it";
         case NET_ERR_REFUSED: return "the other computer refused the connection";
         case NET_ERR_CLOSED: return "the connection was closed";
+        case NET_ERR_IN_USE: return "a program listens on that port already";
         default: return "unknown error";
     }
 }

@@ -107,6 +107,7 @@ go
 | `fw` | what the firewall allows (nothing, to start with) |
 | `fw allow <address or name> <port>` | allow one computer on one port, with a shared password |
 | `fw web <address or name> [port]` | allow fetching web pages from one computer (port 80 unless given) |
+| `fw serve <port> [address]` | allow other computers (anyone, or one) to connect to AerOS's own port, for a [web server](network.md) |
 | `fw del <n>` | block it again |
 | `msg <address> <port> <text>` | send a sealed message |
 | `lsn <port>` | show the messages that arrive on a port, until Esc |

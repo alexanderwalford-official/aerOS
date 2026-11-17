@@ -100,6 +100,13 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("nsend", bi_net_send, 3, 3),
     BUILTIN("nrecv", bi_net_receive, 2, 2),
     BUILTIN("httpget", bi_http_get, 1, 1),
+    BUILTIN("tcplisten", bi_tcp_listen, 1, 1),
+    BUILTIN("tcpaccept", bi_tcp_accept, 2, 2),
+    BUILTIN("tcpconnect", bi_tcp_connect, 2, 2),
+    BUILTIN("tcprecv", bi_tcp_receive, 2, 2),
+    BUILTIN("tcpsend", bi_tcp_send, 2, 2),
+    BUILTIN("tcpclose", bi_tcp_close, 1, 1),
+    BUILTIN("tcpunlisten", bi_tcp_unlisten, 1, 1),
     BUILTIN("verify", bi_verify, 3, 3),
     BUILTIN("packagekey", bi_package_key, 0, 0),
     BUILTIN("scan", bi_scan, 1, 1),
@@ -161,7 +168,8 @@ static const struct {
     { APP_FILES,    { "rdf", "rdb", "wrf", "apf", "isf", "delf", "la", "cwd", "enc", "dec",
                       "isenc", "rdenc", "rdat", "wrat", "trunc", "dbopen", "dbrun", "dbquery",
                       "dbclose", "sync", NULL } },
-    { APP_NETWORK,  { "nsend", "nrecv", "httpget", NULL } },
+    { APP_NETWORK,  { "nsend", "nrecv", "httpget", "tcplisten", "tcpaccept", "tcpconnect",
+                      "tcprecv", "tcpsend", "tcpclose", "tcpunlisten", NULL } },
 };
 
 // the part a built-in's name belongs to, 0 for the ones every program has (print, len...)
@@ -266,6 +274,7 @@ void aer_give_screen_back (void) {
 // a program that ends (or crashes) in graphics mode gets the terminal back automatically
 void aer_builtins_finish (void) {
     database_finish(); // databases the program left open are closed
+    network_finish();  // ...and its TCP connections, and the ports it listened on
     // a program in the background never had the sound, the mouse or the screen (aer_front_only),
     // and they may be the program in front's right now: leave them be
     if (aer->background) {

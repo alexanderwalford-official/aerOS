@@ -24,8 +24,8 @@ static fw_rule_t rules[FW_RULES_MAX];
 static int rule_count = 0;
 static bool loaded = false;   // has /acc/firewall been read yet? (see load)
 
-// "allow 10.0.2.2 5000 <64 hex digits> [name]" or "web 10.0.2.2 80 [name]" -> a rule. False if
-// the line isn't one
+// "allow 10.0.2.2 5000 <64 hex digits> [name]", "web 10.0.2.2 80 [name]" or "serve 0.0.0.0 8080"
+// -> a rule. False if the line isn't one
 static bool parse_rule (char* line, fw_rule_t* rule) {
     // split the line into its words (strtok_r writes '\0's into the line as it goes)
     char* save = NULL;
@@ -36,8 +36,16 @@ static bool parse_rule (char* line, fw_rule_t* rule) {
         return false;
     }
 
-    // a web rule: an address, a port and maybe a name, but no key
+    // a serve rule: who may connect (0.0.0.0 for anyone) and AerOS's own port, no key or name
     memset(rule, 0, sizeof(fw_rule_t));
+    if (seq(word, "serve")) {
+        int port_number = atoi(port);
+        rule->serve = true;
+        rule->port = (uint16_t)port_number;
+        return net_parse_address(address, &rule->address) && port_number > 0 && port_number <= 65535;
+    }
+
+    // a web rule: an address, a port and maybe a name, but no key
     if (seq(word, "web")) {
         const char* name = strtok_r(NULL, " ", &save);
         int port_number = atoi(port);
@@ -113,7 +121,9 @@ static void save (void) {
         // the name, if there is one, goes on the end after a space; otherwise nothing at all,
         // so the line doesn't end with a stray space
         const char* space = rules[i].name[0] != '\0' ? " " : "";
-        if (rules[i].web) {
+        if (rules[i].serve) {
+            sfmt(line, sizeof(line), "serve %s %u\n", address, rules[i].port);
+        } else if (rules[i].web) {
             sfmt(line, sizeof(line), "web %s %u%s%s\n", address, rules[i].port, space, rules[i].name);
         } else {
             sfmt(line, sizeof(line), "allow %s %u %s%s%s\n", address, rules[i].port, key, space, rules[i].name);
@@ -135,16 +145,39 @@ static void save (void) {
     free(text);
 }
 
-// the rule for exactly this address and port, or NULL: the one test everything sent or
-// received has to pass
+// the sealed or web rule for exactly this address and port, or NULL: the one test everything
+// sent or received has to pass. (Serve rules are about AerOS's own ports: see fw_serves)
 const fw_rule_t* fw_find (uint32_t address, uint16_t port) {
     load();
     for (int i = 0; i < rule_count; i++) {
-        if (rules[i].address == address && rules[i].port == port) {
+        if (!rules[i].serve && rules[i].address == address && rules[i].port == port) {
             return &rules[i];
         }
     }
     return NULL;
+}
+
+// may `address` connect to AerOS's port `port`? A serve rule for the port, for anyone (address
+// 0) or for that computer (see firewall.h)
+bool fw_serves (uint32_t address, uint16_t port) {
+    load();
+    for (int i = 0; i < rule_count; i++) {
+        if (rules[i].serve && rules[i].port == port && (rules[i].address == 0 || rules[i].address == address)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// is there any serve rule for AerOS's port `port`? (see firewall.h)
+bool fw_port_served (uint16_t port) {
+    load();
+    for (int i = 0; i < rule_count; i++) {
+        if (rules[i].serve && rules[i].port == port) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // the rule made for this name (example.com) and port, or NULL. Upper and lower case don't
@@ -153,7 +186,7 @@ const fw_rule_t* fw_find_name (const char* name, uint16_t port) {
     load();
     for (int i = 0; i < rule_count; i++) {
         // (a rule made for an address has no name, and must never match an empty one)
-        if (rules[i].port == port && rules[i].name[0] != '\0' && strcasecmp(rules[i].name, name) == 0) {
+        if (!rules[i].serve && rules[i].port == port && rules[i].name[0] != '\0' && strcasecmp(rules[i].name, name) == 0) {
             return &rules[i];
         }
     }
@@ -201,6 +234,29 @@ bool fw_allow_web (uint32_t address, uint16_t port, const char* name) {
     return true;
 }
 
+// add a serve rule (FW SERVE), or replace the one for the same port and address, and save them all
+bool fw_allow_serve (uint32_t address, uint16_t port) {
+    load();
+    fw_rule_t* rule = NULL;
+    for (int i = 0; i < rule_count && rule == NULL; i++) {
+        if (rules[i].serve && rules[i].port == port && rules[i].address == address) {
+            rule = &rules[i];
+        }
+    }
+    if (rule == NULL) {
+        if (rule_count == FW_RULES_MAX) {
+            return false;
+        }
+        rule = &rules[rule_count++];
+    }
+    wipe(rule, sizeof(fw_rule_t));
+    rule->address = address;
+    rule->port = port;
+    rule->serve = true;
+    save();
+    return true;
+}
+
 // remove rule `number` (counting from 1, as FW lists them), and save the rest
 bool fw_remove (int number) {
     load();
@@ -236,7 +292,7 @@ const fw_rule_t* fw_rule (int number) {
 bool fw_port_open (uint16_t port) {
     load();
     for (int i = 0; i < rule_count; i++) {
-        if (rules[i].port == port && !rules[i].web) {
+        if (rules[i].port == port && !rules[i].web && !rules[i].serve) {
             return true;
         }
     }

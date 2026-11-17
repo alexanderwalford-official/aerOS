@@ -8,6 +8,14 @@
         tcp_receive      waits for bytes to be in the buffer        (net_poll, then the buffer)
         tcp_close        sends FIN, waits a little for its ACK, and forgets the connection
 
+    and for connections from outside (LISTENING in tcp.h):
+
+        tcp_listen       notes the port in listeners[], if a serve rule allows it
+        (tcp_handle)     a SYN for that port: a new connection, ARRIVING, and SYN + ACK back
+                         (arrive); their ACK makes it OPEN, waiting to be accepted
+        tcp_accept       hands over one that is open and waiting
+        tcp_unlisten     forgets the port, and the connections still waiting on it
+
     and underneath them all, tcp_handle: net.c calls it for each TCP segment that arrives, and it
     updates the connection the segment belongs to (what is acknowledged, new bytes into the
     buffer, the other side closing). Nothing happens in the background: segments are only taken
@@ -46,6 +54,7 @@
 
 typedef enum {
     CONNECTING,     // SYN sent, waiting for SYN + ACK
+    ARRIVING,       // from outside: their SYN came, our SYN + ACK went, waiting for their ACK
     OPEN,           // connected: bytes can go both ways
     THEY_CLOSED,    // their FIN arrived: they send no more, but we still may
 } state_t;
@@ -55,7 +64,11 @@ typedef struct {
     state_t state;
     uint32_t address;         // the other computer
     uint16_t port;            // ...its port
-    uint16_t our_port;        // and ours, picked at random
+    uint16_t our_port;        // and ours: picked at random, or the one listened on
+
+    int listener;             // the listener it arrived on, or -1 for one AerOS opened
+    bool waiting;             // arrived on a listener, and not accepted yet
+    uint32_t arrived;         // clkuptms() when its SYN came (for TCP_ARRIVING_MS)
 
     uint32_t send_next;       // the number our next new byte gets
     uint32_t send_unacked;    // our oldest byte they haven't acknowledged yet
@@ -70,6 +83,12 @@ typedef struct {
 } connection_t;
 
 static connection_t connections[TCP_CONNECTIONS_MAX];
+
+// the ports programs listen on (tcp_listen)
+static struct {
+    bool used;
+    uint16_t port;
+} listeners[TCP_LISTENERS_MAX];
 
 // ---- small helpers ------------------------------------------------------------------------------
 
@@ -242,6 +261,82 @@ static uint16_t read_mss (const uint8_t* segment, size_t header) {
     return 536;
 }
 
+// give back a connection's buffer and empty its place, for the next connection
+static void forget (connection_t* c) {
+    free(c->buffer);
+    memset(c, 0, sizeof(connection_t));
+}
+
+// the listener on AerOS's port `port`, or -1 if nothing listens there
+static int listener_on (uint16_t port) {
+    for (int l = 0; l < TCP_LISTENERS_MAX; l++) {
+        if (listeners[l].used && listeners[l].port == port) {
+            return l;
+        }
+    }
+    return -1;
+}
+
+// A SYN from outside, for AerOS's port `to_port` (see LISTENING in tcp.h): if a program listens
+// there and a serve rule lets `from` in, a new connection, ARRIVING, and our SYN + ACK back.
+// True if it was taken
+static bool arrive (uint32_t from, uint16_t from_port, uint16_t to_port, uint32_t sequence, const uint8_t* segment, size_t header, uint16_t window) {
+    int l = listener_on(to_port);
+    if (l < 0 || !fw_serves(from, to_port)) {
+        TRACE("someone tried to connect to port %u: %s", to_port,
+              l < 0 ? "nothing listens there" : "no serve rule lets them in (FW SERVE)");
+        return false;
+    }
+    // Forget handshakes on this port that never finished, then count the ones still waiting to
+    // be accepted. Past TCP_WAITING_MAX this SYN is ignored: they send it again later
+    uint32_t now = clkuptms();
+    int waiting = 0;
+    int free_place = -1;
+    for (int i = 0; i < TCP_CONNECTIONS_MAX; i++) {
+        connection_t* c = &connections[i];
+        if (c->used && c->listener == l && c->state == ARRIVING && now - c->arrived >= TCP_ARRIVING_MS) {
+            TRACE("forgot a connection from port %u that never finished its handshake", c->port);
+            forget(c);
+        }
+        if (c->used && c->listener == l && c->waiting) {
+            waiting++;
+        }
+        if (!c->used && free_place < 0) {
+            free_place = i;
+        }
+    }
+    if (waiting >= TCP_WAITING_MAX || free_place < 0) {
+        TRACE("too many connections waiting on port %u: this one has to try again", to_port);
+        return false;
+    }
+    connection_t* c = &connections[free_place];
+    memset(c, 0, sizeof(connection_t));
+    c->buffer = malloc(TCP_BUFFER);
+    if (c->buffer == NULL) {
+        return false;
+    }
+    // our first sequence number is random, as for a connection AerOS opens (see open_connection)
+    uint32_t first;
+    crypto_random(&first, sizeof(first));
+    c->used = true;
+    c->state = ARRIVING;
+    c->address = from;
+    c->port = from_port;
+    c->our_port = to_port;
+    c->listener = l;
+    c->waiting = true;
+    c->arrived = now;
+    c->receive_next = sequence + 1;         // their SYN counts as one byte
+    c->their_window = window;
+    c->their_mss = read_mss(segment, header);
+    c->send_unacked = first;
+    c->send_next = first + 1;               // ...and so does ours
+    TRACE("port %u is connecting to our port %u: sending SYN + ACK", from_port, to_port);
+    outgoing_t syn_ack = { FLAG_SYN | FLAG_ACK, first, NULL, 0 };
+    send_segment(c, &syn_ack);
+    return true;
+}
+
 // a segment arrived (see tcp.h): which connection is it for, and what does it change?
 bool tcp_handle (uint32_t from, const uint8_t* segment, size_t length) {
     if (length < TCP_HEADER || tcp_checksum(from, net_own_address(), segment, length) != 0) {
@@ -258,8 +353,7 @@ bool tcp_handle (uint32_t from, const uint8_t* segment, size_t length) {
         return false;
     }
 
-    // It must be for one of our connections, and a web rule must still allow it. Anything else
-    // (someone trying to connect to AerOS, say) is blocked
+    // It must be for one of our connections...
     connection_t* c = NULL;
     for (int i = 0; i < TCP_CONNECTIONS_MAX; i++) {
         connection_t* candidate = &connections[i];
@@ -268,8 +362,20 @@ bool tcp_handle (uint32_t from, const uint8_t* segment, size_t length) {
             c = candidate;
         }
     }
-    const fw_rule_t* rule = fw_find(from, from_port);
-    if (c == NULL || rule == NULL || !rule->web) {
+    // ...or a new one, to a port a program listens on: a SYN, on its own (not SYN + ACK, which
+    // is only ever an answer). Anything else is blocked
+    if (c == NULL) {
+        bool syn_only = (flags & FLAG_SYN) && !(flags & (FLAG_ACK | FLAG_RST));
+        return syn_only && arrive(from, from_port, to_port, sequence, segment, header, window);
+    }
+    // and the firewall must still allow it: a web rule for one AerOS opened, a serve rule for
+    // one from outside (FW DEL takes effect at once, on connections already open too)
+    if (c->listener < 0) {
+        const fw_rule_t* rule = fw_find(from, from_port);
+        if (rule == NULL || !rule->web) {
+            return false;
+        }
+    } else if (!fw_serves(from, to_port)) {
         return false;
     }
 
@@ -278,6 +384,22 @@ bool tcp_handle (uint32_t from, const uint8_t* segment, size_t length) {
         TRACE("port %u reset the connection", from_port);
         c->reset = true;
         return true;
+    }
+
+    // from outside, still in the handshake: their SYN again means our SYN + ACK was lost, so it
+    // goes again; their ACK of it opens the connection, and may carry the first data too
+    if (c->state == ARRIVING) {
+        if (flags & FLAG_SYN) {
+            outgoing_t syn_ack = { FLAG_SYN | FLAG_ACK, c->send_unacked, NULL, 0 };
+            send_segment(c, &syn_ack);
+            return true;
+        }
+        if (!(flags & FLAG_ACK) || acknowledged != c->send_next) {
+            return true;
+        }
+        c->send_unacked = acknowledged;
+        c->state = OPEN;
+        TRACE("port %u has connected to our port %u: waiting to be accepted", from_port, to_port);
     }
 
     // the answer to our SYN: they start numbering their bytes at `sequence`
@@ -357,6 +479,7 @@ static int open_connection (uint32_t address, uint16_t port) {
     }
     connection_t* c = &connections[number];
     memset(c, 0, sizeof(connection_t));
+    c->listener = -1;                       // AerOS's own, not one that arrived on a listener
     c->buffer = malloc(TCP_BUFFER);
     if (c->buffer == NULL) {
         return NET_ERR_SEND;
@@ -486,9 +609,9 @@ static void close_connection (int number) {
         return;
     }
     connection_t* c = &connections[number];
-    // Say we have finished, if the connection got that far, and wait a little for them to
-    // acknowledge it. Not long: whether or not they do, AerOS is done with it
-    if (c->state != CONNECTING && !c->reset) {
+    // Say we have finished, if the connection got that far (past its handshake), and wait a
+    // little for them to acknowledge it. Not long: whether or not they do, AerOS is done with it
+    if (c->state != CONNECTING && c->state != ARRIVING && !c->reset) {
         outgoing_t fin = { FLAG_FIN | FLAG_ACK, c->send_next, NULL, 0 };
         c->send_next++;                      // a FIN counts as one byte
         uint32_t start = clkuptms();
@@ -499,13 +622,96 @@ static void close_connection (int number) {
         }
         TRACE("closed the connection to port %u", c->port);
     }
-    free(c->buffer);
-    memset(c, 0, sizeof(connection_t));
+    forget(c);
 }
 
 // close a connection (see tcp.h): close_connection, with the network lock held
 void tcp_close (int number) {
     net_lock();
     close_connection(number);
+    net_unlock();
+}
+
+// Listen on AerOS's port `port` (tcp_listen takes the network lock and calls this)
+static int start_listening (uint16_t port) {
+    if (!net_up()) {
+        return NET_ERR_NO_CARD;
+    }
+    // only on a port a serve rule allows: a program can't open one up itself (see firewall.h)
+    if (!fw_port_served(port)) {
+        TRACE("not listening on port %u: no serve rule allows it (FW SERVE)", port);
+        return NET_ERR_BLOCKED;
+    }
+    if (listener_on(port) >= 0) {
+        return NET_ERR_IN_USE;
+    }
+    for (int l = 0; l < TCP_LISTENERS_MAX; l++) {
+        if (!listeners[l].used) {
+            listeners[l].used = true;
+            listeners[l].port = port;
+            TRACE("listening on port %u: others may connect to it", port);
+            return l;
+        }
+    }
+    return NET_ERR_SEND;
+}
+
+// listen on a port (see tcp.h): start_listening, with the network lock held
+int tcp_listen (uint16_t port) {
+    net_lock();
+    int listener = start_listening(port);
+    net_unlock();
+    return listener;
+}
+
+// Hand over a connection that has arrived on the listener and finished its handshake, after
+// one look at what the card has collected (tcp_accept takes the network lock and calls this)
+static int take_arrived (int listener, uint32_t* from) {
+    if (listener < 0 || listener >= TCP_LISTENERS_MAX || !listeners[listener].used) {
+        return NET_ERR_CLOSED;
+    }
+    net_poll();
+    for (int i = 0; i < TCP_CONNECTIONS_MAX; i++) {
+        connection_t* c = &connections[i];
+        // one that was reset before anyone took it (they gave up) is cleared away
+        if (c->used && c->listener == listener && c->waiting && c->reset) {
+            forget(c);
+            continue;
+        }
+        // (one that has already sent its request and finished, THEY_CLOSED, is just as ready)
+        bool open = c->state == OPEN || c->state == THEY_CLOSED;
+        if (c->used && c->listener == listener && c->waiting && open && !c->reset) {
+            c->waiting = false;
+            if (from != NULL) {
+                *from = c->address;
+            }
+            TRACE("accepted the connection from port %u", c->port);
+            return i;
+        }
+    }
+    return NET_ERR_NO_ANSWER;
+}
+
+// take a connection that has arrived (see tcp.h): take_arrived, with the network lock held
+int tcp_accept (int listener, uint32_t* from) {
+    net_lock();
+    int number = take_arrived(listener, from);
+    net_unlock();
+    return number;
+}
+
+// stop listening (see tcp.h). The connections still waiting to be accepted are forgotten without
+// a word: their computers give up when nothing more comes
+void tcp_unlisten (int listener) {
+    net_lock();
+    if (listener >= 0 && listener < TCP_LISTENERS_MAX && listeners[listener].used) {
+        for (int i = 0; i < TCP_CONNECTIONS_MAX; i++) {
+            if (connections[i].used && connections[i].listener == listener && connections[i].waiting) {
+                forget(&connections[i]);
+            }
+        }
+        TRACE("stopped listening on port %u", listeners[listener].port);
+        listeners[listener].used = false;
+    }
     net_unlock();
 }

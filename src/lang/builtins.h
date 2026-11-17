@@ -174,6 +174,13 @@ value_t bi_exit (int argc, value_t* argv, int line);
 value_t bi_net_send (int argc, value_t* argv, int line);
 value_t bi_net_receive (int argc, value_t* argv, int line);
 value_t bi_http_get (int argc, value_t* argv, int line);
+value_t bi_tcp_listen (int argc, value_t* argv, int line);
+value_t bi_tcp_accept (int argc, value_t* argv, int line);
+value_t bi_tcp_connect (int argc, value_t* argv, int line);
+value_t bi_tcp_receive (int argc, value_t* argv, int line);
+value_t bi_tcp_send (int argc, value_t* argv, int line);
+value_t bi_tcp_close (int argc, value_t* argv, int line);
+value_t bi_tcp_unlisten (int argc, value_t* argv, int line);
 
 // bi_trust.c
 value_t bi_verify (int argc, value_t* argv, int line);
@@ -186,6 +193,7 @@ value_t bi_dbrun (int argc, value_t* argv, int line);
 value_t bi_dbquery (int argc, value_t* argv, int line);
 value_t bi_dbclose (int argc, value_t* argv, int line);
 void database_finish (void);   // closes any databases a program left open, when it ends
+void network_finish (void);    // closes its TCP connections, and stops its listeners, likewise
 bool database_is_open (const char* folder, const char* name);   // has the program got it open?
 
 #endif /* BUILTINS_H */

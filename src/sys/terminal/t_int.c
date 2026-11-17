@@ -373,7 +373,7 @@ static const command_t commands[] = {
     COMMAND("bp",   "[HZ]",       "BEEP THE PC SPEAKER",                                         cli_beep),
     COMMAND("ply",  "<FILE>",     "PLAY A .WAV, .MP3 OR .MPG VIDEO (ESC TO STOP)",               cli_play),
     COMMAND("net",  "[IP ...]",   "THE NETWORK: CARD, ADDRESS, WHAT WAS SENT AND KEPT OUT",      cli_network),
-    COMMAND("fw",   "[ALLOW ...]","THE FIREWALL: FW ALLOW <NAME> <PORT>, FW WEB <NAME>, FW DEL <N>", cli_firewall),
+    COMMAND("fw",   "[ALLOW ...]","THE FIREWALL: FW ALLOW <NAME> <PORT>, FW WEB, FW SERVE <PORT>, FW DEL", cli_firewall),
     COMMAND("msg",  "<TO> <PORT>","SEND A SEALED MESSAGE (e.g. MSG 10.0.2.2 5000 HELLO)",        cli_message),
     COMMAND("lsn",  "<PORT>",     "SHOW THE SEALED MESSAGES THAT ARRIVE ON A PORT (ESC STOPS)",  cli_listen),
     COMMAND("get",  "<URL> [FILE]", "FETCH A WEB PAGE: SHOW IT, OR SAVE IT (FW WEB ALLOWS A SITE)", cli_get),

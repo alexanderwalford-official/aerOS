@@ -20,7 +20,7 @@ It's an opensource operating system and its design is remarkably simple consider
 AerOS is written to be read. Every source file starts with an explanation of what it does and how, and these guides tie it all together:
 
 - [What makes AerOS different](docs/DIFFERENT.md): how WHY and SRC, AerLang at the prompt, permissions and file versions work inside
-- [The network](docs/NETWORK.md): the e1000 driver, the firewall, sealed messages, and `tools/aernet.py` for the other end
+- [The network](docs/NETWORK.md): the e1000 driver, the firewall, sealed messages, TCP both ways (with `webserve`, a web server in AerLang), and `tools/aernet.py` for the other end
 - [How AerOS works](docs/ARCHITECTURE.md): the source tree, the boot sequence, memory, interrupts, files, and recipes for adding commands, functions and drivers
 - [AerLang](docs/AERLANG.md): the built-in programming language
 - [Security](docs/SECURITY.md): user accounts, password hashing and file encryption, with every algorithm explained

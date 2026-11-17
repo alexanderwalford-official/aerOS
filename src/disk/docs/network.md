@@ -88,10 +88,31 @@ public pages, and for files that are checked once they arrive, but don't fetch a
 this way. A web rule only allows fetching pages, never sealed messages, and a rule with a
 password never allows web pages: the two kinds don't stand in for each other.
 
+## A web server
+
+AerOS can serve web pages too: other computers connect to it. Nothing can, until you allow it
+with a serve rule, for one of AerOS's own ports:
+
+```
+fw serve 8080                          anyone may connect to AerOS's port 8080
+fw serve 8080 10.0.2.2                 or only that computer may
+bg webserve 8080 /docs/                serve the manual, in the background
+```
+
+Then `http://<AerOS's address>:8080/` in a browser shows it (in QEMU, add
+`hostfwd=tcp::8080-:8080` to its `-nic` setting, and use `http://localhost:8080/`). Each visit
+shows up at the prompt: `[webserve] GET /index.md 200`. `/` shows `index.html`, or a list of the
+files if there isn't one. `stop` stops it, and `fw del` shuts the port again at once.
+
+`webserve` is an ordinary AerLang program, `/bin/webserve.aer`: read it to see how a web server
+works, or make your own with `tcplisten`, `tcpaccept`, `tcprecv`, `tcpsend` and `tcpclose`. It
+reads the folder like any program: AerOS's own folders freely, yours only where you allow it.
+What it sends isn't sealed, so don't serve anything private.
+
 ## What it can't do (yet)
 
-No HTTPS (so `https://` addresses don't work: try the `http://` one), nothing can connect to
-AerOS (it only fetches), no IPv6, and a sealed message must fit in one packet: 1428 bytes. The
+No HTTPS (so `https://` addresses don't work: try the `http://` one), no IPv6, and a sealed
+message must fit in one packet: 1428 bytes. The
 biggest page `get` will fetch is 4 MB. The card is an Intel e1000 (QEMU's own, and one
 VirtualBox offers).
 

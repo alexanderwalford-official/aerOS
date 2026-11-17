@@ -257,6 +257,14 @@ for) · `nrecv(port, ms)` wait up to ms milliseconds: the message, or nil ·
 `httpget(url)` fetch a web page (http:// only) from a computer a web rule (`FW WEB`) allows: its
 text if the status was 2xx, or nil
 
+**TCP** (plain connections both ways: a server, or a client for any protocol; see NETWORK.md,
+"Listening, and a web server", and `/bin/webserve.aer` for a whole web server)
+`tcplisten(port)` let other computers connect to AerOS's port (`FW SERVE <port>` must allow it):
+a number, or nil · `tcpaccept(listener, ms)` wait for a visitor: a connection, or nil ·
+`tcpconnect(host, port)` connect out (`FW WEB` must allow it): a connection, or nil ·
+`tcprecv(c, ms)` what has arrived, `""` once they have finished, nil if nothing came ·
+`tcpsend(c, data)` send a string or bytes · `tcpclose(c)` · `tcpunlisten(listener)`
+
 **Trust** (`src/lang/bi_trust.c`)
 `verify(data, signature, key)` was data (text or bytes) signed by the private key that goes with
 key? signature (128 hex digits) and key (64) are hex; anything malformed is false ·

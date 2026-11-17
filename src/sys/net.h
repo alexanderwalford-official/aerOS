@@ -70,6 +70,7 @@
 #define NET_ERR_SEND      -6   // the card wouldn't send it
 #define NET_ERR_REFUSED   -7   // TCP: the other computer refused the connection (nothing listens there)
 #define NET_ERR_CLOSED    -8   // TCP: the connection was closed, or reset, before it was done
+#define NET_ERR_IN_USE    -9   // TCP: a program listens on that port already
 
 const char* net_strerror (int error);
 
