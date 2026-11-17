@@ -35,6 +35,7 @@
 #include "../explain.h"
 #include "../appmode.h"
 #include "../rt.h"
+#include "../disk_cache.h"
 
 
 // =================================================================================================
@@ -139,6 +140,53 @@ void cli_drives (char* arguments) {
             }
             prtf("\n");
         }
+    }
+}
+
+// part out of whole as a percentage (0 when whole is 0), without part * 100 overflowing
+static unsigned int percent (uint32_t part, uint32_t whole) {
+    if (whole == 0) {
+        return 0;
+    }
+    if (whole >= 100) {
+        return part / (whole / 100);
+    }
+    return part * 100 / whole;
+}
+
+// SYNC: write every change the disk cache is holding to the disk now, then show what the cache
+// is doing. AerOS does this by itself before every prompt and while it waits for a key, so
+// typing it is never needed: it is here to see the cache at work (sys/disk_cache.h)
+void cli_sync (char* arguments) {
+    (void)arguments;
+    disk_cache_stats_t before;
+    disk_cache_stats(&before);
+    if (before.sectors == 0) {
+        prtf("There is no disk cache (no AEROS disk, or not enough memory): everything goes\n"
+             "straight to the drive.\n");
+        return;
+    }
+
+    bool worked = disk_cache_sync();
+    disk_cache_stats_t after;
+    disk_cache_stats(&after);
+    if (before.waiting == 0) {
+        prtf("Nothing was waiting: every change is already on the disk.\n");
+    } else {
+        prtf("Wrote %u changed sector(s) to the disk.\n", after.written - before.written);
+    }
+    if (!worked) {
+        prtf("The drive refused some: %u sector(s) still waiting.\n", after.waiting);
+    }
+
+    // 2 sectors = 1 KB
+    uint32_t reads = after.hits + after.misses;
+    prtf("Disk cache: %u KB, holding %u of %u sectors.\n", after.sectors / 2, after.held, after.sectors);
+    prtf("Reads found in memory: %u%% (%u of %u sectors).\n", percent(after.hits, reads), after.hits, reads);
+    prtf("Written to the disk: %u sectors, in %u batch(es), each with one flush.\n", after.written,
+         after.syncs);
+    if (after.errors > 0) {
+        prtf("The drive has refused %u write(s) since AerOS started.\n", after.errors);
     }
 }
 

@@ -21,6 +21,7 @@
 #include "f_sys.h"
 #include "sys_clck.h"
 #include "trace.h"
+#include "disk_cache.h"
 #include "../db/aerdb.h"
 #include "../lib/aer_string.h"
 #include "../lib/aer_stdio.h"
@@ -84,10 +85,13 @@ static aerdb_t* open_log (void) {
     return db;
 }
 
-// close the log, and lock it again
+// Close the log, and lock it again. What was just written goes to the disk at once rather than
+// waiting in the disk cache (sys/disk_cache.h): after a crash, the log is what says what
+// happened, so it mustn't lose its last entries in that crash
 static void close_log (aerdb_t* db) {
     aerdb_close(db);
     fs_log_unlocked = false;
+    disk_cache_sync();
 }
 
 // fill in one entry, stamped with the time now

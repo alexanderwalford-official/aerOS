@@ -53,12 +53,30 @@ The CPU stops whatever it is doing when hardware needs attention:
 When there is nothing to do, AerOS halts the CPU until the next interrupt, so it uses
 almost no power sitting at the prompt.
 
+## The disk cache
+
+Talking to a disk is slow next to memory, and the slowest part is asking the disk to make
+sure what it was given is really stored (a "flush"). So AerOS keeps the last 4 MB of the disk
+it used in memory:
+
+- **Reading** something used lately comes from memory instead of the disk.
+- **Writing** changes the copy in memory first. The changes are put on the disk together, with
+  one flush for all of them: before every prompt, while AerOS waits for a key, after a second
+  at most while a program runs, and before shutting down.
+
+So when the prompt comes back, everything you did is on the disk. Only if the power goes in
+the middle of a program can its last second of changes be lost. AerOS's log is the exception:
+it is written straight away, as it is what says what happened after a crash. `sync` puts
+everything onto the disk at once and shows the cache's numbers; `sync()` does it from a
+program. `bench` times reading and writing, to see the difference.
+
 ## The parts
 
 | Part | Source |
 | --- | --- |
 | the terminal and its commands | `src/sys/terminal/` (`t_int.c`, and `cmd_*.c` by topic) |
 | files: disk (FAT) or memory | `src/sys/f_sys.c`, `src/sys/fat.c` |
+| the disk cache | `src/sys/disk_cache.c` |
 | accounts and encryption | `src/sys/accounts/`, `src/sys/fcrypt.c` |
 | AerLang, and AerLang at the prompt | `src/lang/` |
 | WHY and SRC, and the `/src/` folder | `src/sys/explain.c`, `src/sys/source.c` |

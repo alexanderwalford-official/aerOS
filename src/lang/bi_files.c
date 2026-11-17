@@ -18,6 +18,7 @@
 #include "../lib/crypto.h"
 #include "../sys/f_sys.h"
 #include "../sys/fcrypt.h"
+#include "../sys/disk_cache.h"
 
 // rdf(path): a file's contents as a string, nil if there is no such file
 value_t bi_read_file (int argc, value_t* argv, int line) {
@@ -190,6 +191,14 @@ value_t bi_delete_file (int argc, value_t* argv, int line) {
         return aer_bool(false);
     }
     return aer_bool(fs_delete_f(dir, name) == FS_OK);
+}
+
+// sync(): put every change still held in the disk cache onto the disk now, rather than within
+// the second (sys/disk_cache.h). For a program that wants to be sure, like a game saving its
+// progress. True if it worked. It only writes what was already written, so it doesn't ask first
+value_t bi_sync (int argc, value_t* argv, int line) {
+    (void)argc; (void)argv; (void)line;
+    return aer_bool(disk_cache_sync());
 }
 
 // add one directory entry to the list, directories get a '/' on the end

@@ -376,8 +376,8 @@ class AerOS:
 
     def first_login(self, name='tester', password='secret1'):
         """On a new disk AerOS asks for the first account: make one and wait for its prompt."""
-        # a new disk first gets every built-in file (a few MB, each write flushed), which takes a
-        # while when many tests are writing at once
+        # a new disk first gets every built-in file (a few MB), which takes a while when many
+        # tests are writing at once
         self.wait_for('Create the first account', 180)
         self.answer(name)
         self.answer(password)

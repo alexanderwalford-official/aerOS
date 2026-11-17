@@ -55,6 +55,12 @@ int drive_probe_info(int bus, int slave, char* model, size_t model_size, uint32_
 bool drive_read(int bus, int slave, uint32_t lba, uint32_t count, void* buffer);
 bool drive_write(int bus, int slave, uint32_t lba, uint32_t count, const void* buffer);
 
+// drive_write in two halves, for writing many sectors and then flushing once (sys/disk_cache.c):
+// drive_write_unflushed hands the sectors to the drive, which may keep them in its own RAM for
+// a while, and drive_flush waits until everything it is holding is really on the disk
+bool drive_write_unflushed(int bus, int slave, uint32_t lba, uint32_t count, const void* buffer);
+bool drive_flush(int bus, int slave);
+
 // does this sector look like a FAT boot sector?
 // (checks the jump instruction and that the BIOS parameter block values are sensible)
 bool drive_is_fat_boot_sector(const uint8_t* sector);

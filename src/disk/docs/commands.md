@@ -123,6 +123,7 @@ See [The network](network.md).
 | `mem` | memory use |
 | `rt [stress]` | [RT mode](rt.md)'s real-time tasks (experimental, picked in the boot options) |
 | `drv` | the disks AerOS can see |
+| `sync` | put every change still held in memory onto the disk now, and show the [disk cache](inside.md) at work (AerOS does this by itself before every prompt, so it is never needed) |
 | `rbt` | restart |
 | `off` | turn off |
 

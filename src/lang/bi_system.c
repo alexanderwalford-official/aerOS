@@ -25,6 +25,7 @@
 #include "../sys/terminal/t_int.h"
 #include "../sys/appmode.h"
 #include "../sys/syslog.h"
+#include "../sys/disk_cache.h"
 #include "../sys/f_sys.h"
 #include "../sys/accounts/auth.h"
 #include "../lib/crypto.h"
@@ -39,6 +40,9 @@ value_t bi_sleep (int argc, value_t* argv, int line) {
     while (ms > 0 && !kb_take_break()) {
         sleep_ms(ms > 20 ? 20 : (uint32_t)ms);
         ms -= 20;
+        // while the program waits, changes it made that the disk cache has held for a second
+        // are written (sys/disk_cache.h)
+        disk_cache_idle();
     }
     // time still left means the loop stopped early, so Ctrl+C was pressed
     if (ms > 0) {

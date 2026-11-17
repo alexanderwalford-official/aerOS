@@ -90,6 +90,7 @@
 #include "fat.h"
 #include "sys_clck.h"
 #include "../drivers/storage/ata.h"
+#include "disk_cache.h"
 #include "../lib/aer_ctype.h"
 #include "../lib/aer_string.h"
 #include "../lib/aer_stdlib.h"
@@ -177,7 +178,8 @@ typedef bool (*fat_visit_t)(const fat_entry_t* entry, void* ctx); // return true
 fat_volume_t fat_vol;
 // a one sector cache: walking a cluster chain reads FAT entries that are usually next to each
 // other, so keeping the last FAT sector we read saves a disk read for most fat_get() calls.
-// fat_set() writes straight through to the disk and updates the cache, so it never goes stale
+// fat_set() writes straight through (to the disk cache, sys/disk_cache.h, which keeps far more
+// than this) and updates this copy too, so it never goes stale
 static fat_sector_t fat_cache; // one cached sector of the (first) FAT
 static uint32_t fat_cache_lba = FAT_NO_SECTOR; // which sector fat_cache holds (FAT_NO_SECTOR = none)
 
@@ -199,14 +201,15 @@ const char* fs_strerror (int error) {
 }
 
 // read one 512 byte sector of the mounted drive (lba is absolute), false on a drive error
-// (these two keep fat_vol.bus / fat_vol.slave out of every other function)
+// (these two keep fat_vol.bus / fat_vol.slave out of every other function). Every read and
+// write of the mounted drive goes through the disk cache (sys/disk_cache.h)
 static bool fat_read_sector (uint32_t lba, void* buffer) {
-    return drive_read(fat_vol.bus, fat_vol.slave, lba, 1, buffer);
+    return disk_cache_read(fat_vol.bus, fat_vol.slave, lba, 1, buffer);
 }
 
 // write one 512 byte sector to the mounted drive (lba is absolute), false on a drive error
 static bool fat_write_sector (uint32_t lba, const void* buffer) {
-    return drive_write(fat_vol.bus, fat_vol.slave, lba, 1, buffer);
+    return disk_cache_write(fat_vol.bus, fat_vol.slave, lba, 1, buffer);
 }
 
 // the first sector of a cluster (clusters are numbered from 2, cluster 2 is the start of the data area)
@@ -1089,7 +1092,7 @@ int32_t fat_read_at (fat_file_t* file, uint32_t offset, void* out, uint32_t leng
             if (sectors > sectors_left_in_cluster) {
                 sectors = sectors_left_in_cluster;
             }
-            if (!drive_read(fat_vol.bus, fat_vol.slave, lba, sectors, to + done)) {
+            if (!disk_cache_read(fat_vol.bus, fat_vol.slave, lba, sectors, to + done)) {
                 return -1;
             }
             done += sectors * FAT_SECTOR_SIZE;
@@ -1228,7 +1231,7 @@ static int fat_write_range (fat_file_t* file, uint32_t offset, const uint8_t* da
             if (sectors > sectors_left_in_cluster) {
                 sectors = sectors_left_in_cluster;
             }
-            if (!drive_write(fat_vol.bus, fat_vol.slave, lba, sectors, data + done)) {
+            if (!disk_cache_write(fat_vol.bus, fat_vol.slave, lba, sectors, data + done)) {
                 return FS_ERR_IO;
             }
             done += sectors * FAT_SECTOR_SIZE;
@@ -1870,6 +1873,8 @@ bool fat_mount_auto (char* status, size_t size) {
             }
             int result = fat_mount(bus, slave);
             if (result == FS_OK) {
+                // from now on, recently used sectors of this drive are kept in memory
+                disk_cache_start(bus, slave);
                 // 2048 sectors of 512 bytes = 1 MB
                 sfmt(status, size, "FAT%d volume %s on %s %s (%u MB)", fat_vol.type, fat_vol.label,
                          bus_names[bus], slave ? "slave" : "master", fat_vol.total_sectors / 2048);

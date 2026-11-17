@@ -79,6 +79,7 @@
 #include "../accounts/auth.h"
 #include "../explain.h"
 #include "../syslog.h"
+#include "../disk_cache.h"
 
 
 // true once the terminal has started. compile() (lib/aer_comp.c) checks it so it never starts
@@ -221,6 +222,9 @@ int cli_init (int ask_login) {
             // anything added to AerOS's log since the last prompt (by a command, or a
             // program's logadd) is written now, between commands (sys/syslog.h)
             syslog_flush();
+            // and every change the disk cache is still holding goes to the disk, so nothing
+            // is left waiting while AerOS waits for you (sys/disk_cache.h)
+            disk_cache_sync();
             cli_prompt();
             // wait for Enter. Tab fills in names (cli_complete), the up and down arrows bring
             // back earlier lines, Page Up and Page Down scroll back through the output.
@@ -335,6 +339,7 @@ static const command_t commands[] = {
     COMMAND("cls",  "",           "CLEAR THE SCREEN",                                            cli_clear),
     COMMAND("mem",  "",           "MEMORY USAGE",                                                cli_memory),
     COMMAND("drv",  "",           "LIST IDE / ATA DRIVES",                                       cli_drives),
+    COMMAND("sync", "",           "WRITE WHAT THE DISK CACHE HOLDS TO THE DISK, AND SHOW IT",     cli_sync),
     COMMAND("bp",   "[HZ]",       "BEEP THE PC SPEAKER",                                         cli_beep),
     COMMAND("ply",  "<FILE>",     "PLAY A .WAV, .MP3 OR .MPG VIDEO (ESC TO STOP)",               cli_play),
     COMMAND("net",  "[IP ...]",   "THE NETWORK: CARD, ADDRESS, WHAT WAS SENT AND KEPT OUT",      cli_network),

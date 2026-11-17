@@ -201,7 +201,9 @@ the mouse copies to at the prompt, sys/clipboard.h) ·
 **Files** (paths can be relative or absolute)
 `rdf(path)` (nil if missing) · `rdb(path)` · `wrf(path, text)` ·
 `apf(path, text)` · `isf(path)` · `delf(path)` ·
-`la(dir)` (directories end in `/`) · `cwd()` the current directory, e.g. `"/bin/"`
+`la(dir)` (directories end in `/`) · `cwd()` the current directory, e.g. `"/bin/"` ·
+`sync()` put every change onto the disk now (AerOS does it within a second anyway, see
+[the disk cache](DISK_CACHE.md); for a program that wants to be sure, like a game saving)
 
 **Databases** (AerDB, `src/db/`: tables of rows in one file, and a little SQL)
 `dbopen(path)` open a database, making it if need be: a number for it, nil if it can't ·

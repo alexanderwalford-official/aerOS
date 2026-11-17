@@ -79,6 +79,8 @@ src/
     p_man.c               the process manager (a queue of one-line jobs)
     f_sys.c               the file system front end: DISK mode or the in-memory VFS
     fat.c                 the FAT16 / FAT32 driver
+    disk_cache.c          recently used sectors kept in memory, changes written in batches
+                          (docs/DISK_CACHE.md)
     source.c              the read-only /src/ folder: AerOS's own source, built into it
     versions.c            old versions of the files in home folders (VERS, UNDO, notes.txt@2)
     perm.c                programs ask before they touch your files (PERM)

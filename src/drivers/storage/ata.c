@@ -356,26 +356,35 @@ bool drive_read(int bus, int slave, uint32_t lba, uint32_t count, void* buffer) 
     return ata_pio_transfer(bus, slave, lba, count, buffer, false);
 }
 
-// write count sectors from buffer starting at lba, then flush the drive's cache
-// only returns true once the drive says the data is really on the disk
-bool drive_write(int bus, int slave, uint32_t lba, uint32_t count, const void* buffer) {
-    uint16_t io = ATA_IO(bus);
-    uint16_t ctrl = ATA_CTRL(bus);
-
+// write count sectors from buffer starting at lba, without waiting for them to reach the disk:
+// the drive may still be holding them in its own RAM cache when this returns (drive_flush)
+bool drive_write_unflushed(int bus, int slave, uint32_t lba, uint32_t count, const void* buffer) {
     // the buffer is only read from when writing
     // (so casting the const away for the shared transfer helper is safe)
-    uint32_t start = clkuptms();
     if (!ata_pio_transfer(bus, slave, lba, count, (uint8_t*)buffer, true)) {
         TRACE("the drive didn't take %u sector(s) at %u", (unsigned int)count, (unsigned int)lba);
         return false;
     }
+    return true;
+}
 
-    // make sure the data has left the drive's cache before we report success
-    // (the drive ignores commands while it is still busy with the last sector)
-    // without the flush a drive may keep the data in its RAM cache and lose it if the power goes
+// Ask the drive to put everything it is holding in its RAM cache onto the disk, and wait until
+// it has. Without this a drive may keep written data in its cache and lose it if the power goes.
+// It is the slowest thing a drive does, so the disk cache (sys/disk_cache.c) writes many
+// sectors and then flushes once
+bool drive_flush(int bus, int slave) {
+    uint16_t io = ATA_IO(bus);
+    uint16_t ctrl = ATA_CTRL(bus);
+    uint32_t start = clkuptms();
+
+    // the drive ignores commands while it is still busy with the last sector
     if (!ata_wait_not_busy(io)) {
         return false;
     }
+    // the flush is for the drive selected on the bus, so select ours first (0xE0 as in
+    // ata_pio_command, plus 0x10 for the slave)
+    outb(io + ATA_REG_DRIVE, (uint8_t)(0xE0 | (slave ? 0x10 : 0x00)));
+    ata_delay(ctrl);
     outb(io + ATA_REG_COMMAND, ATA_CMD_CACHE_FLUSH);
     ata_delay(ctrl);
     // the flush keeps the drive busy until the cache is empty, then the status says how it went
@@ -383,13 +392,18 @@ bool drive_write(int bus, int slave, uint32_t lba, uint32_t count, const void* b
         TRACE("the drive was still flushing after %d seconds: giving up on it", ATA_TIMEOUT_MS / 1000);
         return false;
     }
-    // a slow write is worth knowing about (a busy or failing drive), a quick one isn't
+    // a slow flush is worth knowing about (a busy or failing drive), a quick one isn't
     uint32_t took = clkuptms() - start;
     if (took >= 100) {
-        TRACE("writing %u sector(s) at %u and flushing them took the drive %u ms", (unsigned int)count,
-              (unsigned int)lba, (unsigned int)took);
+        TRACE("flushing took the drive %u ms", (unsigned int)took);
     }
     return (inb(io + ATA_REG_STATUS) & (ATA_SR_ERR | ATA_SR_DF)) == 0;
+}
+
+// write count sectors from buffer starting at lba, then flush the drive's cache
+// only returns true once the drive says the data is really on the disk
+bool drive_write(int bus, int slave, uint32_t lba, uint32_t count, const void* buffer) {
+    return drive_write_unflushed(bus, slave, lba, count, buffer) && drive_flush(bus, slave);
 }
 
 // a FAT volume starts with a boot sector holding the BIOS Parameter Block (BPB), which describes

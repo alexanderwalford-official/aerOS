@@ -27,6 +27,7 @@
 #include "../drivers/input/GIO.h"
 #include "../drivers/video/VGA_linear.h"
 #include "syslog.h"
+#include "disk_cache.h"
 
 // stop the CPU forever, see power.h
 void sys_halt(void) {
@@ -40,6 +41,9 @@ void sys_halt(void) {
 void sys_reboot(void) {
     // the log's last entries, and this boot marked as having ended properly
     syslog_stop(true);
+    // every change the disk cache is still holding goes to the disk. Before interrupts are
+    // turned off: the drive's timeouts count time with the timer interrupt (sys/disk_cache.h)
+    disk_cache_sync();
     // nothing must interrupt us half way through, and the triple fault trick below relies on it
     interrupts_disable();
 
@@ -69,6 +73,9 @@ void sys_reboot(void) {
 void sys_shutdown(void) {
     // the log's last entries, and this boot marked as having ended properly
     syslog_stop(false);
+    // every change the disk cache is still holding goes to the disk, before interrupts are
+    // turned off (as in sys_reboot)
+    disk_cache_sync();
     interrupts_disable();
     // each of these writes the emulator's ACPI "PM1a control" register: bit 13 (0x2000) is
     // SLP_EN, "go to sleep now", and bits 10-12 are the sleep type, which is the soft off (S5)

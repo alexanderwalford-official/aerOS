@@ -44,6 +44,7 @@
 #include "../../sys/interrupts.h"
 #include "../../lib/crypto.h"
 #include "../../sys/clipboard.h"
+#include "../../sys/disk_cache.h"
 
 // (the 8042 controller's ports and status bits are in IO.h, as the mouse driver uses them too)
 
@@ -409,6 +410,9 @@ int getk(void) {
     // through it. That's harmless here: the 1000 Hz timer interrupt wakes us within a millisecond
     // and the loop sees the key then.
     while (!kb_haschar()) {
+        // nobody waits for the disk while AerOS waits for a key: any change the disk cache is
+        // still holding is written now (sys/disk_cache.h; nothing to do, and cheap, if none is)
+        disk_cache_sync();
         // something to do while waiting, like moving the terminal's mouse pointer. It may type
         // keys in (a click, a paste): then those are the next keys
         if (kb_idle_hook != NULL) {
