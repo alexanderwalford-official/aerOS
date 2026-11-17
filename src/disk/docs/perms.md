@@ -36,6 +36,10 @@ pictures from the same folder asks once. Being allowed to change files includes 
 
 The terminal's own commands, and code you type at the prompt, never ask: that is you.
 
+A program running in the background (`bg`) can't ask, as you are busy with whatever is in
+front: anything that would need asking is refused, and its output says so. Only what you
+answered A (always) to counts there, so run it once without `bg` and answer A first.
+
 ## The answers you gave
 
 ```

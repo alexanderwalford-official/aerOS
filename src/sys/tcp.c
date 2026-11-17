@@ -200,7 +200,7 @@ static int send_and_wait (connection_t* c, const outgoing_t* out, bool (*done)(c
             if (done(c)) {
                 return NET_OK;
             }
-            sleep_ms(1);
+            net_pause();
         }
         wait_ms *= 2;
     }
@@ -332,8 +332,13 @@ bool tcp_handle (uint32_t from, const uint8_t* segment, size_t length) {
 
 // ---- what tcp.h offers --------------------------------------------------------------------------
 
-// open a connection (see tcp.h)
-int tcp_connect (uint32_t address, uint16_t port) {
+// Each function here takes the network lock (sys/net.c) and lets go of it at the end, around
+// the work itself, which is in the static function just above it. The waits inside (net_pause)
+// let other threads run, and the lock keeps them out of the network until this is done
+
+// Open a connection, sending SYN and waiting for the answer (tcp_connect takes the network lock
+// and calls this)
+static int open_connection (uint32_t address, uint16_t port) {
     if (!net_up()) {
         return NET_ERR_NO_CARD;
     }
@@ -380,8 +385,17 @@ int tcp_connect (uint32_t address, uint16_t port) {
     return number;
 }
 
-// send bytes (see tcp.h)
-int tcp_send (int number, const void* data, size_t length) {
+// open a connection (see tcp.h): open_connection, with the network lock held
+int tcp_connect (uint32_t address, uint16_t port) {
+    net_lock();
+    int number = open_connection(address, port);
+    net_unlock();
+    return number;
+}
+
+// Send bytes, a segment at a time, each acknowledged before the next (tcp_send takes the
+// network lock and calls this)
+static int send_bytes (int number, const void* data, size_t length) {
     if (number < 0 || number >= TCP_CONNECTIONS_MAX || !connections[number].used) {
         return NET_ERR_CLOSED;
     }
@@ -412,8 +426,16 @@ int tcp_send (int number, const void* data, size_t length) {
     return NET_OK;
 }
 
-// wait for bytes, and take them out of the buffer (see tcp.h)
-int tcp_receive (int number, void* out, size_t size, uint32_t ms) {
+// send bytes (see tcp.h): send_bytes, with the network lock held
+int tcp_send (int number, const void* data, size_t length) {
+    net_lock();
+    int result = send_bytes(number, data, length);
+    net_unlock();
+    return result;
+}
+
+// Wait for bytes, and take them out of the buffer (tcp_receive takes the network lock and calls this)
+static int receive_bytes (int number, void* out, size_t size, uint32_t ms) {
     if (number < 0 || number >= TCP_CONNECTIONS_MAX || !connections[number].used) {
         return NET_ERR_CLOSED;
     }
@@ -433,7 +455,7 @@ int tcp_receive (int number, void* out, size_t size, uint32_t ms) {
         if (clkuptms() - start >= ms) {
             return NET_ERR_NO_ANSWER;
         }
-        sleep_ms(1);
+        net_pause();
     }
 
     // take what fits from the front of the buffer, and move the rest up
@@ -450,8 +472,16 @@ int tcp_receive (int number, void* out, size_t size, uint32_t ms) {
     return (int)taken;
 }
 
-// close a connection and forget it (see tcp.h)
-void tcp_close (int number) {
+// wait for bytes (see tcp.h): receive_bytes, with the network lock held
+int tcp_receive (int number, void* out, size_t size, uint32_t ms) {
+    net_lock();
+    int result = receive_bytes(number, out, size, ms);
+    net_unlock();
+    return result;
+}
+
+// Close a connection, sending FIN, and forget it (tcp_close takes the network lock and calls this)
+static void close_connection (int number) {
     if (number < 0 || number >= TCP_CONNECTIONS_MAX || !connections[number].used) {
         return;
     }
@@ -465,10 +495,17 @@ void tcp_close (int number) {
         send_segment(c, &fin);
         while (!all_acknowledged(c) && !c->reset && clkuptms() - start < FIRST_WAIT_MS) {
             net_poll();
-            sleep_ms(1);
+            net_pause();
         }
         TRACE("closed the connection to port %u", c->port);
     }
     free(c->buffer);
     memset(c, 0, sizeof(connection_t));
+}
+
+// close a connection (see tcp.h): close_connection, with the network lock held
+void tcp_close (int number) {
+    net_lock();
+    close_connection(number);
+    net_unlock();
 }

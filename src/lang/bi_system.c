@@ -37,8 +37,9 @@ value_t bi_sleep (int argc, value_t* argv, int line) {
     int32_t ms = int_arg(argv, 0, line, "sleep");
     // sleep in small steps so ctrl + C still gets noticed
     // (20ms at a time, or whatever is left if that is less; ms may end up below 0, which is fine)
-    // (other threads, like the disk writer, run meanwhile: sys/thread.h)
-    while (ms > 0 && !kb_take_break()) {
+    // (other threads, like the disk writer, run meanwhile: sys/thread.h). aer_should_stop is
+    // Ctrl+C for the program in front, STOP for one in the background
+    while (ms > 0 && !aer_should_stop()) {
         thread_sleep(ms > 20 ? 20 : (uint32_t)ms);
         ms -= 20;
     }

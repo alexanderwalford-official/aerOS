@@ -30,6 +30,16 @@ extern const char* const aer_app_folders[];
 // returns 0 if it ran to the end, -1 if it wasn't found or stopped with an error
 int aer_run_file (const char* path, const char* args);
 
+// The same, in the background (BG, sys/jobs.c): called on a thread of its own, it runs there in
+// a session of its own, while the prompt carries on. It can't use the keyboard, the screen or
+// sound (a program that does is refused before it starts), can't ask before touching files (only
+// "always" answers count), and is stopped by STOP rather than Ctrl+C
+int aer_run_file_background (const char* path, const char* args);
+
+// Give each thread its own running session (thread_keep, sys/thread.h), so a program in the
+// background never sees the one in front's. kernel.c calls it once, at boot
+void aer_keep_per_thread (void);
+
 // run a program held in memory, name is only used in error messages
 int aer_run_source (const char* source, const char* name, const char* args);
 

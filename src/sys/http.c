@@ -322,8 +322,8 @@ static int fetch_once (const url_t* url, http_response_t* out, char* location, s
 
 // ---- what http.h offers -------------------------------------------------------------------------
 
-// fetch a page, following redirects (see http.h)
-int http_get (const char* url_text, http_response_t* out) {
+// Fetch a page, following redirects (http_get takes the network lock and calls this)
+static int fetch_following_redirects (const char* url_text, http_response_t* out) {
     memset(out, 0, sizeof(http_response_t));
     url_t url;
     int result = parse_url(url_text, &url);
@@ -351,6 +351,16 @@ int http_get (const char* url_text, http_response_t* out) {
             result = parse_url(location, &url);
         }
     }
+    return result;
+}
+
+// Fetch a page, following redirects (see http.h). The network lock (sys/net.c) is held for the
+// whole request, redirects and all, so another thread's request never starts in the middle of
+// it. While it waits for the server, the other threads (the prompt among them) still run
+int http_get (const char* url_text, http_response_t* out) {
+    net_lock();
+    int result = fetch_following_redirects(url_text, out);
+    net_unlock();
     return result;
 }
 

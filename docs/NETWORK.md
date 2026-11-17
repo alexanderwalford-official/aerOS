@@ -161,6 +161,12 @@ Sending to an address: it goes straight to the address if it is on AerOS's own n
 netmask says), otherwise to the gateway. Either way AerOS needs that card's MAC address, which
 it asks for with ARP (three times, a third of a second each) and remembers (8 of them).
 
+While AerOS waits for an answer it pauses a millisecond at a time with `net_pause()`, which
+lets other threads run (a program fetching a page in the background doesn't hold up the
+prompt). So that two threads never mix their work, every function here that sends, collects or
+changes anything takes the network lock first: one thread at a time is in the network, and
+another waits its turn. See "The network lock" in [threads](THREADS.md#the-network-lock).
+
 The e1000 driver uses the card's "legacy" descriptors: a receive ring of 32 and a send ring of 8,
 each descriptor pointing at a 2 KB buffer. See the top of `drivers/net/e1000.c`.
 

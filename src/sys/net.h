@@ -73,6 +73,17 @@
 
 const char* net_strerror (int error);
 
+// ---- the network lock (see "The network lock" in net.c) ----
+//
+// Only one thread at a time is in the network: every function here, in tcp.h and in http.h that
+// sends, collects or changes anything takes the lock first and lets go at the end. Waiting for
+// an answer, they call net_pause, which lets the other threads run (sys/thread.h): the lock
+// keeps those out of the network until the wait is over. So a program fetching a page in the
+// background (BG) doesn't hold up the prompt
+void net_lock (void);
+void net_unlock (void);
+void net_pause (void);                    // a millisecond's wait, while the other threads run
+
 // ---- for TCP (sys/tcp.c), which builds its own segments, but sends and collects them here ----
 
 bool net_up (void);                       // is the card running (starting it if need be)?

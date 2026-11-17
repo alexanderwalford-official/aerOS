@@ -212,7 +212,11 @@ first that decides:
 | 3 | reading in `/bin/`, `/docs/`, `/src/` or `/sys/`, in the program's own folder, or a file or folder named on its command line | allowed |
 | 4 | already answered while this program runs | that answer |
 | 5 | answered "always" before (in `/acc/perms`) | allowed |
-| 6 | anything else | ask |
+| 6 | anything else | ask; but a program running in the background (`BG`) can't ask, so: refused |
+
+A program in the background ([threads](THREADS.md#programs-in-the-background)) has its own
+running program for these rules and its own answers, as each thread has its own
+`perm_running`. Only the thread in front (main) has the keyboard, so only it can ask.
 
 There are two kinds, `PERM_READ` and `PERM_CHANGE` (make, change or delete), and being allowed
 to change includes reading. A permission is for one folder, not the folders inside it.

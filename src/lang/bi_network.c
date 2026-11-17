@@ -13,6 +13,8 @@
 #include "../sys/net.h"
 #include "../sys/firewall.h"
 #include "../sys/http.h"
+#include "../sys/sys_clck.h"
+#include "../sys/thread.h"
 
 // nsend(host, port, text): send text, sealed, to a computer the firewall allows (FW ALLOW).
 // host is an address ("10.0.2.2") or the name a rule was made for. True if it was sent
@@ -32,7 +34,8 @@ value_t bi_net_send (int argc, value_t* argv, int line) {
 }
 
 // nrecv(port, ms): wait up to ms milliseconds for a sealed message on port, from a computer the
-// firewall allows there. The message, or nil if none came. Ctrl+C stops the program
+// firewall allows there. The message, or nil if none came. Ctrl+C stops the program (STOP, for
+// one in the background)
 value_t bi_net_receive (int argc, value_t* argv, int line) {
     (void)argc;
     int32_t port = int_arg(argv, 0, line, "nrecv");
@@ -43,26 +46,28 @@ value_t bi_net_receive (int argc, value_t* argv, int line) {
     // the biggest message there can be, + 1 for the '\0' after it. aer_alloc rather than the
     // stack, as it may be large, and if Ctrl+C abandons the program it is freed with the rest
     char* message = aer_alloc(NET_MESSAGE_MAX + 1);
-    // a tenth of a second at a time, so Ctrl+C is noticed
-    for (int32_t waited = 0; ; waited += 100) {
-        // 100ms, or only what is left of ms if that is less. A ms of 0 (or below) still has
+    // A look every 10 ms, until a message comes or ms has passed. In between, the other threads
+    // have the processor (thread_sleep, sys/thread.h), so a program waiting for messages in the
+    // background doesn't hold up the prompt. Ctrl+C (STOP in the background) is noticed too
+    uint32_t start = clkuptms();
+    for (;;) {
         // one look, without waiting, for a message that has already arrived
-        int32_t wait = ms - waited < 100 ? ms - waited : 100;
-        int length = net_receive((uint16_t)port, wait > 0 ? (uint32_t)wait : 0, message, NET_MESSAGE_MAX + 1, NULL);
+        int length = net_receive((uint16_t)port, 0, message, NET_MESSAGE_MAX + 1, NULL);
         // a message came: hand it back as a string (a copy, so the buffer can go)
         if (length >= 0) {
             value_t text = aer_string(message, (uint32_t)length);
             aer_free(message);
             return text;
         }
-        if (kb_take_break()) {
+        if (aer_should_stop()) {
             aer_stop(line);
         }
-        // the whole of ms has now been waited, and nothing came
-        if (waited + 100 >= ms) {
+        // the whole of ms has now been waited (for a ms of 0 or less, the one look), and nothing came
+        if ((int32_t)(clkuptms() - start) >= ms) {
             aer_free(message);
             return aer_nil();
         }
+        thread_sleep(10);
     }
 }
 

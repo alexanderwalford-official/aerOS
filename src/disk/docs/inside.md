@@ -64,6 +64,12 @@ A thread only lets the next one go at a safe point: between two lines of an AerL
 or while it waits for a key or sleeps. Never in the middle of saving a file or drawing on the
 screen. That keeps everything simple and safe, as nothing is ever left half done.
 
+`bg counter` runs a program on a thread of its own, in the background, and the prompt comes
+straight back. What it prints shows up at the prompt, each line marked `[counter]`. It has its
+own variables and its own folder, can't use the keyboard, the screen or sound (those are for
+whatever is in front), and can only touch your files where you have answered A (always) before.
+`bg` lists what is running, and `stop` with its number stops one.
+
 ## The disk cache
 
 Talking to a disk is slow next to memory, and the slowest part is asking the disk to make
@@ -89,6 +95,7 @@ program. `bench` times reading and writing, to see the difference.
 | files: disk (FAT) or memory | `src/sys/f_sys.c`, `src/sys/fat.c` |
 | the disk cache | `src/sys/disk_cache.c` |
 | threads | `src/sys/thread.c` |
+| programs in the background | `src/sys/jobs.c` |
 | accounts and encryption | `src/sys/accounts/`, `src/sys/fcrypt.c` |
 | AerLang, and AerLang at the prompt | `src/lang/` |
 | WHY and SRC, and the `/src/` folder | `src/sys/explain.c`, `src/sys/source.c` |

@@ -5,15 +5,17 @@ processor, so only one thread runs at a time: they take turns, quickly enough th
 run together. The code is [`src/sys/thread.c`](../src/sys/thread.c), and the comment at the top
 of [`thread.h`](../src/sys/thread.h) is the short version.
 
-This is stage 1: the threads themselves, and the first one that does real work (the disk
-writer). Next come AerLang programs running in the background, and threads inside a program.
+So far there are two stages: the threads themselves, with the first one that does real work
+(the disk writer), and AerLang programs running in the background with `BG`. Threads inside a
+program come next.
 
 ## The threads there are
 
 | Thread | What it does |
 | --- | --- |
-| 0, `main` | everything AerOS did before there were threads: booting, the terminal, and every program it runs. It uses the stack `entry.asm` set up |
+| 0, `main` | everything AerOS did before there were threads: booting, the terminal, and every program run at the prompt. It uses the stack `entry.asm` set up |
 | `disk writer` | puts changes the [disk cache](DISK_CACHE.md) is holding onto the disk, a second after they were made, even while a busy program runs |
+| one for each program run with `BG` | an AerLang program running in the background while you use the prompt ([below](#programs-in-the-background)) |
 
 `THR` lists them:
 
@@ -74,6 +76,13 @@ outside it still looks like real multitasking: a busy program can't keep the oth
 running. The cost is that C code that runs for a long time without a safe point (a big disk
 read, say) keeps its turn until it finishes. That is the same as before there were threads.
 
+**The one exception: the network.** Waiting for a web server can take seconds, and that wait is
+in the middle of the network code. Holding everything up for it would mean a program fetching
+a page in the background freezes the prompt, so the network's waits are safe points too: they
+call `net_pause`, which is `thread_sleep(1)`. That makes the network the one place a thread can
+be part way through something when another gets a turn, so it has AerOS's one lock
+(`thread_lock`, see [below](#the-network-lock)).
+
 ## Whose turn: round robin
 
 When a thread steps aside, the next one is found by looking through the threads in order,
@@ -95,9 +104,115 @@ looks again. The timer's interrupt comes every millisecond, so a sleeper wakes o
 `thread_create(name, func, arg)` starts one, and `thread_join(id)` waits for it to finish.
 A finished thread's stack is given back to the heap.
 
+## Each thread's own globals
+
+Parts of AerOS keep "the one running now" in a global variable, written when only one thing
+ever ran:
+
+| Global | What it is | Where |
+| --- | --- | --- |
+| `aer` | the AerLang program (session) running | `src/lang/aer_interp.c` |
+| `perm_running` | the program the file permission rules are for | `src/sys/perm.c` |
+| `this_job` | the background program the thread is running | `src/sys/jobs.c` |
+| `console_divert` | where printed text goes, instead of the screen | `src/drivers/video/VGA_linear.c` |
+| `cd` | the current folder | `src/sys/f_sys.c` |
+| `trace_watching` | whether `SHOW` is watching | `src/sys/trace.c` |
+
+With several threads, each needs its own value of these. `thread_keep(&global, size)` makes
+that so without changing any code that uses them: at every switch, `thread.c` copies the
+globals' values into the stopping thread's own room, and copies the starting thread's back into
+the globals. So each thread always finds its own values there. A new thread's start as 0.
+`kernel.c` registers them all at boot.
+
+## Programs in the background
+
+```
+tester@0//home/tester/: bg counter
+counter is running in the background, as thread 4. What it prints shows up here; STOP 4 stops it.
+tester@0//home/tester/: 6 * 7
+42
+[counter] tick 1
+[counter] tick 2
+tester@0//home/tester/: bg
+ID  PROGRAM                          RUNNING FOR
+4   counter                          3 s
+STOP <id> stops one.
+```
+
+`BG program [args]` starts the program on a thread of its own (`src/sys/jobs.c`), with a 256 KB
+stack (as much as the prompt's own, as AerLang can recurse deeply). `BG` on its own lists them,
+`THR` shows their threads, and `STOP <id>` stops one at its next safe point.
+
+**Its own session.** Each AerLang session is now a struct of its own: the prompt's, the one for
+a program in front, and one for each program in the background. A session holds its variables,
+its names and everything it has allocated, and `aer` (one of the globals above) points at the
+one running. So a program in the background can't see or change the prompt's variables, or the
+front program's, and when it ends only its own memory is freed.
+
+**What it may do.** A little less than a program in front:
+
+| | In the background |
+| --- | --- |
+| the keyboard, the mouse, the screen, sound | no: they belong to whoever is in front. A program that names any of those built-ins (`input`, `key`, `cls`, `gopen`, `play`...) is refused before it starts, with a message saying which |
+| asking before touching your files | no: there is nobody to answer, so the answer is no, with a message saying why. Only what you allowed with A (always) is allowed: run it once in front to give that |
+| Ctrl+C | no: that is the program in front's. `STOP` is how to stop one in the background |
+| printing | yes: kept, and shown at the prompt (below) |
+| files, databases, the network, `sleep`, `time` | yes. A database can't be open in two programs at once, and each program closes only its own when it ends |
+
+**Its own folder.** A program keeps the folder it was started in (`cd` is per thread), so
+changing folder at the prompt doesn't move where its files go.
+
+**What it prints.** It mustn't write over what is on the screen: a game, the editor, or a line
+you are half way through typing. So everything it prints goes into a buffer instead (through
+`console_divert`), each line marked with its name. The terminal shows the buffer in light cyan
+at moments when that can't get in the way: just before each prompt, and while you are at a
+prompt with nothing typed yet (the prompt is rubbed out, the lines shown, and the prompt
+written again below them). `print()` waits for room in the buffer first, so a program that
+prints a lot slows down until its lines are shown, rather than losing them.
+
+**Logging out** stops every program in the background, and throws away what they printed, so
+nothing of yours runs, or shows up, for the next person.
+
+**`nrecv`, `httpget` and `sleep`** let the other threads run while they wait, so a program in
+the background can wait for sealed messages, or for a web server, without holding anything up.
+
+## The network lock
+
+The network code keeps its work in shared places: the buffer `poll()` reads frames into, the
+one DNS question being waited for, the TCP connections. While one thread waits for an answer
+and another has its turn, that second thread mustn't start a network job of its own in the
+middle of the first's.
+
+So the network has a lock (`thread_lock_t`, `src/sys/thread.c`). Every function `net.h`,
+`tcp.h` and `http.h` offer that sends, collects or changes anything takes it first and lets go
+at the end, and the work itself is in a static function next to it, so the lock is let go
+whichever way the work returns:
+
+```c
+int http_get (const char* url_text, http_response_t* out) {
+    net_lock();
+    int result = fetch_following_redirects(url_text, out);
+    net_unlock();
+    return result;
+}
+```
+
+- **Only one thread at a time holds it.** Another that wants it sleeps until it is let go, and
+  every other thread still runs meanwhile. So a page fetched at the prompt while a program in
+  the background is fetching one waits its turn, then comes back whole.
+- **The thread holding it may take it again**, counting how many times. `http_get` calls
+  `tcp_connect`, which calls `net_send_tcp`, and each takes the lock; only the last let go
+  frees it.
+- **Taking it can't be split.** Checking it is free and marking it taken happen with no safe
+  point in between, so no other thread can slip in: on one processor, with threads only
+  switching at safe points, that is all a lock needs.
+
+`http_get` holds it for the whole request, redirects and all, so two web requests never mix.
+
 ## Stacks
 
-Each new thread gets 16 KB of stack, filled with the byte `0xA5` first. A stack grows
+Each new thread's stack (16 KB for threads written in C, 256 KB for programs in the
+background) is filled with the byte `0xA5` first. A stack grows
 downwards, so the `0xA5` bytes still at the bottom are ones it has never used: that is how THR
 knows the most each thread has used. If even the very bottom has changed when a thread steps
 aside, it went past its end into whatever memory is next to it. AerOS then stops with a message
@@ -115,6 +230,19 @@ saying which thread, rather than carry on with memory that may be damaged.
   threads, this test fails.)
 - AerLang runs about 2% slower in a tight loop, from checking for a safe point every time
   round.
+- **`tools/test/tests/test_background.py`** runs programs with `BG` and checks:
+  - the prompt carries on while they run, and what they print shows up in order;
+  - `BG`, `THR` and `STOP` work;
+  - a program that needs the keyboard is refused;
+  - a program can't change your files without an "always", and keeps its own folder;
+  - a busy one doesn't hold up the prompt, and has its own variables;
+  - a program in front and one in the background run at once, with their own databases, and
+    Ctrl+C stops only the front one;
+  - logging out stops them all;
+  - while a program in the background fetches a page a slow server takes 6 seconds to send,
+    the prompt still answers at once, and a page fetched at the prompt meanwhile waits its
+    turn, then comes back whole. (With the network's pauses holding the processor, as before
+    the lock, this test fails.)
 
 ## What threads don't do (yet, or at all)
 
@@ -122,7 +250,14 @@ saying which thread, rather than carry on with memory that may be damaged.
   a large job of its own, and would bring back the need for locks.
 - **Protection.** All threads share all memory: a thread that goes wrong can damage what others
   use. Keeping programs apart needs paging and real processes.
-- **Stage 2:** AerLang programs as threads, so `bg` can run a program in the background while
-  you keep using the prompt.
+- **A web server.** A program in the background can now fetch pages (a web client), but serving
+  them needs AerOS's TCP to accept connections, not only make them, and it can't yet ("No
+  listening" in [the network](NETWORK.md)). With that, a server would be a program in the
+  background waiting for connections, as `nrecv` waits for messages.
+- **One network job at a time.** The lock means two threads using the network take turns at
+  it, a whole request each. Several at once would need the network code to keep each one's
+  work apart.
 - **Stage 3:** `spawn(func)` and `join(t)` in AerLang, and a safe way for threads to pass values
   to each other.
+- **Sound in the background**, so `BG` could play music while you work. Sound belongs to the
+  program in front for now.

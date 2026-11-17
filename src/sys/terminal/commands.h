@@ -119,6 +119,8 @@ void cli_memory (char* arguments);
 void cli_drives (char* arguments);
 void cli_sync (char* arguments);
 void cli_threads (char* arguments);
+void cli_background (char* arguments);
+void cli_stop (char* arguments);
 void cli_beep (char* arguments);
 void cli_reboot (char* arguments);
 void cli_shutdown (char* arguments);

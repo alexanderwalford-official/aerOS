@@ -4,6 +4,7 @@
 
 #include "appmode.h"
 #include "net.h"
+#include "jobs.h"
 #include "../lib/aer_stdlib.h"
 #include "../drivers/serial/serial.h"
 #include "../lib/aer_stdio.h"
@@ -49,8 +50,9 @@ void appmode_describe (uint32_t uses, char* out, size_t size) {
 static size_t put_away (uint32_t uses) {
     size_t before = heap_used();
 
-    // the parts that keep memory while they aren't used (see the table in appmode.h)
-    if (!(uses & APP_NETWORK)) {
+    // the parts that keep memory while they aren't used (see the table in appmode.h). Not while
+    // programs run in the background (BG, sys/jobs.h): one of them may be using it
+    if (!(uses & APP_NETWORK) && jobs_running() == 0) {
         net_rest();
     }
 

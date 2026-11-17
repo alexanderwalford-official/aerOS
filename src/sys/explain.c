@@ -211,7 +211,7 @@ static const explanation_t explanations[PROBLEM_COUNT] = {
         "both ends will use). @cli_firewall WEB <name> allows fetching web pages from it with "
         "@cli_get. @cli_firewall lists what is allowed, and @cli_network shows the last thing "
         "that was blocked.",
-        "net_send", NULL,
+        "send_sealed", NULL,
     },
     [PROBLEM_NO_ANSWER] = {
         "Nothing answered.",

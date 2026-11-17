@@ -78,6 +78,7 @@ src/
     sys_clck.c            the PIT timer (1000 Hz) and the CMOS real time clock
     p_man.c               the process manager (a queue of one-line jobs)
     thread.c              threads taking turns on the processor, at safe points (docs/THREADS.md)
+    jobs.c                programs running in the background: BG, STOP, and what they print
     f_sys.c               the file system front end: DISK mode or the in-memory VFS
     fat.c                 the FAT16 / FAT32 driver
     disk_cache.c          recently used sectors kept in memory, changes written in batches

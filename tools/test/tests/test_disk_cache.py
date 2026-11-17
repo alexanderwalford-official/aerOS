@@ -5,9 +5,7 @@ or a program has been sleeping for a second, nothing is left waiting. Each one s
 abruptly (like pulling the plug: nothing gets a chance to write anything more), then reads the
 disk image from outside and checks the file is there."""
 
-import time
-
-from aeros import read_disk_file
+from aeros import read_disk_file, wait_for_disk_file
 
 
 def program(t, name, source):
@@ -50,10 +48,11 @@ def test_writes_reach_the_disk(t):
     aeros.ask('sleeper')
     allow_writing(aeros)
     aeros.wait_for('written', 60)
-    time.sleep(3)
+    # (it sleeps for a minute, so whatever puts the change on the disk, it isn't the program
+    # ending: it is the disk writer thread, while the program sleeps)
+    if not wait_for_disk_file(disk, '/home/tester/slept.txt', b'written before sleeping'):
+        aeros.fail('a sleeping program\'s change was still not on the disk after 15 seconds')
     aeros.quit()
-    if read_disk_file(disk, '/home/tester/slept.txt') != b'written before sleeping':
-        aeros.fail('a sleeping program\'s change was still not on the disk after 3 seconds')
 
     # a program waiting for a key: written while it waits
     aeros = t.boot(disk=disk)
@@ -61,10 +60,9 @@ def test_writes_reach_the_disk(t):
     aeros.ask('asker')
     allow_writing(aeros)
     aeros.wait_for('Anything?', 60)
-    time.sleep(1)
-    aeros.quit()
-    if read_disk_file(disk, '/home/tester/asked.txt') != b'written before asking':
+    if not wait_for_disk_file(disk, '/home/tester/asked.txt', b'written before asking'):
         aeros.fail('a program\'s change was not on the disk while it waited for a key')
+    aeros.quit()
     t.check_disk(disk)
 
 

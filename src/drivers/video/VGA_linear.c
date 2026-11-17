@@ -942,10 +942,13 @@ bool console_capturing(void) {
     return capture.buffer != NULL;
 }
 
+// where this thread's printed text goes instead of the screen, NULL for the screen (see the header)
+void (*console_divert)(char c) = NULL;
+
 // blank the screen in the console colours and send the cursor to the top left corner
 // unlike clear() this keeps the cursor visible and doesn't count as a full screen takeover
 void console_clear(void) {
-    if (console_capturing()) {
+    if (console_capturing() || console_divert != NULL) {
         return; // (see console_capture_begin: a captured command doesn't touch the screen)
     }
     LIVE_SCREEN();
@@ -986,6 +989,11 @@ static void console_scroll(void) {
 // of a line, scroll at the bottom of the screen and copy the character to the serial port
 // it deliberately does not move the hardware cursor (4 slow port writes), callers do that once
 void console_putchar_raw(char c) {
+    // this thread's output goes somewhere else (a program in the background, see console_divert)
+    if (console_divert != NULL) {
+        console_divert(c);
+        return;
+    }
     // being captured: the character goes into the buffer and nowhere else
     if (capture.buffer != NULL) {
         capture_add(c);
@@ -1066,7 +1074,7 @@ void console_write(const char* s) {
 // cursor there. The serial side gets the classic "\b \b" (back, overwrite with a space, back again)
 // that terminals use to rub out a character.
 void console_backspace(void) {
-    if (console_capturing()) {
+    if (console_capturing() || console_divert != NULL) {
         return;
     }
     console_putchar_raw('\b');

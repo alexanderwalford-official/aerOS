@@ -122,6 +122,8 @@ See [The network](network.md).
 | `up` | how long since it started |
 | `mem` | memory use |
 | `thr` | the [threads](inside.md) taking turns on the processor: what each is doing, how long it has run, how much of its stack it has used |
+| `bg <program> [args]` | run a program in the background while you carry on at the prompt. What it prints shows up at the prompt, marked with its name. `bg` on its own lists them. It can't use the keyboard, the screen or sound, or ask before touching your files (only "always" answers count) |
+| `stop <id>` | stop a program running in the background (`bg` shows the number) |
 | `rt [stress]` | [RT mode](rt.md)'s real-time tasks (experimental, picked in the boot options) |
 | `drv` | the disks AerOS can see |
 | `sync` | put every change still held in memory onto the disk now, and show the [disk cache](inside.md) at work (AerOS does this by itself before every prompt, so it is never needed) |

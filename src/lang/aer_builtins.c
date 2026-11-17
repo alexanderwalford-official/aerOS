@@ -191,6 +191,35 @@ uint32_t aer_profile (const token_t* tokens, int count) {
     return uses;
 }
 
+// The built-ins only the program in front can use, as well as the graphics, sound and video
+// parts above: they read the keyboard or the mouse, draw on the screen, or ask a question, and
+// the keyboard and the screen belong to whoever is in front. A program running in the
+// background (BG, sys/jobs.c) can't use them: it shares the computer with the prompt
+static const char* const front_only[] = {
+    "input", "inpw", "key", "haskey", "keydown", "mouse", "mousemove", "mousedown",
+    "cls", "color", "at", "progress", "spinner", "frame", "big", "clip", "setclip",
+    "logclear", "setlogging", "cmd", "queue", NULL
+};
+
+// the first built-in a program's tokens name that only the program in front can use (see
+// aer_internal.h). Like aer_profile, any name counts, called or not
+const char* aer_front_only (const token_t* tokens, int count) {
+    for (int i = 0; i < count; i++) {
+        if (tokens[i].type != T_NAME) {
+            continue;
+        }
+        if (part_of(tokens[i].text) & (APP_GRAPHICS | APP_SOUND | APP_VIDEO)) {
+            return tokens[i].text;
+        }
+        for (int f = 0; front_only[f] != NULL; f++) {
+            if (scmp(front_only[f], tokens[i].text) == 0) {
+                return tokens[i].text;
+            }
+        }
+    }
+    return NULL;
+}
+
 // the C function's name behind a built-in, "gopen" -> "bi_gfx_open" (see aerlang.h)
 const char* aer_builtin_function (const char* name) {
     // strcasecmp ignores capitals, so WHY GOPEN finds gopen
@@ -236,8 +265,13 @@ void aer_give_screen_back (void) {
 
 // a program that ends (or crashes) in graphics mode gets the terminal back automatically
 void aer_builtins_finish (void) {
+    database_finish(); // databases the program left open are closed
+    // a program in the background never had the sound, the mouse or the screen (aer_front_only),
+    // and they may be the program in front's right now: leave them be
+    if (aer->background) {
+        return;
+    }
     mixer_stop_all(); // sounds from splay() stop with the program (their memory is about to go)
     mouse_stop();     // the mouse was the program's: the terminal's pointer takes it back at the prompt
-    database_finish(); // databases a program left open are closed
     aer_give_screen_back();
 }

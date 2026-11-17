@@ -27,6 +27,7 @@
 #include "../perm.h"
 #include "../accounts/auth.h"
 #include "../../lang/aerlang.h"
+#include "../jobs.h"
 
 
 // =================================================================================================
@@ -206,6 +207,9 @@ void cli_logout (char* arguments) {
     if (!accounts_available()) {
         return;
     }
+    // nothing of this person's carries on running for the next one: every program in the
+    // background is stopped first (sys/jobs.h), and what they printed is thrown away
+    jobs_stop_all();
     // the next person shouldn't be able to see what this one did: forget the commands for
     // the up arrow, the output for Page Up, the clipboard, the last problem (WHY) and the
     // AerLang variables made at the prompt, and start them in the top folder

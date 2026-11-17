@@ -80,6 +80,7 @@
 #include "../explain.h"
 #include "../syslog.h"
 #include "../disk_cache.h"
+#include "../jobs.h"
 
 
 // true once the terminal has started. compile() (lib/aer_comp.c) checks it so it never starts
@@ -203,6 +204,27 @@ int flash_pointer (int times, int already_done) {
     return 0;
 }
 
+// While the prompt waits with nothing typed after it (line_quiet_hook, drivers/input/IO.h): if a
+// program in the background has printed something, rub the prompt out, show that in its place,
+// and the prompt again under it. True if it did (the line then starts where the cursor is now)
+static bool show_background_at_prompt (void) {
+    if (!jobs_output_waiting()) {
+        return false;
+    }
+    // nothing has been typed, so the cursor is just after the prompt, on the prompt's row:
+    // spaces over the prompt, then back to the start of the row
+    uint8_t x, y;
+    console_get_cursor(&x, &y);
+    console_set_cursor(0, y);
+    for (uint8_t i = 0; i < x; i++) {
+        console_putchar_raw(' ');
+    }
+    console_set_cursor(0, y);
+    jobs_show_output();
+    cli_prompt();
+    return true;
+}
+
 // start the terminal. ask_login = 1 shows the login screen first (it only appears when there
 // is a disk to keep accounts on), 0 skips it and runs as "guest".
 // This loop only ends if cli_active goes false, which nothing does yet: RBT and OFF
@@ -225,13 +247,18 @@ int cli_init (int ask_login) {
             // and every change the disk cache is still holding goes to the disk, so nothing
             // is left waiting while AerOS waits for you (sys/disk_cache.h)
             disk_cache_sync();
+            // what programs in the background have printed since the last prompt (sys/jobs.h)
+            jobs_show_output();
             cli_prompt();
             // wait for Enter. Tab fills in names (cli_complete), the up and down arrows bring
             // back earlier lines, Page Up and Page Down scroll back through the output.
             // With no keyboard at all this returns an empty line at once, so the prompt repeats.
-            // Meanwhile the mouse pointer shows, and follows the mouse (pointer.c)
+            // Meanwhile the mouse pointer shows, and follows the mouse (pointer.c), and what
+            // programs in the background print shows up while nothing has been typed yet
             pointer_begin();
+            line_quiet_hook = show_background_at_prompt;
             GetLine(cli_input, sizeof(cli_input), cli_complete);
+            line_quiet_hook = NULL;
             pointer_end();
             HandleInput(cli_input);
         }
@@ -324,6 +351,8 @@ static const command_t commands[] = {
     COMMAND("up",   "",           "PRINTS THE TIME SINCE BOOT (UPTIME)",                         cli_uptime),
     COMMAND("pm",   "",           "PRINTS THE PROCESS STACK (PROCESS MANAGER)",                  cli_pman),
     COMMAND("thr",  "",           "LIST THE THREADS TAKING TURNS ON THE PROCESSOR",              cli_threads),
+    COMMAND("bg",   "[PROGRAM]",  "RUN A PROGRAM IN THE BACKGROUND, OR LIST THOSE THAT ARE",     cli_background),
+    COMMAND("stop", "<ID>",       "STOP A PROGRAM RUNNING IN THE BACKGROUND (BG LISTS THEM)",    cli_stop),
     COMMAND("que",  "[PROGRAM]",  "QUEUE A PROGRAM FOR GO, OR LIST THE QUEUE (QUE CLEAR)",       cli_queue),
     COMMAND("go",   "",           "RUN EVERYTHING IN THE QUEUE, IN ORDER (CTRL+C STOPS IT)",     cli_go),
     COMMAND("run",  "<CODE>",     "RUN CODE AS A PROCESS (e.g. run print_stack, run s:hi)",      cli_run),

@@ -35,6 +35,7 @@
 #include "../lib/primary_definitions.h"
 #include "trace.h"
 #include "tcp.h"
+#include "thread.h"
 
 // where things are in a frame
 #define ETHERNET_HEADER 14
@@ -331,7 +332,7 @@ static bool find_mac (uint32_t address, uint8_t mac[6]) {
             if (arp_known(address, mac)) {
                 return true;
             }
-            sleep_ms(1);
+            net_pause();
         }
     }
     return false;
@@ -621,6 +622,37 @@ static void poll (void) {
 
 
 // =================================================================================================
+//  The network lock
+// =================================================================================================
+//
+// Waiting for an answer (an ARP reply, a DNS answer, a TCP segment) takes milliseconds to
+// seconds, and the waits let the other threads run meanwhile (net_pause), so a program fetching
+// a web page in the background doesn't hold up the prompt. But the network code keeps its work
+// in shared places (the frame buffer in poll, the one DNS question waiting, the connections),
+// so a second thread mustn't start something in the middle of the first's. Every function
+// net.h, tcp.h and http.h offer that sends, collects or changes anything takes this lock first
+// (sys/thread.h): only one thread at a time is ever in the network, and another that wants it
+// sleeps until it is free. Functions that only work something out (net_parse_address) don't.
+
+static thread_lock_t network = THREAD_LOCK_FREE;
+
+// take the network lock (see above)
+void net_lock (void) {
+    thread_lock(&network);
+}
+
+// let go of it
+void net_unlock (void) {
+    thread_unlock(&network);
+}
+
+// a millisecond's pause in the middle of waiting for an answer: the other threads run meanwhile
+void net_pause (void) {
+    thread_sleep(1);
+}
+
+
+// =================================================================================================
 //  The functions net.h offers
 // =================================================================================================
 
@@ -644,23 +676,34 @@ const char* net_strerror (int error) {
 
 // the card is running and the settings are read (see ready)
 bool net_up (void) {
-    return ready();
+    net_lock();
+    bool up = ready();
+    net_unlock();
+    return up;
 }
 
 // AerOS's own address, which TCP puts in its checksum
 uint32_t net_own_address (void) {
+    net_lock();
     load_config();
-    return config.address;
+    uint32_t address = config.address;
+    net_unlock();
+    return address;
 }
 
 // send a finished TCP segment (header and data) to an address, in an IPv4 packet
 int net_send_tcp (uint32_t address, const uint8_t* segment, size_t length) {
-    return send_ip(address, PROTOCOL_TCP, segment, length);
+    net_lock();
+    int result = send_ip(address, PROTOCOL_TCP, segment, length);
+    net_unlock();
+    return result;
 }
 
 // collect whatever the card has received, and deal with it (see poll)
 void net_poll (void) {
+    net_lock();
     poll();
+    net_unlock();
 }
 
 // find the card and start it, at boot. The settings wait until the network is first used
@@ -678,14 +721,17 @@ const char* net_card_name (void) {
 
 // stop the card and free its buffers, for app mode. ready() starts it again when needed
 void net_rest (void) {
+    net_lock();
     if (card_ready) {
         e1000_stop();
         card_ready = false;
     }
+    net_unlock();
 }
 
 // everything NET shows: the card, our addresses and the counters
 void net_status (net_status_t* out) {
+    net_lock();
     // (ready() reads /acc/network, so the addresses shown are the ones that will be used)
     ready();
     *out = counts;
@@ -701,10 +747,12 @@ void net_status (net_status_t* out) {
     out->netmask = config.netmask;
     out->gateway = config.gateway;
     out->dns = config.dns;
+    net_unlock();
 }
 
 // set our address, netmask, gateway and DNS server (NET IP), and keep them in /acc/network
 void net_set_address (uint32_t address, uint32_t netmask, uint32_t gateway, uint32_t dns_server) {
+    net_lock();
     // read the file first, so it can't later be read over the top of the new settings
     load_config();
     config.address = address;
@@ -726,10 +774,12 @@ void net_set_address (uint32_t address, uint32_t netmask, uint32_t gateway, uint
     } else {
         fs_create_f(CONFIG_FOLDER, CONFIG_FILE, text);
     }
+    net_unlock();
 }
 
-// seal a message with the firewall rule's key and send it, if a rule allows it at all
-int net_send (uint32_t address, uint16_t port, const void* message, size_t length) {
+// Seal a message with the firewall rule's key and send it, if a rule allows it at all (net_send
+// takes the network lock and calls this)
+static int send_sealed (uint32_t address, uint16_t port, const void* message, size_t length) {
     if (!ready()) {
         return NET_ERR_NO_CARD;
     }
@@ -759,8 +809,17 @@ int net_send (uint32_t address, uint16_t port, const void* message, size_t lengt
     return result;
 }
 
-// wait up to `ms` milliseconds for a sealed message on `port`, and copy it into out
-int net_receive (uint16_t port, uint32_t ms, char* out, size_t size, uint32_t* from) {
+// send a sealed message (see net.h): send_sealed, with the network lock held
+int net_send (uint32_t address, uint16_t port, const void* message, size_t length) {
+    net_lock();
+    int result = send_sealed(address, port, message, length);
+    net_unlock();
+    return result;
+}
+
+// Wait up to `ms` milliseconds for a sealed message on `port`, and copy it into out (net_receive
+// takes the network lock and calls this)
+static int receive_sealed (uint16_t port, uint32_t ms, char* out, size_t size, uint32_t* from) {
     // (size 0 would leave no room even for the '\0', and size - 1 in inbox_take would wrap)
     if (!ready() || size == 0) {
         return -1;
@@ -774,8 +833,16 @@ int net_receive (uint16_t port, uint32_t ms, char* out, size_t size, uint32_t* f
         if (length >= 0 || clkuptms() - start >= ms) {
             return length;
         }
-        sleep_ms(1);
+        net_pause();
     }
+}
+
+// wait for a sealed message (see net.h): receive_sealed, with the network lock held
+int net_receive (uint16_t port, uint32_t ms, char* out, size_t size, uint32_t* from) {
+    net_lock();
+    int length = receive_sealed(port, ms, out, size, from);
+    net_unlock();
+    return length;
 }
 
 // ---- DNS -------------------------------------------------------------------------------------------
@@ -895,8 +962,8 @@ static int dns_answer (uint16_t id, uint32_t* address) {
     return NET_ERR_NO_NAME;
 }
 
-// ask the DNS server for a name's IPv4 address (only FW ALLOW does, when a rule is made)
-int net_lookup (const char* name, uint32_t* address) {
+// Ask the DNS server for a name's IPv4 address (net_lookup takes the network lock and calls this)
+static int lookup (const char* name, uint32_t* address) {
     if (!ready()) {
         return NET_ERR_NO_CARD;
     }
@@ -926,7 +993,7 @@ int net_lookup (const char* name, uint32_t* address) {
         uint32_t start = clkuptms();
         while (!dns.arrived && clkuptms() - start < 1000) {
             poll();
-            sleep_ms(1);
+            net_pause();
         }
     }
     // stop watching, so a late answer arriving after this is thrown away like anything else
@@ -936,4 +1003,13 @@ int net_lookup (const char* name, uint32_t* address) {
         return result == NET_OK ? NET_ERR_NO_ANSWER : result;
     }
     return dns_answer(id, address);
+}
+
+// look a name up (see net.h; only FW ALLOW does, when a rule is made): lookup, with the
+// network lock held
+int net_lookup (const char* name, uint32_t* address) {
+    net_lock();
+    int result = lookup(name, address);
+    net_unlock();
+    return result;
 }

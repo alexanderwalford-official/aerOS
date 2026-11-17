@@ -226,6 +226,12 @@ void console_capture_begin(char* buffer, size_t size);
 size_t console_capture_end(void);
 bool console_capturing(void);
 
+// Where printed text goes instead of the screen: when it isn't NULL, every character the console
+// would write is handed to it, and the screen isn't touched. Each thread has its own (kernel.c
+// gives it to thread_keep): a program running in the background (sys/jobs.c) has its output
+// kept, for the terminal to show at the prompt, so it never writes over what is in front
+extern void (*console_divert)(char c);
+
 // THE MOUSE POINTER, drawn over the console (the terminal shows it while its prompt waits, see
 // sys/terminal/pointer.c). Its position is in the grid's own pixels, before any scaling: 0 to
 // width - 1 across and 0 to height - 1 down, with console_pointer_area giving width and height

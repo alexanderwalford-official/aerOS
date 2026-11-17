@@ -3,7 +3,7 @@ safe points."""
 
 import time
 
-from aeros import GUEST_PROMPT, read_disk_file
+from aeros import GUEST_PROMPT, wait_for_disk_file
 
 
 def test_threads_take_turns(t):
@@ -52,8 +52,9 @@ def test_the_disk_writer_runs_during_a_busy_program(t):
     aeros.wait_for('wants to change', 60)
     aeros.key('a')
     aeros.wait_for('written', 60)
-    time.sleep(4)
-    aeros.quit()
-    if read_disk_file(disk, '/home/tester/busy.txt') != b'written while busy':
+    # (the loop runs for a minute, so if the change gets onto the disk while it does, the disk
+    # writer thread had its turns)
+    if not wait_for_disk_file(disk, '/home/tester/busy.txt', b'written while busy'):
         aeros.fail('the change was not on the disk: the disk writer thread did not get a turn')
+    aeros.quit()
     t.check_disk(disk)

@@ -222,8 +222,12 @@ void disk_cache_start (int bus, int slave) {
             return;
         }
         // and the thread that writes waiting changes while programs run. (Without it, they are
-        // still written on the next read or write after a second, and at every prompt)
-        thread_create("disk writer", disk_writer, NULL);
+        // still written on the next read or write after a second, and at every prompt.) Not if
+        // the timer isn't ticking: its sleeps would then be busy waits, half a second each,
+        // with nothing else able to run
+        if (clck_ready) {
+            thread_create("disk writer", disk_writer, NULL, THREAD_STACK_SIZE);
+        }
     }
 
     // every slot empty, every bucket's chain empty

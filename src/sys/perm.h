@@ -47,9 +47,15 @@ typedef enum {
 } perm_kind_t;
 
 // a program is starting, or has ended (lang/aer_interp.c). folder and name say where the
-// program's own file is ("/bin/", "viewer.aer"), args is what was typed after its name
-void perm_program_started (const char* folder, const char* name, const char* args);
+// program's own file is ("/bin/", "viewer.aer"), args is what was typed after its name.
+// perm_program_started is false if there isn't the memory, and then the program mustn't run
+bool perm_program_started (const char* folder, const char* name, const char* args);
 void perm_program_ended (void);
+
+// Give each thread its own running program for these rules (thread_keep, sys/thread.h), so a
+// program in the background has its own rules and answers, apart from the one in front.
+// kernel.c calls it once, at boot
+void perm_keep_per_thread (void);
 
 // the running program's file name ("viewer.aer"), or "" when no program is running
 const char* perm_program_name (void);

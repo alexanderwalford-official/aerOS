@@ -22,6 +22,7 @@
 #include "../p_man.h"
 #include "../explain.h"
 #include "../../lang/aerlang.h"
+#include "../jobs.h"
 
 
 // =================================================================================================
@@ -214,6 +215,48 @@ void cli_queue (char* arguments) {
     } else {
         prtf("Queued %s (%d in the queue, %s runs them).\n", line, queued, command_name(cli_go));
     }
+}
+
+// BG [PROGRAM]: run a program in the background, on a thread of its own, while the prompt
+// carries on (sys/jobs.h says what it may do there). What it prints is shown at the prompt.
+//     BG counter 10      run counter.aer with "10" in the background
+//     BG                 list what is running in the background
+void cli_background (char* arguments) {
+    if (arguments[0] == '\0') {
+        jobs_list();
+        return;
+    }
+    char* program_arguments;
+    char* program = split_first_word(arguments, &program_arguments);
+    // a typing mistake is caught here, rather than turning up later in its output
+    char line[P_INST_MAX];
+    if (!make_program_line(program, program_arguments, line, sizeof(line))) {
+        explain_say(PROBLEM_NOT_FOUND, program, "There is no program called %s.", program);
+        return;
+    }
+    int id = jobs_start(program, program_arguments);
+    if (id < 0) {
+        prtf("Couldn't start %s: %d programs are running in the background already, or there "
+             "isn't the memory.\n", program, JOBS_MAX);
+        return;
+    }
+    prtf("%s is running in the background, as thread %d. What it prints shows up here; "
+         "%s %d stops it.\n", program, id, command_name(cli_stop), id);
+}
+
+// STOP <ID>: stop a program running in the background (BG and THR show the numbers). It stops
+// at its next safe point, between two statements, with "stopped (STOP)"
+void cli_stop (char* arguments) {
+    if (arguments[0] == '\0' || !isdigit((unsigned char)arguments[0])) {
+        prtf("STOP <id>: the number BG shows for the program to stop.\n");
+        return;
+    }
+    int id = atoi(arguments);
+    if (!jobs_stop(id)) {
+        prtf("No program in the background is thread %d (BG lists them).\n", id);
+        return;
+    }
+    prtf("Asked thread %d to stop.\n", id);
 }
 
 // GO calls this before each queued program: a grey "[2/3] hello.aer" line

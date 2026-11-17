@@ -21,6 +21,10 @@
     thread, so none of it needs locks. That is the reason for safe points: a thread switched in
     the middle of malloc could leave it half changed for the next thread to trip over.
 
+    The one exception is the network: waiting for a web server takes seconds, so its waits are
+    safe points too (net_pause, sys/net.c), and it has the one lock (thread_lock, below) to keep
+    other threads out of it until the work is done.
+
     THE THREADS
 
         thread 0, "main"        everything AerOS did before threads: booting, the terminal, and
@@ -29,7 +33,18 @@
                                 second after they were made, whatever else is running
                                 (sys/disk_cache.c)
 
+        one for each program run with BG     an AerLang program running in the background
+                                             while you use the prompt (sys/jobs.c)
+
     THR lists them. docs/THREADS.md explains how it all works.
+
+    EACH THREAD'S OWN
+
+    Some of AerOS keeps "the one running now" in a global: the AerLang program running
+    (lang/aer_interp.c's `aer`), the program the file permission rules are for, where printed
+    text goes, whether SHOW is watching. With several threads, each needs its own. thread_keep
+    makes that so without changing the code that uses them: at every switch, those globals are
+    swapped, so each thread finds its own values in them.
 */
 
 #ifndef THREAD_H
@@ -40,8 +55,10 @@
 
 #define THREADS_MAX       16      // threads at once, counting main
 #define THREAD_NAME_MAX   16      // the longest name, with its '\0'
-#define THREAD_STACK_SIZE 16384   // each new thread's stack: 16 KB
+#define THREAD_STACK_SIZE 16384   // the usual stack for a new thread: 16 KB
 #define THREAD_SLICE_MS   10      // a thread's turn, before it should let another have one
+#define THREAD_KEEPS_MAX  6       // globals each thread can have its own of (thread_keep)
+#define THREAD_KEEP_BYTES 96      // the biggest such global, in bytes: the current folder (f_sys.c's cd)
 
 // what a thread is doing
 typedef enum {
@@ -70,9 +87,30 @@ extern volatile bool thread_time_up;
 // the timer are ready)
 void thread_init (void);
 
-// Start a thread running func(arg). It gets its first turn at the next safe point. Its id, or
-// -1 if THREADS_MAX threads are running or there is no memory for its stack
-int thread_create (const char* name, void (*func)(void* arg), void* arg);
+// Start a thread running func(arg), with a stack of stack_size bytes (THREAD_STACK_SIZE is
+// plenty for C code; an AerLang program needs much more, see sys/jobs.c). It gets its first turn
+// at the next safe point. Its id, or -1 if THREADS_MAX threads are running or there is no
+// memory for its stack
+int thread_create (const char* name, void (*func)(void* arg), void* arg, uint32_t stack_size);
+
+// Give each thread its own value of a global variable (`size` bytes at `global`, at most
+// THREAD_KEEP_BYTES). At every switch, the value is kept for the thread stopping, and the thread
+// starting gets its own back; a new thread's starts as 0 (NULL, false). For the "the one running
+// now" globals that each thread needs its own of, like AerLang's running program (kernel.c
+// lists them). Registered once, at boot
+void thread_keep (void* global, uint32_t size);
+
+// the lowest address of the running thread's stack (main's is the one entry.asm made). A stack
+// grows down towards it: code that recurses deeply checks how close it is (lang/aer_interp.c)
+uint8_t* thread_stack_bottom (void);
+
+// Ask thread id to stop. It is only a request, noted for the thread to see (thread_stopping):
+// an AerLang program sees it at its next safe point and stops there (STOP, sys/jobs.c). False if
+// there is no such thread
+bool thread_ask_to_stop (int id);
+
+// has the running thread been asked to stop?
+bool thread_stopping (void);
 
 // let another thread that is ready have a turn now, if there is one
 void thread_yield (void);
@@ -108,6 +146,25 @@ int thread_list (thread_info_t* info, int max);
 
 // a state as a word for THR: "ready", "sleeping"...
 const char* thread_state_name (thread_state_t state);
+
+// A LOCK: for something that mustn't be used by two threads at once, even though one of them
+// waits part way through (so another could get a turn in the middle). Only one thread at a time
+// holds it; another that wants it waits, sleeping (so every other thread still runs), until it
+// is let go. The thread holding it may take it again (each take needs its own let go), so a
+// function that takes it can call another that does. The network has one (sys/net.c): a web
+// request waits for answers, and another thread mustn't start one of its own meanwhile
+typedef struct {
+    int holder;   // the id of the thread holding it, or -1 for nobody
+    int depth;    // how many times the holder has taken it
+} thread_lock_t;
+
+#define THREAD_LOCK_FREE { -1, 0 }   // how a lock starts: nobody holds it
+
+// take the lock, waiting while another thread holds it
+void thread_lock (thread_lock_t* lock);
+
+// let go of it (once for each thread_lock)
+void thread_unlock (thread_lock_t* lock);
 
 // Boot's self-test: two threads that take turns, sleep and finish, and main waits for them.
 // True if they did all of that in the right order

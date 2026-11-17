@@ -42,8 +42,15 @@
     time and its turn, and raises thread_time_up when the turn is over. That is all it does: the
     interrupt never switches threads itself (see "safe points" in thread.h).
 
+    EACH THREAD'S OWN GLOBALS
+    thread_keep registers a global that each thread has its own value of (thread.h says why).
+    Each thread_t has room for its own copies (`kept`), and swap_kept runs at every switch: the
+    globals' values are copied into the stopping thread's room, and the starting thread's copies
+    go into the globals. memcpy, as they are of any type: pointers, a bool, the current folder.
+
     STACKS
-    A new thread's 16 KB stack is filled with 0xA5 first. A stack grows downwards, so the bytes
+    A new thread's stack (16 KB for C threads, 256 KB for AerLang programs in the background) is
+    filled with 0xA5 first. A stack grows downwards, so the bytes
     still 0xA5 at the bottom are ones it never used: THR shows the most each thread has used.
     If the very bottom has changed when the thread switches away, it went past the end, into
     whatever memory comes before it, and AerOS stops with a message rather than carry on with
@@ -71,9 +78,13 @@ typedef struct {
     uint8_t* stack;                  // its stack (NULL for main, and once a done thread's is freed)
     void (*func)(void* arg);         // what it runs, and what with
     void* arg;
+    uint32_t stack_size;             // how big its stack is (0 for main)
     uint32_t wake_at;                // SLEEPING: the clkuptms() to wake at
     int waiting_for;                 // JOINING: the id of the thread it waits for
+    bool stop_asked;                 // thread_ask_to_stop was called for it
     volatile uint32_t ms;            // how long it has run (counted by thread_tick)
+    // its own values of the thread_keep globals, kept here while it isn't running
+    uint8_t kept[THREAD_KEEPS_MAX][THREAD_KEEP_BYTES];
 } thread_t;
 
 static thread_t threads[THREADS_MAX];
@@ -85,6 +96,13 @@ static volatile uint32_t rest_ms = 0;      // how long it has rested, for THR
 static volatile uint32_t slice_ms = 0;     // how long the running thread's turn has been
 
 volatile bool thread_time_up = false;
+
+// the globals each thread has its own value of (thread_keep): where each is, and its size
+static void* keep_at[THREAD_KEEPS_MAX];
+static uint32_t keep_size[THREAD_KEEPS_MAX];
+static int keep_count = 0;
+
+extern char stack[]; // main's stack: the one entry.asm set up
 
 
 // ---- switching -----------------------------------------------------------------------------------
@@ -117,7 +135,7 @@ __asm__(".pushsection .text\n"
 static __attribute__((noreturn)) void stack_overflowed (const thread_t* t) {
     interrupts_disable();
     prtf("\nAerOS stopped: the thread \"%s\" used more than its %u byte stack.\n", t->name,
-         (unsigned int)THREAD_STACK_SIZE);
+         (unsigned int)t->stack_size);
     prtf("Memory next to it may be damaged, so it is safer to stop. Restart the computer.\n");
     sys_halt();
 }
@@ -155,6 +173,15 @@ static int pick_next (void) {
     return -1;
 }
 
+// The thread in slot `was` is stopping and the one in slot `next` starting: keep was's values of
+// the thread_keep globals, and put next's in their place (memcpy, as they are of any type)
+static void swap_kept (int was, int next) {
+    for (int k = 0; k < keep_count; k++) {
+        memcpy(threads[was].kept[k], keep_at[k], keep_size[k]);
+        memcpy(keep_at[k], threads[next].kept[k], keep_size[k]);
+    }
+}
+
 // give back the stacks of threads that have finished (never the running one's: it is on it)
 static void free_done_stacks (void) {
     for (int i = 0; i < THREADS_MAX; i++) {
@@ -189,6 +216,7 @@ static void schedule (void) {
     }
     int was = current;
     current = next;
+    swap_kept(was, next);
     thread_switch(&threads[was].esp, threads[next].esp);
     // this thread's turn again: whoever switched here set current back to it
     free_done_stacks();
@@ -216,7 +244,7 @@ void thread_init (void) {
 }
 
 // start a new thread (see thread.h)
-int thread_create (const char* name, void (*func)(void* arg), void* arg) {
+int thread_create (const char* name, void (*func)(void* arg), void* arg, uint32_t stack_size) {
     if (!started) {
         return -1;
     }
@@ -232,15 +260,16 @@ int thread_create (const char* name, void (*func)(void* arg), void* arg) {
     }
     thread_t* t = &threads[slot];
     free(t->stack);
-    t->stack = malloc(THREAD_STACK_SIZE);
+    t->stack = malloc(stack_size);
     if (t->stack == NULL) {
         t->state = THREAD_FREE;
         return -1;
     }
-    memset(t->stack, STACK_FILL, THREAD_STACK_SIZE);
+    t->stack_size = stack_size;
+    memset(t->stack, STACK_FILL, stack_size);
 
     // the stack as if it had switched away once (the picture at the top of this file)
-    uint32_t* sp = (uint32_t*)(t->stack + THREAD_STACK_SIZE);
+    uint32_t* sp = (uint32_t*)(t->stack + stack_size);
     *--sp = 0;                          // where thread_start would return to (it doesn't)
     *--sp = (uint32_t)thread_start;     // thread_switch's "ret" goes here
     *--sp = 0;                          // ebp
@@ -255,8 +284,70 @@ int thread_create (const char* name, void (*func)(void* arg), void* arg) {
     t->func = func;
     t->arg = arg;
     t->ms = 0;
+    t->stop_asked = false;
+    memset(t->kept, 0, sizeof(t->kept)); // its own values of the thread_keep globals start as 0
     t->state = THREAD_READY;
     return t->id;
+}
+
+// give every thread its own value of a global (see thread.h)
+void thread_keep (void* global, uint32_t size) {
+    if (keep_count >= THREAD_KEEPS_MAX || size > THREAD_KEEP_BYTES) {
+        return; // (a mistake in AerOS itself: kernel.c registers a fixed few)
+    }
+    keep_at[keep_count] = global;
+    keep_size[keep_count] = size;
+    keep_count++;
+}
+
+// the bottom of the running thread's stack (see thread.h)
+uint8_t* thread_stack_bottom (void) {
+    return threads[current].stack != NULL ? threads[current].stack : (uint8_t*)stack;
+}
+
+// ask a thread to stop (see thread.h)
+bool thread_ask_to_stop (int id) {
+    for (int i = 0; i < THREADS_MAX; i++) {
+        thread_state_t state = threads[i].state;
+        if (state != THREAD_FREE && state != THREAD_DONE && threads[i].id == id) {
+            threads[i].stop_asked = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+// has the running thread been asked to stop? (see thread.h)
+bool thread_stopping (void) {
+    return threads[current].stop_asked;
+}
+
+// Take a lock (see thread.h). Checking whether it is free and taking it can't be split by
+// another thread, as threads only switch at safe points and there is none in between
+void thread_lock (thread_lock_t* lock) {
+    int me = threads[current].id;
+    if (lock->holder == me) {
+        lock->depth++; // already ours: taken once more
+        return;
+    }
+    // another thread has it: it lets go at the end of what it is doing, and meanwhile it (and
+    // every other thread) runs while this one sleeps
+    while (lock->holder != -1) {
+        thread_sleep(1);
+    }
+    lock->holder = me;
+    lock->depth = 1;
+}
+
+// let go of a lock (see thread.h)
+void thread_unlock (thread_lock_t* lock) {
+    if (lock->holder != threads[current].id) {
+        return; // (not ours: a mistake in AerOS itself, and letting go of it would be worse)
+    }
+    lock->depth--;
+    if (lock->depth == 0) {
+        lock->holder = -1;
+    }
 }
 
 // let another thread have a turn (see thread.h)
@@ -273,9 +364,12 @@ void thread_yield (void) {
 
 // sleep, letting the others run (see thread.h)
 void thread_sleep (uint32_t ms) {
-    // without interrupts or a ticking timer nothing would wake the thread up: wait in place
+    // without interrupts or a ticking timer nothing would wake the thread up: wait in place,
+    // then let the others have a turn (without that, a thread that sleeps in a loop, like the
+    // disk writer, would never let any other thread run again)
     if (!started || !interrupts_enabled() || !clck_ready) {
         sleep_ms(ms);
+        thread_yield();
         return;
     }
     threads[current].wake_at = clkuptms() + ms;
@@ -342,12 +436,12 @@ uint32_t thread_rest_ms (void) {
 
 // how many bytes of a stack have been used: the ones that aren't STACK_FILL any more, counting
 // from the bottom up to the first that changed
-static uint32_t stack_used (const uint8_t* stack) {
+static uint32_t stack_used (const thread_t* t) {
     uint32_t untouched = 0;
-    while (untouched < THREAD_STACK_SIZE && stack[untouched] == STACK_FILL) {
+    while (untouched < t->stack_size && t->stack[untouched] == STACK_FILL) {
         untouched++;
     }
-    return THREAD_STACK_SIZE - untouched;
+    return t->stack_size - untouched;
 }
 
 // every thread there is, for THR (see thread.h)
@@ -362,8 +456,8 @@ int thread_list (thread_info_t* info, int max) {
         scpy(info[count].name, t->name, THREAD_NAME_MAX);
         info[count].state = t->state;
         info[count].ms = t->ms;
-        info[count].stack_size = t->stack != NULL ? THREAD_STACK_SIZE : 0;
-        info[count].stack_used = t->stack != NULL ? stack_used(t->stack) : 0;
+        info[count].stack_size = t->stack != NULL ? t->stack_size : 0;
+        info[count].stack_used = t->stack != NULL ? stack_used(t) : 0;
         count++;
     }
     return count;
@@ -410,8 +504,8 @@ static void test_thread (void* arg) {
 // two threads take turns, sleep and finish while main waits for them (see thread.h)
 bool thread_selftest (void) {
     test_count = 0;
-    int one = thread_create("test 1", test_thread, (void*)1);
-    int two = thread_create("test 2", test_thread, (void*)2);
+    int one = thread_create("test 1", test_thread, (void*)1, THREAD_STACK_SIZE);
+    int two = thread_create("test 2", test_thread, (void*)2, THREAD_STACK_SIZE);
     if (one < 0 || two < 0) {
         return false;
     }

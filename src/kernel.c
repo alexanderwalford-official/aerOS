@@ -39,6 +39,10 @@
 #include "sys/interrupts.h"
 #include "sys/sys_clck.h"
 #include "sys/thread.h"
+#include "sys/jobs.h"
+#include "sys/perm.h"
+#include "sys/trace.h"
+#include "lang/aerlang.h"
 #include "sys/p_man.h"
 #include "sys/boot.h"
 #include "sys/recovery.h"
@@ -72,6 +76,12 @@ int main(uint32_t mb_info_addr, uint32_t mb_magic) {
     interrupts_enable();                          // "sti", from here on the timer and keyboard are live
     clck_verify();                                // fall back to busy waits if the PIT is switched off
     thread_init();                                // everything from here on is thread 0, "main"
+    // the "one running now" globals that each thread has its own value of (thread_keep, see
+    // sys/thread.h), so a program in the background never mixes with the one in front
+    aer_keep_per_thread();                        // the AerLang program running (lang/aer_interp.c)
+    perm_keep_per_thread();                       // who the file permission rules are for (sys/perm.c)
+    jobs_keep_per_thread();                       // the background program, its folder and output
+    thread_keep(&trace_watching, sizeof(trace_watching)); // whether SHOW is watching (sys/trace.h)
 
     // each startup step is its own process: create it (it waits as DEAD), execute it, then destroy it
     // so its slot on the process stack is free again. Because the slot is freed every time, each of

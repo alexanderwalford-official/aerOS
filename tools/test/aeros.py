@@ -411,6 +411,20 @@ def read_disk_file(disk, path):
     return result.stdout if result.returncode == 0 else None
 
 
+def wait_for_disk_file(disk, path, data, timeout=15):
+    """Wait, while QEMU is still running, until a file on the disk image holds exactly `data`.
+    True if it did within `timeout` seconds. For checking AerOS writes something by itself
+    (the disk cache's writer thread) without guessing how long that takes: with many tests
+    running at once, AerOS's clock can fall behind the real one. Reading the image while QEMU
+    has it open is fine for this: a read that catches a write half done just looks again."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if read_disk_file(disk, path) == data:
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def write_disk_file(disk, path, data):
     """Put a file on a disk image (with QEMU stopped), replacing one that is there."""
     source = disk + '.put'
