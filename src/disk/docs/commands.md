@@ -121,6 +121,7 @@ See [The network](network.md).
 | `clk` | the date and time |
 | `up` | how long since it started |
 | `mem` | memory use |
+| `thr` | the [threads](inside.md) taking turns on the processor: what each is doing, how long it has run, how much of its stack it has used |
 | `rt [stress]` | [RT mode](rt.md)'s real-time tasks (experimental, picked in the boot options) |
 | `drv` | the disks AerOS can see |
 | `sync` | put every change still held in memory onto the disk now, and show the [disk cache](inside.md) at work (AerOS does this by itself before every prompt, so it is never needed) |

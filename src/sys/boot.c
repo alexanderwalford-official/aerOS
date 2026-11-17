@@ -39,6 +39,7 @@
 #include "../drivers/audio/ac97.h"
 #include "net.h"
 #include "rt.h"
+#include "thread.h"
 #include "syslog.h"
 #include "../lib/primary_definitions.h"
 #include <stdarg.h>
@@ -274,6 +275,8 @@ int init_boot (void) {
     boot_report("[ OK ]", "clock", "Real time clock: %s", rtc_datetime(now, sizeof(now)));
     // check SHA-256, HMAC, PBKDF2 and AES against published test vectors before trusting them with passwords
     boot_report(crypto_selftest() ? "[ OK ]" : "[FAIL]", "crypto", "Crypto self-test (SHA-256, SHA-512, HMAC, PBKDF2, AES-256, Ed25519)");
+    // two threads take turns, sleep and finish, and main waits for them (sys/thread.h)
+    boot_report(thread_selftest() ? "[ OK ]" : "[FAIL]", "threads", "Threads self-test (taking turns, sleeping, waiting)");
     // a missing sound card isn't a problem, only PLY needs one
     if (ac97_init()) {
         boot_report("[ OK ]", "sound", "Sound: %s", ac97_name());

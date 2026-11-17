@@ -15,16 +15,17 @@
 
         before every prompt                       sys/terminal/t_int.c
         while AerOS waits for a key               getk() in drivers/input/IO.c
-        a second after the first one changed      checked on every read or write, and while a
-                                                  program sleep()s (lang/bi_system.c)
+        a second after the first one changed      the disk writer thread (sys/thread.h), which
+                                                  looks twice a second whatever is running; and
+                                                  checked on every read or write
         when half the cache is waiting            checked on every write
         right away, for the system log            sys/syslog.c: it is what explains a crash
         before shutting down or restarting        sys/power.c
         when you type SYNC                        sys/terminal/cmd_system.c
 
     What it costs: if the power goes, or AerOS stops without shutting down, the changes still
-    waiting are lost. That is at most about a second of work done by a program that is still
-    running; once AerOS is back at the prompt or waiting for a key, nothing is waiting.
+    waiting are lost. That is at most about a second and a half of work done by a program that
+    is still running; once AerOS is back at the prompt or waiting for a key, nothing is waiting.
 
     See docs/DISK_CACHE.md for how it works inside.
 */
@@ -69,10 +70,6 @@ bool disk_cache_write (int bus, int slave, uint32_t lba, uint32_t count, const v
 // Write every waiting sector to the drive now, then flush the drive once. Cheap when nothing is
 // waiting. False if the drive refused any of it (those stay waiting, to be tried again)
 bool disk_cache_sync (void);
-
-// AerOS is only passing time (a program's sleep()): write the waiting sectors if the first of
-// them has waited DISK_CACHE_HOLD_MS
-void disk_cache_idle (void);
 
 // the numbers in disk_cache_stats_t, as they are now
 void disk_cache_stats (disk_cache_stats_t* stats);

@@ -38,6 +38,7 @@
 #include "drivers/video/VGA_linear.h"
 #include "sys/interrupts.h"
 #include "sys/sys_clck.h"
+#include "sys/thread.h"
 #include "sys/p_man.h"
 #include "sys/boot.h"
 #include "sys/recovery.h"
@@ -70,6 +71,7 @@ int main(uint32_t mb_info_addr, uint32_t mb_magic) {
     init_keyboard();                              // PS/2 keyboard (IRQ1)
     interrupts_enable();                          // "sti", from here on the timer and keyboard are live
     clck_verify();                                // fall back to busy waits if the PIT is switched off
+    thread_init();                                // everything from here on is thread 0, "main"
 
     // each startup step is its own process: create it (it waits as DEAD), execute it, then destroy it
     // so its slot on the process stack is free again. Because the slot is freed every time, each of

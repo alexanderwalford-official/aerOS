@@ -36,8 +36,10 @@
     with its own command: putting neighbours together into bigger writes would save a little,
     but the flush is what costs, and there is now one per sync instead of one per write.
 
-    Nothing here runs from an interrupt, so nothing can change the slots while they are being
-    changed. (With threads, one day, this file would need one lock around it.)
+    THREADS
+    Nothing here runs from an interrupt, and threads only switch at safe points (sys/thread.h),
+    never in the middle of a function here. So the disk writer thread and whoever is reading or
+    writing never find the slots half changed, and no lock is needed.
 */
 
 #include "disk_cache.h"
@@ -45,6 +47,7 @@
 #include "../lib/aer_stdlib.h"
 #include "../lib/aer_string.h"
 #include "sys_clck.h"
+#include "thread.h"
 #include "trace.h"
 
 // "nothing": the end of a bucket's chain, a slot with no sector in it, or no slot found
@@ -174,6 +177,21 @@ static void sync_if_due (void) {
 }
 
 
+// The disk writer thread (sys/thread.h): twice a second, it writes whatever has waited
+// DISK_CACHE_HOLD_MS. It runs at safe points of the other threads (between two statements of a
+// busy AerLang program, say), never in the middle of a read or write here, so the cache is
+// always in one piece when it looks at it
+static void disk_writer (void* arg) {
+    (void)arg;
+    for (;;) {
+        thread_sleep(DISK_CACHE_HOLD_MS / 2);
+        if (cache.on) {
+            sync_if_due();
+        }
+    }
+}
+
+
 // ---- what the rest of AerOS calls (see disk_cache.h) --------------------------------------------
 
 // start caching a drive (see disk_cache.h)
@@ -203,6 +221,9 @@ void disk_cache_start (int bus, int slave) {
             TRACE("not enough memory for a disk cache: the drive is used directly");
             return;
         }
+        // and the thread that writes waiting changes while programs run. (Without it, they are
+        // still written on the next read or write after a second, and at every prompt)
+        thread_create("disk writer", disk_writer, NULL);
     }
 
     // every slot empty, every bucket's chain empty
@@ -311,12 +332,6 @@ bool disk_cache_sync (void) {
     return refused == 0 && flushed;
 }
 
-// passing time: write what is waiting, if it has waited long enough (see disk_cache.h)
-void disk_cache_idle (void) {
-    if (cache.on) {
-        sync_if_due();
-    }
-}
 
 // the numbers, for SYNC (see disk_cache.h)
 void disk_cache_stats (disk_cache_stats_t* stats) {

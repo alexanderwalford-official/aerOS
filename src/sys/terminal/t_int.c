@@ -323,6 +323,7 @@ static const command_t commands[] = {
     COMMAND("clk",  "",           "PRINTS THE SYSTEM TIME (CLOCK)",                              cli_clock),
     COMMAND("up",   "",           "PRINTS THE TIME SINCE BOOT (UPTIME)",                         cli_uptime),
     COMMAND("pm",   "",           "PRINTS THE PROCESS STACK (PROCESS MANAGER)",                  cli_pman),
+    COMMAND("thr",  "",           "LIST THE THREADS TAKING TURNS ON THE PROCESSOR",              cli_threads),
     COMMAND("que",  "[PROGRAM]",  "QUEUE A PROGRAM FOR GO, OR LIST THE QUEUE (QUE CLEAR)",       cli_queue),
     COMMAND("go",   "",           "RUN EVERYTHING IN THE QUEUE, IN ORDER (CTRL+C STOPS IT)",     cli_go),
     COMMAND("run",  "<CODE>",     "RUN CODE AS A PROCESS (e.g. run print_stack, run s:hi)",      cli_run),

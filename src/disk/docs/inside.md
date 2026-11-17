@@ -53,6 +53,17 @@ The CPU stops whatever it is doing when hardware needs attention:
 When there is nothing to do, AerOS halts the CPU until the next interrupt, so it uses
 almost no power sitting at the prompt.
 
+## Threads
+
+A thread is a piece of AerOS running on its own. There is one processor, so threads take
+turns: about every hundredth of a second, the running one lets the next have a go. `thr`
+lists them. One is `main`, which runs the terminal and your programs; another is the disk
+writer (below), which puts your changes on the disk even while a program is busy.
+
+A thread only lets the next one go at a safe point: between two lines of an AerLang program,
+or while it waits for a key or sleeps. Never in the middle of saving a file or drawing on the
+screen. That keeps everything simple and safe, as nothing is ever left half done.
+
 ## The disk cache
 
 Talking to a disk is slow next to memory, and the slowest part is asking the disk to make
@@ -61,8 +72,8 @@ it used in memory:
 
 - **Reading** something used lately comes from memory instead of the disk.
 - **Writing** changes the copy in memory first. The changes are put on the disk together, with
-  one flush for all of them: before every prompt, while AerOS waits for a key, after a second
-  at most while a program runs, and before shutting down.
+  one flush for all of them: before every prompt, while AerOS waits for a key, within a second
+  or so while a program runs (the disk writer thread), and before shutting down.
 
 So when the prompt comes back, everything you did is on the disk. Only if the power goes in
 the middle of a program can its last second of changes be lost. AerOS's log is the exception:
@@ -77,6 +88,7 @@ program. `bench` times reading and writing, to see the difference.
 | the terminal and its commands | `src/sys/terminal/` (`t_int.c`, and `cmd_*.c` by topic) |
 | files: disk (FAT) or memory | `src/sys/f_sys.c`, `src/sys/fat.c` |
 | the disk cache | `src/sys/disk_cache.c` |
+| threads | `src/sys/thread.c` |
 | accounts and encryption | `src/sys/accounts/`, `src/sys/fcrypt.c` |
 | AerLang, and AerLang at the prompt | `src/lang/` |
 | WHY and SRC, and the `/src/` folder | `src/sys/explain.c`, `src/sys/source.c` |

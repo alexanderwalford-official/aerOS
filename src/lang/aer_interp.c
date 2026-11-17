@@ -47,6 +47,7 @@
 #include "../sys/explain.h"
 #include "../sys/perm.h"
 #include "../sys/appmode.h"
+#include "../sys/thread.h"
 
 #define STACK_RESERVE (32 * 1024) // stop a runaway program before it uses the last 32KB of stack
 
@@ -961,6 +962,15 @@ static void assign (aer_node_t* target, value_t value) {
 
 static exec_t exec (aer_node_t* n);
 
+// The interpreter's safe point: once for every statement, and once every time round a loop (so
+// even "while x do end", with nothing inside, gets one). Ctrl+C and the recursion limit are
+// checked (check_stack), and if this thread's turn is up another thread can have one now
+// (sys/thread.h). Nothing is ever half done at this point
+static void safe_point (int line) {
+    check_stack(line);
+    thread_check();
+}
+
 // run statements in order until one of them breaks, continues or returns, and pass that on to
 // whoever can deal with it (a loop, or a function call)
 static exec_t exec_block (aer_node_t* block) {
@@ -989,7 +999,7 @@ static void set_loop_variable (const char* name, value_t value) {
 // carry out one statement, and say what should happen next (EXEC_NEXT unless it was a break,
 // continue or return, or a block inside it ended with one)
 static exec_t exec (aer_node_t* n) {
-    check_stack(n->line);
+    safe_point(n->line);
     switch (n->type) {
         // let always makes the variable in the current scope (a local inside a function), even
         // if a global has the same name; both it and = take over eval's reference
@@ -1032,6 +1042,7 @@ static exec_t exec (aer_node_t* n) {
         // return carries on out through it; continue needs nothing, as the loop goes round anyway
         case N_WHILE:
             for (;;) {
+                safe_point(n->line);
                 value_t condition = eval(n->condition);
                 bool truth = aer_truthy(condition);
                 aer_release(condition);
@@ -1064,6 +1075,7 @@ static exec_t exec (aer_node_t* n) {
             }
             // counting up runs while i <= last, counting down (a negative step) while i >= last
             for (;;) {
+                safe_point(n->line);
                 bool finished;
                 if (by > 0) {
                     finished = i > last;
@@ -1097,6 +1109,7 @@ static exec_t exec (aer_node_t* n) {
             exec_t result = EXEC_NEXT;
             // the length is checked every time round, so the body may add to or remove from a list
             for (uint32_t i = 0; i < collection.as.obj->length; i++) {
+                safe_point(n->line);
                 set_loop_variable(n->name, index_get(collection, aer_int((int32_t)i), n->line));
                 result = exec_block(n->body);
                 if (result == EXEC_BREAK || result == EXEC_RETURN) {

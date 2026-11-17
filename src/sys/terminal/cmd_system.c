@@ -36,6 +36,7 @@
 #include "../appmode.h"
 #include "../rt.h"
 #include "../disk_cache.h"
+#include "../thread.h"
 
 
 // =================================================================================================
@@ -188,6 +189,25 @@ void cli_sync (char* arguments) {
     if (after.errors > 0) {
         prtf("The drive has refused %u write(s) since AerOS started.\n", after.errors);
     }
+}
+
+// THR: the threads taking turns on the processor (sys/thread.h): what each is doing, how long
+// it has run, and the most of its stack it has used. Main uses the stack AerOS started with
+void cli_threads (char* arguments) {
+    (void)arguments;
+    thread_info_t list[THREADS_MAX];
+    int count = thread_list(list, THREADS_MAX);
+    prtf("ID  NAME             STATE      TIME (MS)  STACK USED\n");
+    for (int i = 0; i < count; i++) {
+        thread_info_t* t = &list[i];
+        prtf("%-3d %-16s %-10s %9u  ", t->id, t->name, thread_state_name(t->state), t->ms);
+        if (t->stack_size == 0) {
+            prtf("(the boot stack)\n");
+        } else {
+            prtf("%u of %u bytes\n", t->stack_used, t->stack_size);
+        }
+    }
+    prtf("The processor has rested for %u ms, with nothing ready to run.\n", thread_rest_ms());
 }
 
 // BP [HZ]: a beep on the PC speaker. atoi() gives 0 for nothing (or not a number), and

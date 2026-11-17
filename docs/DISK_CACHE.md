@@ -59,8 +59,8 @@ written.
 | --- | --- |
 | before every prompt | `src/sys/terminal/t_int.c` |
 | while AerOS waits for a key | `getk()` in `src/drivers/input/IO.c` |
+| a second after the first change, whatever is running | the disk writer thread, `disk_writer` in `disk_cache.c` ([threads](THREADS.md)) |
 | a second after the first change, checked on every read and write | `sync_if_due` in `disk_cache.c` |
-| a second after the first change, while a program `sleep()`s | `bi_sleep` in `src/lang/bi_system.c` |
 | when half the cache is waiting | `sync_if_due` |
 | straight away, for the system log | `close_log` in `src/sys/syslog.c` |
 | before shutting down or restarting | `src/sys/power.c` |
@@ -69,7 +69,8 @@ written.
 ## What it costs
 
 If the power goes, or AerOS stops without shutting down, the changes still waiting are lost.
-That is at most about a second of work by a program that is still running. Once AerOS is back
+That is at most about a second and a half of work by a program that is still running (the disk
+writer looks twice a second, for changes that have waited a second). Once AerOS is back
 at the prompt or waiting for a key, nothing is waiting.
 
 The log is written through on purpose: after a crash, it is what says what happened, so it
@@ -126,9 +127,10 @@ FAT volume afterwards.
 
 ## Later
 
-- **Threads.** Nothing in the cache runs from an interrupt, so nothing can change it half way
-  through a change. With threads, it will need one lock around it, and that is the only place
-  disk access will need one.
+- **Threads.** Threads only switch at safe points ([THREADS.md](THREADS.md)), never in the
+  middle of a function in the cache, so the disk writer thread never finds it half changed. If
+  threads could ever be switched anywhere, the cache would need one lock around it, and that
+  would be the only place disk access needs one.
 - **Writing neighbours together.** Waiting sectors are written one command each. Joining
   neighbouring sectors into one command would save a little more, but the flush was the cost.
 - **Its size.** 4 MB is a fixed choice (`DISK_CACHE_SECTORS`). It could grow with the memory

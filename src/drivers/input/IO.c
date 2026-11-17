@@ -45,6 +45,7 @@
 #include "../../lib/crypto.h"
 #include "../../sys/clipboard.h"
 #include "../../sys/disk_cache.h"
+#include "../../sys/thread.h"
 
 // (the 8042 controller's ports and status bits are in IO.h, as the mouse driver uses them too)
 
@@ -422,7 +423,9 @@ int getk(void) {
                 return typed[typed_next++];
             }
         }
-        cpu_idle(); // sleep until the next interrupt
+        // nothing to do until a key comes: another thread may have the time, or the processor
+        // rests until the next interrupt (sys/thread.h)
+        thread_idle();
     }
     uint8_t key = kb_buffer[kb_tail];
     // read the key before moving tail, once tail moves the IRQ handler is free to reuse the slot
