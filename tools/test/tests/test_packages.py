@@ -245,8 +245,8 @@ def pkg_copy(t, name, server_url, public):
 
 
 def install(aeros, command, timeout=180):
-    """Run a pkg install, saying yes to its question and to AerOS's permission questions, and
-    wait for it to finish."""
+    """Run a pkg install or update, saying yes to its questions and to AerOS's permission
+    questions, and wait for it to finish."""
     serial = aeros.serial()
     asked = serial.count('(y/n) ') + serial.count('[ ? ]')
     before = aeros.prompts()
@@ -304,15 +304,31 @@ def test_pkg_from_server(t):
         aeros.cls()
         aeros.run('pkgt list', timeout=120)
         aeros.expect_line('greet 1.1: Says hello')
+
+        # installing it again is refused: that is pkg update's job
+        aeros.cls()
         install(aeros, 'pkgt install greet')
-        aeros.expect('Installed greet 1.1: type greet to run it.')
+        aeros.expect_line('greet 1.0 is already installed: pkg update greet gets a newer one.')
+
+        # pkg update fetches 1.1, checks it, asks, and replaces 1.0 (and its line)
+        aeros.cls()
+        install(aeros, 'pkgt update')
+        aeros.expect_line('greet: 1.0 -> 1.1')
+        aeros.expect('Updated 1, 0 already up to date.')
         aeros.cls()
         aeros.run('greet')
         aeros.expect_line('Hello from greet 1.1')
+        aeros.run('print(rdf("/apps/packages.txt"))')
+        aeros.expect_line('greet 1.1')
+
+        # nothing newer: nothing to do
+        aeros.cls()
+        install(aeros, 'pkgt update greet')
+        aeros.expect('Updated 0, 1 already up to date.')
 
         # the old index, genuinely signed, sent again: refused, and 1.1 stays
         aeros.cls()
-        install(aeros, 'pkgold install greet')
+        install(aeros, 'pkgold update')
         aeros.expect_line('The package index from the server is older than one used before',
                           '(number 1, but 2 was seen), so it won\'t be used.')
         aeros.cls()

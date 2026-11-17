@@ -74,11 +74,12 @@ def test_verify_and_scan(t):
     aeros.run('verify(rdb("/data.bin"), tool_sig, tool_key)')
     aeros.expect_line('true')
 
-    # no package key has been set in this AerOS, so nothing checks out against it
+    # the key built into AerOS (src/sys/package_key.h): 64 hex digits, and a signature made
+    # with this test's own key doesn't check out against it
     aeros.cls()
-    aeros.run('packagekey() == ""')
+    aeros.run('len(packagekey())')
     aeros.run('verify("hello", sig, packagekey())')
-    aeros.expect_line('true', 'false')
+    aeros.expect_line('64', 'false')
 
     # scan(): what a program can do, and the tricks in it, as lists
     aeros.cls()

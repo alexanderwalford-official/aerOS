@@ -203,3 +203,21 @@ Installing `chess`:
    `/apps/`.)
 
 Every check comes before anything is written, and a failed check stops everything.
+
+Installing something that is already installed stops before step 1 and points to `pkg update`
+(installing it again would give it a second line in `/apps/packages.txt`).
+
+## Updating
+
+`pkg update` updates every installed package, and `pkg update chess` updates just one. Both do
+steps 1 to 4 once. Then, for each installed package:
+
+- **not in the index any more:** it is left as it is (it still works; the maker has only stopped
+  offering it);
+- **the same version as installed:** nothing to do;
+- **a different version:** steps 6 to 9 for it, asking about each one. Its line in
+  `/apps/packages.txt` is replaced, not added to.
+
+"Different", not "newer": the index is signed and can't be an old one (step 4), so the version
+it lists is the one its maker means you to have, even if that is a step back from a broken
+release. Comparing version numbers would also mean agreeing what "1.10" against "1.9" means.

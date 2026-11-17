@@ -9,6 +9,7 @@
 #     pkg install <name>   check it, show what it could do, ask, then install it
 #     pkg remove <name>    take it off again
 #     pkg installed        what you have installed
+#     pkg update [name]    get newer versions of what you have installed (or just one)
 #
 # Everything fetched is checked with verify() against the key built into AerOS (packagekey())
 # before it is used, and nothing is written until you say yes.
@@ -102,6 +103,123 @@ func find_package(index, name)
     return nil
 end
 
+func fetch_current_index()
+    # fetch_index, but also refuse an index older than one used before (index_serial says why).
+    # The index, or nil after saying what was wrong
+    let index = fetch_index()
+    if index == nil then
+        return nil
+    end
+    let serial = index_serial(index)
+    let seen = seen_serial()
+    if serial < seen then
+        print("The package index from the server is older than one used before")
+        print("(number " + serial + ", but " + seen + " was seen), so it won't be used.")
+        return nil
+    end
+    return index
+end
+
+func remember_serial(index)
+    # keep this index's serial number, if it is the highest yet, so an older index is refused
+    # from now on
+    let serial = index_serial(index)
+    if serial > seen_serial() then
+        if wrf(SERIAL, str(serial)) == false then
+            print("Couldn't write " + SERIAL + ": older package lists won't be noticed.")
+        end
+    end
+end
+
+
+# ---- what is installed ---------------------------------------------------------------------
+
+func read_installed()
+    # INSTALLED as a list of [name, version], one for each package (an empty list if nothing
+    # is installed yet)
+    let packages = []
+    let installed = rdf(INSTALLED)
+    if installed == nil then
+        return packages
+    end
+    for line in split(installed, chr(10)) do
+        if line != "" then
+            let parts = split(line, " ")
+            push(packages, [parts[0], parts[1]])
+        end
+    end
+    return packages
+end
+
+func installed_version(name)
+    # the version of name that is installed, or nil if it isn't
+    for entry in read_installed() do
+        if entry[0] == name then
+            return entry[1]
+        end
+    end
+    return nil
+end
+
+func set_installed(name, version)
+    # Set name's line in INSTALLED to "name version": replaced if it is there, added if not.
+    # The new text is built first and written once, so the list is never left half written.
+    # True if it worked
+    let text = ""
+    for entry in read_installed() do
+        if entry[0] != name then
+            text = text + entry[0] + " " + entry[1] + chr(10)
+        end
+    end
+    text = text + name + " " + version + chr(10)
+    return wrf(INSTALLED, text)
+end
+
+
+# ---- getting one package -------------------------------------------------------------------
+
+func get_package(package, verb)
+    # Fetch a package's program, check its signature, show what it could do, and ask before
+    # going on (verb is the question's first word: "Install" or "Update"). package is
+    # find_package's [name, version, signature, description]. The program if every step
+    # passed and the answer was y; nil, after saying why, if not. Nothing is written here
+    let name = package[0]
+
+    # its program, from the server
+    let program = httpget(SERVER + "/packages/" + name + ".aer")
+    if program == nil then
+        print("Couldn't fetch " + name + " from the package server.")
+        return nil
+    end
+
+    # verify the signature of the program against the signature in the index, using the built-in key
+    if verify(program, package[2], packagekey()) == false then
+        print(name + " isn't signed by the packages' maker, so it won't be used.")
+        return nil
+    end
+
+    # show what it could do (scan gives [what it can do, what is worth a closer look])
+    let found = scan(program)
+    print(name + " " + package[1] + ": " + package[3])
+    if len(found[0]) == 0 then
+        print("  It only works with its own values, prints, and reads what you type.")
+    end
+    for line in found[0] do
+        print("  " + line)
+    end
+    for line in found[1] do
+        print("  ! " + line)
+    end
+
+    # ask: anything but "y" cancels
+    let answer = input(verb + " " + name + " " + package[1] + "? (y/n) ")
+    if answer != "y" then
+        print("pkg: " + name + " left as it is")
+        return nil
+    end
+    return program
+end
+
 
 # ---- the commands --------------------------------------------------------------------------
 
@@ -135,18 +253,17 @@ func install(name)
 
     print("[ ! ] pkg install: " + name)
 
-    # the checked index (fetch_index says why, if it can't give one)
-    let index = fetch_index()
-    if index == nil then
+    # already installed? Then pkg update is the way to get a newer one (installing it again
+    # would give it two lines in INSTALLED)
+    let have = installed_version(name)
+    if have != nil then
+        print(name + " " + have + " is already installed: pkg update " + name + " gets a newer one.")
         return
     end
 
-    # not older than an index installed from before (index_serial says why)
-    let serial = index_serial(index)
-    let seen = seen_serial()
-    if serial < seen then
-        print("The package index from the server is older than one used before")
-        print("(number " + serial + ", but " + seen + " was seen), so it won't be used.")
+    # the checked index (fetch_current_index says why, if it can't give one)
+    let index = fetch_current_index()
+    if index == nil then
         return
     end
 
@@ -157,37 +274,9 @@ func install(name)
         return
     end
 
-    # its program, from the server
-    let program = httpget(SERVER + "/packages/" + name + ".aer")
+    # fetch it, check it, show what it could do, and ask (get_package says why if it stops)
+    let program = get_package(package, "Install")
     if program == nil then
-        print("Couldn't fetch " + name + " from the package server.")
-        return
-    end
-
-    # verify the signature of the program against the signature in the index, using the built-in key
-    if verify(program, package[2], packagekey()) == false then
-        print(name + " isn't signed by the packages' maker, so it won't be installed.")
-        return
-    end
-
-    # show what it could do (scan gives [what it can do, what is worth a closer look])
-    let found = scan(program)
-    print(name + " " + package[1] + ": " + package[3])
-    if len(found[0]) == 0 then
-        print("  It only works with its own values, prints, and reads what you type.")
-    end
-    for line in found[0] do
-        print("  " + line)
-    end
-    for line in found[1] do
-        print("  ! " + line)
-    end
-
-    # confirm the correct package is being installed, and ask if the user wants to continue:
-    # anything but "y" cancels
-    let answer = input("Install " + name + " " + package[1] + "? (y/n) ")
-    if answer != "y" then
-        print("pkg install: cancelled")
         return
     end
 
@@ -197,18 +286,66 @@ func install(name)
         return
     end
 
-    # write a line to INSTALLED: "name version" (apf makes the file the first time)
-    if apf(INSTALLED, package[0] + " " + package[1] + chr(10)) == false then
+    # its line in INSTALLED: "name version"
+    if set_installed(name, package[1]) == false then
         print("Installed /apps/" + name + ".aer, but couldn't add it to " + INSTALLED + ".")
         return
     end
-    # remember this index's serial number, so an older index is refused from now on
-    if serial > seen then
-        if wrf(SERIAL, str(serial)) == false then
-            print("Couldn't write " + SERIAL + ": older package lists won't be noticed.")
+    remember_serial(index)
+    print("Installed " + name + " " + package[1] + ": type " + name + " to run it.")
+end
+
+func update(only)
+    # pkg update [name]: every installed package (or just `only`, if it isn't nil) that the
+    # index has a different version of, checked and asked about the same way as pkg install.
+    # "Different" rather than "newer": the index is signed and can't be an old one (the serial
+    # check), so whatever version it lists is the one its maker wants you to have
+    let installed = read_installed()
+    if len(installed) == 0 then
+        print("Nothing is installed yet.")
+        return
+    end
+    if only != nil and installed_version(only) == nil then
+        print(only + " isn't installed: pkg install " + only + " gets it.")
+        return
+    end
+
+    print("[ ! ] pkg update")
+    let index = fetch_current_index()
+    if index == nil then
+        return
+    end
+
+    let updated = 0
+    let current = 0
+    for entry in installed do
+        let name = entry[0]
+        if only == nil or name == only then
+            let package = find_package(index, name)
+            if package == nil then
+                # taken off the server: what you have keeps working, so it is left alone
+                print(name + " " + entry[1] + " isn't on the package server any more, so it's left as it is.")
+            elif package[1] == entry[1] then
+                current = current + 1
+            else
+                print(name + ": " + entry[1] + " -> " + package[1])
+                let program = get_package(package, "Update")
+                if program != nil then
+                    # the new program, then its new version in INSTALLED
+                    if wrf("/apps/" + name + ".aer", program) == false then
+                        print("Couldn't write /apps/" + name + ".aer, so " + name + " " + entry[1] + " is kept.")
+                    elif set_installed(name, package[1]) == false then
+                        print("Updated /apps/" + name + ".aer, but couldn't change its line in " + INSTALLED + ".")
+                    else
+                        updated = updated + 1
+                    end
+                end
+            end
         end
     end
-    print("Installed " + name + " " + package[1] + ": type " + name + " to run it.")
+
+    remember_serial(index)
+    print("Updated " + updated + ", " + current + " already up to date.")
 end
 
 func remove(name)
@@ -286,6 +423,7 @@ func show_help()
     print("pkg install <name>   check a package, show what it could do, and install it")
     print("pkg remove <name>    take an installed package off again")
     print("pkg installed        what you have installed")
+    print("pkg update [name]    get newer versions of what you have installed (or just one)")
 end
 
 
@@ -304,6 +442,10 @@ elif args[0] == "install" and len(args) == 2 then
     install(args[1])
 elif args[0] == "remove" and len(args) == 2 then
     remove(args[1])
+elif args[0] == "update" and len(args) == 1 then
+    update(nil)
+elif args[0] == "update" and len(args) == 2 then
+    update(args[1])
 else
     print("pkg doesn't know \"" + join(args, " ") + "\".")
     show_help()
