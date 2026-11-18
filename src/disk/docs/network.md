@@ -116,7 +116,8 @@ What it sends isn't sealed, so don't serve anything private.
 
 No HTTPS (so `https://` addresses don't work: try the `http://` one), no IPv6, and a sealed
 message must fit in one packet: 1428 bytes. The
-biggest page `get` will fetch is 4 MB. The card is an Intel e1000 (QEMU's own, and one
-VirtualBox offers).
+biggest page `get` will fetch is 4 MB. The card is an Intel e1000 (QEMU's own). In
+VirtualBox, set the network adapter type to Intel PRO/1000 MT Desktop: its usual PCnet-FAST
+III has no driver in AerOS.
 
 See also: [Accounts and encryption](security.md), [Ask AerOS why](why.md).

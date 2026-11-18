@@ -153,6 +153,7 @@ src/
                         the manual DOC shows, disk/sys/ the startup sound. Copied there at
                         every boot (sys/apps.c)
   iso/boot/grub/grub.cfg  GRUB's menu: loads main.elf, restores the saved screen resolution
+                        (falling back to 1024x768, see SCREEN.md)
 ```
 
 ## A boot, step by step

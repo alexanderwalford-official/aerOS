@@ -28,6 +28,8 @@
 
 #include "boot.h"
 #include "../drivers/video/VGA_linear.h"
+#include "../drivers/video/bga.h"
+#include "../drivers/pci/pci.h"
 #include "../drivers/input/IO.h"
 #include "../lib/aer_stdlib.h"
 #include "../lib/aer_stdio.h"
@@ -308,6 +310,66 @@ static void boot_report (const char* tag, const char* source, const char* format
     syslog_add(kind, source, "%s", message);
 }
 
+// Put the resolution chosen with RES (saved as /grubenv, see cli_resolution) back, if GRUB
+// couldn't. GRUB sets modes through the firmware (VBE), which only knows a fixed list of sizes:
+// VirtualBox's has no 1920x1080, for one, so GRUB falls back to 1024x768 (grub.cfg). The Bochs
+// Graphics Adapter, which VirtualBox has too, can do any size, so it is asked for the saved one
+static void restore_resolution (void) {
+    vga_framebuffer_t screen;
+    if (fs_mode != FS_MODE_DISK || !bga_available() || !vga_framebuffer_info(&screen) ||
+        !fs_file_exists("/", "grubenv")) {
+        return;
+    }
+    char* block = fs_read_f("/", "grubenv");
+    if (block == NULL) {
+        return;
+    }
+    // the line RES writes is "aeros_mode=1920x1080x32": the number after the = is the width,
+    // and the one after the first x the height
+    unsigned long width = 0, height = 0;
+    char* found = strstr(block, "aeros_mode=");
+    if (found != NULL) {
+        char* end;
+        width = strtoul(found + slen("aeros_mode="), &end, 10);
+        if (*end == 'x') {
+            height = strtoul(end + 1, NULL, 10);
+        }
+    }
+    free(block);
+
+    // nothing to do if it is already that size (GRUB managed it), or the line made no sense
+    if (width == 0 || height == 0 || (width == screen.width && height == screen.height)) {
+        return;
+    }
+    // the card may round the size (QEMU's makes the width a multiple of 8), so the line says
+    // what it really is now
+    vga_framebuffer_t now;
+    if (bga_set_mode((uint32_t)width, (uint32_t)height) && vga_framebuffer_info(&now)) {
+        boot_report("[ OK ]", "screen", "Screen: %ux%u, the size saved with RES (the firmware started at %ux%u)",
+                    now.width, now.height, screen.width, screen.height);
+    } else {
+        boot_report("[WARN]", "screen", "Screen: couldn't change to the %lux%lu saved with RES, staying at %ux%u",
+                    width, height, screen.width, screen.height);
+    }
+}
+
+// The boot log line when there is no network card AerOS can use. If there is a network card
+// AerOS has no driver for, it says which, and for VirtualBox's usual one (an AMD PCnet) what to
+// change instead
+static void report_no_network (void) {
+    pci_device_t card;
+    // PCI class 2, subclass 0: an Ethernet card
+    if (!pci_find_class(0x02, 0x00, &card)) {
+        boot_report("[INFO]", "network", "No network card found (AerOS supports the Intel e1000)");
+    } else if (card.vendor == 0x1022 && card.device == 0x2000) {
+        // 0x1022 is AMD, and 0x2000 its PCnet cards (VirtualBox's PCnet-PCI II and PCnet-FAST III)
+        boot_report("[INFO]", "network", "AMD PCnet network card: no driver. In VirtualBox, pick Intel PRO/1000 MT Desktop");
+    } else {
+        boot_report("[INFO]", "network", "Network card %04x:%04x has no driver (AerOS supports the Intel e1000)",
+                    card.vendor, card.device);
+    }
+}
+
 // the boot log
 // shows whether each part of kernel.c's hardware setup worked, starts the file system and waits
 // BOOT_LOG_DELAY ms so it can be read (skipped on fast boot). Each line also goes in AerOS's
@@ -362,7 +424,7 @@ int init_boot (void) {
     if (net_init()) {
         boot_report("[ OK ]", "network", "Network: %s, firewall on", net_card_name());
     } else {
-        boot_report("[INFO]", "network", "No network card found (AerOS supports the Intel e1000)");
+        report_no_network();
     }
     prtf("\n");
     // RT mode (picked in the boot options): the real-time tasks start ticking from here
@@ -383,6 +445,8 @@ int init_boot (void) {
     } else {
         syslog_add("boot", "disk", "no AEROS disk found: files only last until the computer is turned off");
     }
+    // the resolution saved with RES is on the disk, so this has to wait for the file system
+    restore_resolution();
 
     // the apps that come with AerOS, copied into /bin/ unless they are already there
     int installed = apps_install();

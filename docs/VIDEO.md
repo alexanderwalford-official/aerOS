@@ -31,7 +31,8 @@ make disk-put FILE=out.mpg          # from src/, copies it onto the AEROS disk
 ```
 
 Videos need a framebuffer (boot the ISO). Under `-kernel` QEMU is in VGA text mode, and
-`PLY` says the screen is text only.
+`PLY` says the screen is text only. [SCREEN.md](SCREEN.md) explains how the screen's size is
+chosen, and the VirtualBox settings that give AerOS a framebuffer.
 
 ## Why MPEG-1
 
