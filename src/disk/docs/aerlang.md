@@ -101,7 +101,7 @@ orange, also called `BROWN`), `BRIGHT`, `DARK_GRAY`, `LIGHT_BLUE`, `LIGHT_GREEN`
 `KEY_DOWN`, `KEY_LEFT`, `KEY_RIGHT`, `KEY_HOME`, `KEY_END`, `KEY_PGUP`, `KEY_PGDN`,
 `KEY_DELETE`, `KEY_ENTER`, `KEY_BACKSPACE`, `KEY_TAB`, `KEY_ESCAPE`.
 
-**Text:** `len(x)`, `str(x)`, `int("42")` (nil if not a number), `chr(65)`, `ord("A")`,
+**Text:** `len(x)`, `str(x)`, `int("42")` (nil if not a number; `"08"` is 8, `"0x1F"` is hex), `chr(65)`, `ord("A")`,
 `sub(s, start, count)`, `find(s, part)` (-1 if missing), `upper(s)`, `lower(s)`,
 `split(s, sep)`, `join(list, sep)`.
 

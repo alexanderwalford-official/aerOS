@@ -191,7 +191,8 @@ the mouse copies to at the prompt, sys/clipboard.h) ·
 `PI` (3.14159...)
 
 **Text**
-`len(x)` · `str(x)` · `int("42")` (nil if it isn't a number) · `chr(65)` · `ord("A")` ·
+`len(x)` · `str(x)` · `int("42")` (nil if it isn't a number; read as a number in a program is,
+so `"0x1F"` is hex and `"08"` is 8) · `chr(65)` · `ord("A")` ·
 `sub(s, start, count)` · `find(s, part)` (-1 if missing) · `upper(s)` · `lower(s)` ·
 `split(s, sep)` (spaces if no separator) · `join(list, sep)`
 
