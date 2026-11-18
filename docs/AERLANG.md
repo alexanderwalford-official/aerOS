@@ -292,7 +292,10 @@ gives it back to the terminal, so a program drawing graphics calls `gopen()` aga
 `queue(line)` add a program to the queue the `GO` command runs, e.g. `queue("hello.aer a b")`
 or `queue("s:some text")`; returns how many are queued (-1 if the process stack is full) ·
 `sysinfo()` everything AerOS knows about the computer, as a list of `[group, name, value]`
-rows, e.g. `["Processor", "Speed", "about 2400 MHz"]` (`/bin/sysinfo.aer` shows them)
+rows, e.g. `["Processor", "Speed", "about 2400 MHz"]` (`/bin/sysinfo.aer` shows them) ·
+`disks()` the hard disks there are, as `[number, model, megabytes, what is on it]` ·
+`install(number)` erase that disk and install AerOS on it: only in demo mode, and only after
+AerOS has asked you itself (see [installing](INSTALLING.md))
 
 `args` is the list of words typed after the program's name.
 

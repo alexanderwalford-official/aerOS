@@ -82,6 +82,8 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("delf", bi_delete_file, 1, 1),
     BUILTIN("mkd", bi_make_folder, 1, 1),
     BUILTIN("deld", bi_delete_folder, 1, 1),
+    BUILTIN("disks", bi_disks, 0, 0),
+    BUILTIN("install", bi_install, 1, 1),
     BUILTIN("sync", bi_sync, 0, 0),
     BUILTIN("enc", bi_encrypt_file, 2, 2),
     BUILTIN("dec", bi_decrypt_file, 2, 2),
@@ -161,7 +163,7 @@ const int aer_builtin_count = sizeof(aer_builtins) / sizeof(aer_builtins[0]);
 // 14 names, so 16 leaves room for the NULL and one more
 static const struct {
     uint32_t part;
-    const char* names[24];   // ends with NULL
+    const char* names[28];   // ends with NULL
 } parts[] = {
     { APP_GRAPHICS, { "gopen", "gclose", "gw", "gh", "gclear", "rgb", "pixel", "rect", "line",
                       "text", "image", "imgsz", "gbuf", "gshow", NULL } },
@@ -169,7 +171,7 @@ static const struct {
     { APP_VIDEO,    { "video", NULL } },
     { APP_FILES,    { "rdf", "rdb", "wrf", "apf", "isf", "delf", "la", "cwd", "enc", "dec",
                       "isenc", "rdenc", "rdat", "wrat", "trunc", "dbopen", "dbrun", "dbquery",
-                      "dbclose", "sync", "mkd", "deld", NULL } },
+                      "dbclose", "sync", "mkd", "deld", "disks", "install", NULL } },
     { APP_NETWORK,  { "nsend", "nrecv", "httpget", "tcplisten", "tcpaccept", "tcpconnect",
                       "tcprecv", "tcpsend", "tcpclose", "tcpunlisten", NULL } },
 };
@@ -208,7 +210,7 @@ uint32_t aer_profile (const token_t* tokens, int count) {
 static const char* const front_only[] = {
     "input", "inpw", "key", "haskey", "keydown", "mouse", "mousemove", "mousedown",
     "cls", "color", "at", "progress", "spinner", "frame", "big", "clip", "setclip",
-    "logclear", "setlogging", "cmd", "queue", NULL
+    "logclear", "setlogging", "cmd", "queue", "install", NULL
 };
 
 // the first built-in a program's tokens name that only the program in front can use (see

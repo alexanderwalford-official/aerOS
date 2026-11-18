@@ -291,6 +291,11 @@ int cli_rend_main (void) {
     } else if (boot_option == BOOT_OPT_DEMO) {
         colour(YELLOW, BLACK);
         prtf("[ ! ] You are in DEMO mode, no disks are loaded and files will not be written.\n");
+        // demo mode is where AerOS is installed from (sys/install.h): say so, once there is an
+        // installer to run and a copy of AerOS to install (started from the CD, GRUB gives one)
+        if (boot_kernel_file != NULL && fs_file_exists("/bin/", "install.aer")) {
+            prtf("      Type INSTALL to put AerOS on a disk, to start it without the CD.\n");
+        }
     } else {
         colour(RED, BLACK);
         prtf("[ ! ] You are in VFS mode, your files will not be written.\n");

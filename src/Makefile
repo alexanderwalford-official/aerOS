@@ -27,11 +27,15 @@ BUILTIN_FILES = $(sort $(shell find disk -type f))
 # wildcards don't reach) and two big files that are only data (the logo and the font)
 HEADERS = $(wildcard *.h lib/*.h lib/shim/*.h sys/*.h sys/*/*.h drivers/*/*.h lang/*.h db/*.h)
 SOURCE_CODE = $(sort $(filter-out sys/splash_logo.c drivers/video/font8x16.c, \
-                $(SOURCES) $(HEADERS)) entry.asm linker.ld Makefile iso/boot/grub/grub.cfg)
+                $(SOURCES) $(HEADERS)) entry.asm linker.ld Makefile iso/boot/grub/grub.cfg install/grub.cfg)
 SOURCE_OBJECTS = $(patsubst %,obj/source/%.o,$(SOURCE_CODE)) obj/source_index.o
 
+# what the installer writes on a disk (sys/install.h): GRUB's boot sector and core image, made
+# below. (The disk's grub.cfg, install/grub.cfg, is built in already, as part of /src/)
+INSTALL_OBJECTS = obj/install/boot.img.o obj/install/core.img.o
+
 OBJECTS = obj/entry.o $(patsubst %.c,obj/%.o,$(SOURCES)) $(patsubst %,obj/%.o,$(BUILTIN_FILES)) \
-          obj/builtin_index.o $(SOURCE_OBJECTS)
+          obj/builtin_index.o $(SOURCE_OBJECTS) $(INSTALL_OBJECTS)
 
 QEMU = qemu-system-i386
 
@@ -136,6 +140,29 @@ obj/builtin_index.o: obj/builtin_index.c
 	$(CC) $(CFLAGS) -c '$<' -o '$@'
 
 FORCE:
+
+# ---- GRUB for the installer (sys/install.h) ----
+# GRUB's own files for BIOS PCs, which grub-mkrescue uses for the ISO too
+GRUB_PC = /usr/lib/grub/i386-pc
+# what the core image can do, built into it, as the disk has no /boot/grub/i386-pc/ to load more
+# from: read the BIOS's disks, MBR partitions and FAT, run grub.cfg (normal, configfile, test for
+# its "[ ]", loadenv, echo), start a multiboot kernel, and the screen modes all_video gives
+GRUB_MODULES = biosdisk part_msdos fat normal configfile test loadenv echo multiboot all_video
+
+# the core image: it looks for grub.cfg in /boot/grub/ on the first partition of the disk it
+# started from, "(,msdos1)", whichever disk the BIOS thinks that is
+obj/install/core.img: Makefile
+	@mkdir -p obj/install
+	grub-mkimage -O i386-pc -o '$@' -p '(,msdos1)/boot/grub' $(GRUB_MODULES)
+
+# the boot sector (512 bytes: sys/install.c takes its code, and adds the partition table)
+obj/install/boot.img: $(GRUB_PC)/boot.img
+	@mkdir -p obj/install
+	cp '$<' '$@'
+
+# each built in the way the files in disk/ are, giving _binary_obj_install_core_img_start / _end
+obj/install/%.img.o: obj/install/%.img
+	$(LD) -m elf_i386 -r -b binary -z noexecstack -o '$@' '$<'
 
 # the MP3 and MPEG decoders include <string.h> and <stdlib.h>: point those at AerOS's own
 # versions (lib/shim), for these two files only

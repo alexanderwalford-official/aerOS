@@ -48,7 +48,8 @@ are skipped rather than failed.
 | File | Tests |
 | --- | --- |
 | `test_basics.py` | booting, commands, files without a disk, "did you mean" |
-| `test_terminal.py` | usage messages, Tab completion, Page Up / Page Down, and the editor (save, run, quit) |
+| `test_terminal.py` | usage messages, Tab completion, Page Up / Page Down, the editor (save, run, quit), a line exactly as wide as the screen, and the big title moving up whole as the screen scrolls |
+| `test_install.py` | installing AerOS on a blank disk from demo mode (`disks()`, `install()`, saying no first) and then starting QEMU from that disk alone; the same from the real CD, picking demo mode in the boot options; and `install()` refusing outside demo mode. `AerOS(words=, module=, from_disk=)` give the kernel's command line, a module as GRUB gives one, and a start from the disk with its own GRUB ([installing](INSTALLING.md)) |
 | `test_aerlang.py` | the language (`files/langtest.aer` checks every statement and expression), and AerLang at the prompt |
 | `test_explain.py` | WHY, SRC, SHOW and the read-only `/src/` folder |
 | `test_processes.py` | RUN, and the queue: QUE, GO, Ctrl+C, `queue()` |

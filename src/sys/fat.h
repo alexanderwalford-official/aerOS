@@ -112,6 +112,12 @@ const char* fs_strerror (int error);
 // returns true if a volume was mounted (fat_vol is then filled in), false if none was found
 bool fat_mount_auto (char* status, size_t size);
 
+// Mount the AEROS volume on one drive (bus 0 / 1, slave 0 / 1), for the installer, and let it go
+// again (sys/install.c). FS_OK, FS_ERR_NOT_FOUND (no FAT volume), FS_ERR_BAD_NAME (not labelled
+// AEROS) or FS_ERR_IO. Only when no volume is mounted: there is only ever one
+int fat_mount_drive (int bus, int slave);
+void fat_unmount (void);
+
 // count the free clusters by reading the whole FAT (slow on big disks, used by the system info command)
 uint32_t fat_free_clusters (void);
 

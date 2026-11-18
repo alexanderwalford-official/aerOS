@@ -72,14 +72,18 @@ def free_port():
 class AerOS:
     """One running copy of AerOS in QEMU."""
 
-    def __init__(self, workdir, kernel=None, iso=None, disk=None, memory=256, network=None, sound=None):
+    def __init__(self, workdir, kernel=None, iso=None, disk=None, memory=256, network=None, sound=None,
+                 words='fast', module=None, from_disk=False):
         """Start QEMU. Give either kernel (main.elf: VGA text mode, the screen can be read) or iso
-        (main.iso: GRUB sets up graphics, read text with serial()). disk is a disk image to
-        attach (see make_disk), network a QEMU -nic setting. sound gives AerOS an AC'97 sound
-        card: a file name records everything it plays to that WAV file, True plays nowhere."""
+        (main.iso: GRUB sets up graphics, read text with serial()), or from_disk to start from
+        the disk alone, with its own GRUB (as an installed AerOS does: graphics too). disk is a
+        disk image to attach (see make_disk), network a QEMU -nic setting. sound gives AerOS an
+        AC'97 sound card: a file name records everything it plays to that WAV file, True plays
+        nowhere. words is the kernel's command line ("fast demo" boots in demo mode), and module
+        a file handed to it as GRUB hands it a module (the installer's copy of main.elf)."""
         self.workdir = workdir
         self.serial_path = os.path.join(workdir, 'serial.log')
-        self.graphics = iso is not None
+        self.graphics = iso is not None or from_disk
         self.answered = 0   # questions answered so far (see answer())
         port = free_port()
         args = [os.environ.get('QEMU', 'qemu-system-i386'), '-display', 'none', '-m', str(memory),
@@ -89,7 +93,15 @@ class AerOS:
         # boot log's pause (boot_has_word in src/sys/boot.c). GRUB has its own command line, so
         # the ISO boots as it always does. (-boot d: from the CD, even with a disk attached,
         # which QEMU would otherwise try first and find nothing to boot on)
-        args += ['-cdrom', iso, '-boot', 'd'] if iso else ['-kernel', kernel, '-append', 'fast']
+        if from_disk:
+            args += ['-boot', 'c']
+        elif iso:
+            args += ['-cdrom', iso, '-boot', 'd']
+        else:
+            args += ['-kernel', kernel, '-append', words]
+            if module:
+                # QEMU's own multiboot loader hands -initrd files to the kernel as modules
+                args += ['-initrd', module]
         # KVM runs AerOS on the real processor instead of QEMU imitating one, which is much
         # faster. It is there on most Linux computers (AEROS_TEST_KVM=0 turns it off)
         if os.access('/dev/kvm', os.R_OK | os.W_OK) and os.environ.get('AEROS_TEST_KVM') != '0':

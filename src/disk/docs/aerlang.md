@@ -134,6 +134,8 @@ The names are built like the terminal's commands: `rd` read, `wr` write, `ap` ap
 `play(path)`, `video(path)` (an .mpg, full screen: see [Video](video.md)), `logadd(message)`
 (adds to [AerOS's log](logs.md)), `logclear()` (clears it, after asking you),
 `setlogging(on)` and `islogging()` (turn it off or on, after asking), `exit()`.
+`disks()` lists the hard disks, and `install(number)` erases one and installs AerOS on it
+(only in demo mode, after asking you).
 `args` is the list of words typed after the program's name.
 `sysinfo()` gives everything AerOS knows about the computer as a list of
 `[group, name, value]`, e.g. `["Processor", "Speed", "about 2400 MHz"]`.

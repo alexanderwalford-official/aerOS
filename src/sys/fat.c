@@ -1857,6 +1857,21 @@ static int fat_mount (int bus, int slave) {
     return FS_OK;
 }
 
+// Mount the AEROS volume on one drive, for the installer (sys/install.c), which has just made it
+// there and writes AerOS's files on it. FS_OK, or why not, as fat_mount. It changes nothing else:
+// the terminal's files stay where they are (in memory, in demo mode)
+int fat_mount_drive (int bus, int slave) {
+    return fat_mount(bus, slave);
+}
+
+// let go of the mounted volume (after fat_mount_drive). Nothing is held back to write first:
+// every change went to the drive as it was made (the disk cache only works for the volume
+// fat_mount_auto mounts)
+void fat_unmount (void) {
+    memset(&fat_vol, 0, sizeof(fat_vol));
+    fat_cache_lba = FAT_NO_SECTOR;
+}
+
 // try the four IDE drive positions in order (primary master, primary slave, secondary master,
 // secondary slave) and keep the first AEROS volume. Only ATA hard disks are tried, CD drives
 // (ATAPI, where the boot ISO usually is) are skipped.

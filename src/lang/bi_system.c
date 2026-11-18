@@ -3,7 +3,8 @@
     AerLang's built-in functions for the system: waiting (sleep), the time, random numbers,
     what AerOS knows about the computer (sysinfo), queueing programs for GO (queue), running a
     terminal command from the prompt (cmd), what app mode did (appmode), adding to AerOS's log
-    (logadd), clearing it or turning it off after asking (logclear, setlogging, islogging) and
+    (logadd), clearing it or turning it off after asking (logclear, setlogging, islogging),
+    the disks there are and installing AerOS on one (disks, install: see sys/install.h) and
     ending the program (exit).
 
     Which built-ins need which part of AerOS, for app mode, is listed next to aer_profile in
@@ -28,6 +29,8 @@
 #include "../sys/thread.h"
 #include "../sys/f_sys.h"
 #include "../sys/accounts/auth.h"
+#include "../sys/install.h"
+#include "../sys/boot.h"
 #include "../lib/crypto.h"
 #include "../drivers/video/gfx.h"
 
@@ -289,6 +292,67 @@ value_t bi_islogging (int argc, value_t* argv, int line) {
     (void)argv;
     (void)line;
     return aer_bool(syslog_logging());
+}
+
+// disks(): the hard disks there are, to install AerOS on (sys/install.h): a list with one
+// [number, model, megabytes, what is on it] for each, e.g. [1, "QEMU HARDDISK", 64, "nothing"].
+// What is on it is "nothing" (a new disk), "AerOS" (an AEROS disk) or "files" (anything else).
+// It only reads them, so it works in any mode
+value_t bi_disks (int argc, value_t* argv, int line) {
+    (void)argc; (void)argv; (void)line;
+    install_disk_t disks[INSTALL_DISKS_MAX];
+    int count = install_list_disks(disks);
+    value_t list = aer_list((uint32_t)count);
+    for (int i = 0; i < count; i++) {
+        value_t disk = aer_list(4);
+        aer_list_push(disk.as.obj, aer_int(disks[i].number));
+        aer_list_push(disk.as.obj, aer_string(disks[i].model, (uint32_t)slen(disks[i].model)));
+        aer_list_push(disk.as.obj, aer_int((int32_t)disks[i].megabytes));
+        aer_list_push(disk.as.obj, aer_string(disks[i].holds, (uint32_t)slen(disks[i].holds)));
+        aer_list_push(list.as.obj, disk);
+    }
+    return list;
+}
+
+// install(number): erase disk `number` (from disks()) and install AerOS on it, saying how it goes.
+// Gives back true if it worked; false after saying why not. Only in demo mode, where no disk is
+// in use, and only after AerOS itself has asked the person at the keyboard (person_agrees, as
+// logclear does): a program can never erase a disk on its own
+value_t bi_install (int argc, value_t* argv, int line) {
+    (void)argc;
+    int32_t number = int_arg(argv, 0, line, "install");
+    if (boot_option != BOOT_OPT_DEMO) {
+        prtf("[ ! ] AerOS can only be installed from demo mode (3 in the boot options), where no disk is in use.\n");
+        return aer_bool(false);
+    }
+    // the disk, so the question can say which one it is
+    install_disk_t disks[INSTALL_DISKS_MAX];
+    int count = install_list_disks(disks);
+    const install_disk_t* disk = NULL;
+    for (int i = 0; i < count; i++) {
+        if (disks[i].number == number) {
+            disk = &disks[i];
+        }
+    }
+    if (disk == NULL) {
+        prtf("[ ! ] There is no hard disk %d (disks() lists them).\n", (int)number);
+        return aer_bool(false);
+    }
+    char detail[96];
+    sfmt(detail, sizeof(detail), " %d (%s, %u MB) and install AerOS", disk->number, disk->model,
+         (unsigned int)disk->megabytes);
+    char with[FS_NAME_MAX];
+    if (!person_agrees(line, "install", "erase EVERYTHING on disk", detail, with, sizeof(with))) {
+        prtf("Nothing was changed.\n");
+        return aer_bool(false);
+    }
+    const char* problem = install_to_disk((int)number);
+    if (problem != NULL) {
+        prtf("\n[ ! ] %s\n", problem);
+        return aer_bool(false);
+    }
+    syslog_add("boot", "install", "AerOS was installed on disk %d (%s) with %s", disk->number, disk->model, with);
+    return aer_bool(true);
 }
 
 // exit(): end the program here, quietly
