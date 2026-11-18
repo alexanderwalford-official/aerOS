@@ -1,0 +1,1374 @@
+# desktop: a desktop for aerOS, with windows, a taskbar and a start menu
+#
+#     pkg install desktop      once, to get it
+#     desktop                  start it (Esc closes the front window, then leaves)
+#
+# What is on it:
+#     Clock        the time on a clock face, the date, and this month's calendar
+#     Files        the folders and files, from the one you started it in: click to open
+#     Viewer       a text file, opened from Files
+#     Notes        a notepad, saved as notes.txt in the folder you started it in
+#     Calculator   + - * / with decimals
+#     System       what aerOS knows about the computer (the same as sysinfo)
+#     About        what this is
+#
+# The mouse: click an icon or the start button (bottom left) to open something, drag a window
+# by its title bar, and click its buttons to shrink it to the taskbar (_) or close it (x).
+# Without a mouse: Tab opens the start menu, the arrows choose, Enter opens. The arrows move
+# the pointer too, and Enter clicks, so everything can be reached from the keyboard.
+#
+# How it works: everything on the screen is drawn again, back to front (the wallpaper, the
+# icons, each window, the taskbar, the menu, then the pointer), into the back buffer (gbuf),
+# and shown at once (gshow), so nothing flickers. It is only drawn again when something has
+# changed: the mouse moved, a key was pressed, or the clock ticked.
+#
+# The windows are lists: windows holds them back to front, so the last one is in front. Each
+# is [kind, title, x, y, w, h, shrunk, scroll, data], and W_KIND... below say which is which.
+
+
+# ---- what the screen looks like -------------------------------------------------------------
+
+let SKY_TOP = 0x1B3A5C           # the wallpaper, from the top...
+let SKY_BOTTOM = 0x3E7CB1        # ...to the bottom
+let TASKBAR = 0x1E1E24
+let TASKBAR_LIGHT = 0x34343E
+let ACCENT = 0xFF7F00            # aerOS orange
+let TITLE_ON = 0x2B5D8C          # the front window's title bar
+let TITLE_OFF = 0x5A6470         # the others'
+let BODY = 0xF2F2EE              # inside a window
+let INK = 0x1D1D1B               # text inside a window
+let FAINT = 0x8A8A84             # quieter text
+let SELECT = 0xCFE3F7            # a chosen row
+let WHITE_INK = 0xFFFFFF
+let SHADOW = 0x0E1A28
+
+let TASKBAR_H = 34               # pixels
+let TITLE_H = 24
+let BUTTON = 18                  # the _ and x buttons
+let ROW = 18                     # one row of text in a list
+let CHAR_W = 8                   # text(..., 1) is 8 x 16 pixels a character
+
+# the parts of a window (see the top of this file)
+let W_KIND = 0
+let W_TITLE = 1
+let W_X = 2
+let W_Y = 3
+let W_W = 4
+let W_H = 5
+let W_SHRUNK = 6
+let W_SCROLL = 7
+let W_DATA = 8
+
+# the apps, as [kind, name], in the order the icons and the menu show them
+let APPS = [["clock", "Clock"], ["files", "Files"], ["notes", "Notes"], ["calc", "Calculator"],
+            ["system", "System"], ["about", "About"]]
+
+let MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
+              "September", "October", "November", "December"]
+let DAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+
+
+# ---- what is going on -----------------------------------------------------------------------
+
+let SW = 0                       # the screen's size, once it is open
+let SH = 0
+let windows = []
+let running = true
+let menu_open = false
+let menu_choice = 0              # the menu entry the keyboard is on
+let dragging = nil               # the window being dragged by its title bar, or nil
+let drag_dx = 0                  # where in the title bar it was taken hold of
+let drag_dy = 0
+let pointer_x = 0
+let pointer_y = 0
+let has_mouse = true
+let buttons_before = 0           # the mouse buttons held last time round
+let mouse_x_before = -1          # where the mouse was last time round: the pointer only follows
+let mouse_y_before = -1          # it when it moves, so the arrow keys can move the pointer too
+let opened = 0                   # windows opened so far, to place each new one a little further on
+
+# the clock: sysinfo() has the computer's clock as "DD-MM-YY--HH:MM:SS". It is slow to ask
+# (it looks at every disk), so it is read once, and time() counts on from there
+let clock_known = false
+let clock_seconds = 0            # the time of day it said, in seconds
+let clock_read_at = 0            # time() when it was read
+let day = 1
+let month = 1
+let year = 2026
+
+# what System shows, kept from the same sysinfo()
+let system_rows = []
+
+# Notes: what has been typed, kept while its window is closed too
+let NOTES_FILE = ""
+let notes_text = ""
+let notes_loaded = false
+let notes_changed = false        # typed into since it was last saved
+let notes_message = ""
+
+
+# ---- small helpers --------------------------------------------------------------------------
+
+func inside(x, y, rx, ry, rw, rh)
+    # is the point x, y inside the rectangle?
+    return x >= rx and x < rx + rw and y >= ry and y < ry + rh
+end
+
+func fit(s, columns)
+    # s cut to fit in this many characters
+    if columns <= 0 then
+        return ""
+    end
+    if len(s) > columns then
+        return sub(s, 0, columns)
+    end
+    return s
+end
+
+func whole(s)
+    # text as a whole number, with any 0s in front taken off first: the clock says "08", and
+    # before aerOS 0.01's int() was fixed it read a number starting with 0 as octal (base 8),
+    # so int("08") was nil. This keeps the desktop working on an aerOS from before that
+    while len(s) > 1 and sub(s, 0, 1) == "0" do
+        s = sub(s, 1, len(s) - 1)
+    end
+    return int(s)
+end
+
+func two(n)
+    # a number with a 0 in front if it is only one digit: 7 -> "07"
+    if n < 10 then
+        return "0" + n
+    end
+    return str(n)
+end
+
+func blend(top, bottom, n, total)
+    # the colour n / total of the way from top to bottom (each of red, green, blue in turn)
+    let r = (top / 65536) % 256
+    let g = (top / 256) % 256
+    let b = top % 256
+    let r2 = (bottom / 65536) % 256
+    let g2 = (bottom / 256) % 256
+    let b2 = bottom % 256
+    return rgb(r + (r2 - r) * n / total, g + (g2 - g) * n / total, b + (b2 - b) * n / total)
+end
+
+func wrap(s, columns)
+    # the text as lines no longer than columns, breaking long ones at the last space that fits
+    # (or at the column, for a word longer than a whole line)
+    let lines = []
+    if columns < 1 then
+        columns = 1
+    end
+    for part in split(s, chr(10)) do
+        # a line from Windows ends in a carriage return as well: leave it off
+        if len(part) > 0 and sub(part, len(part) - 1, 1) == chr(13) then
+            part = sub(part, 0, len(part) - 1)
+        end
+        if len(part) == 0 then
+            push(lines, "")
+        end
+        while len(part) > columns do
+            # the last space in the part that fits (searching back from the column)
+            let cut = columns
+            while cut > 0 and sub(part, cut, 1) != " " do
+                cut = cut - 1
+            end
+            if cut == 0 then
+                cut = columns   # one long word: break it at the column
+            end
+            push(lines, sub(part, 0, cut))
+            # the next line starts after the space it broke at
+            if sub(part, cut, 1) == " " then
+                cut = cut + 1
+            end
+            part = sub(part, cut, len(part) - cut)
+        end
+        if len(part) > 0 then
+            push(lines, part)
+        end
+    end
+    return lines
+end
+
+
+# ---- the clock ------------------------------------------------------------------------------
+
+func read_clock()
+    # read the computer's clock and the system rows from sysinfo(), once (see "the clock" above)
+    system_rows = sysinfo()
+    for row in system_rows do
+        if row[1] == "Clock" then
+            # "18-11-26--18:39:50": the date, then the time
+            let parts = split(row[2], "--")
+            if len(parts) == 2 then
+                let date = split(parts[0], "-")
+                let hms = split(parts[1], ":")
+                if len(date) == 3 and len(hms) == 3 then
+                    day = whole(date[0])
+                    month = whole(date[1])
+                    year = 2000 + whole(date[2])
+                    clock_seconds = whole(hms[0]) * 3600 + whole(hms[1]) * 60 + whole(hms[2])
+                    clock_read_at = time()
+                    clock_known = true
+                end
+            end
+        end
+    end
+end
+
+func now_seconds()
+    # the time of day now, in seconds since midnight. After midnight the clock is read again,
+    # for the new date
+    let seconds = clock_seconds + (time() - clock_read_at) / 1000
+    if seconds >= 86400 and clock_known then
+        read_clock()
+        seconds = clock_seconds
+    end
+    return seconds % 86400
+end
+
+func time_text(with_seconds)
+    # the time now as "18:39", or "18:39:50"
+    if not clock_known then
+        return "--:--"
+    end
+    let s = now_seconds()
+    let shown = two(s / 3600) + ":" + two(s / 60 % 60)
+    if with_seconds then
+        shown = shown + ":" + two(s % 60)
+    end
+    return shown
+end
+
+func days_in(m, y)
+    # how many days month m (1 to 12) of year y has
+    if m == 2 then
+        if (y % 4 == 0 and y % 100 != 0) or y % 400 == 0 then
+            return 29
+        end
+        return 28
+    end
+    if m == 4 or m == 6 or m == 9 or m == 11 then
+        return 30
+    end
+    return 31
+end
+
+func weekday(d, m, y)
+    # the day of the week of a date, 0 Monday to 6 Sunday (Zeller's rule: January and February
+    # count as months 13 and 14 of the year before)
+    if m < 3 then
+        m = m + 12
+        y = y - 1
+    end
+    let h = (d + (13 * (m + 1)) / 5 + y + y / 4 - y / 100 + y / 400) % 7
+    # h is 0 for Saturday: turn it round to 0 for Monday
+    return (h + 5) % 7
+end
+
+
+# ---- the windows ----------------------------------------------------------------------------
+
+func front()
+    # the window in front, or nil if there are none (shrunk ones aren't in front)
+    let i = len(windows) - 1
+    while i >= 0 do
+        if not windows[i][W_SHRUNK] then
+            return windows[i]
+        end
+        i = i - 1
+    end
+    return nil
+end
+
+func to_front(win)
+    # move a window to the front (the end of the list), showing it if it was shrunk
+    let i = 0
+    while i < len(windows) do
+        if windows[i] == win then
+            remove(windows, i)
+        else
+            i = i + 1
+        end
+    end
+    win[W_SHRUNK] = false
+    push(windows, win)
+end
+
+func close(win)
+    # take a window away. Notes saves what was typed first, so closing it never loses anything
+    if win[W_KIND] == "notes" and notes_changed then
+        save_notes()
+    end
+    let i = 0
+    while i < len(windows) do
+        if windows[i] == win then
+            remove(windows, i)
+        else
+            i = i + 1
+        end
+    end
+    if dragging == win then
+        dragging = nil
+    end
+end
+
+func find_window(kind)
+    # the open window of this kind, or nil
+    for win in windows do
+        if win[W_KIND] == kind then
+            return win
+        end
+    end
+    return nil
+end
+
+func open(kind, title, w, h, data)
+    # open a new window, a little further on from the last one, in front
+    let x = 150 + (opened % 8) * 34
+    let y = 30 + (opened % 8) * 28
+    opened = opened + 1
+    # keep it on the screen
+    if x + w > SW then
+        x = SW - w - 10
+    end
+    if y + h > SH - TASKBAR_H then
+        y = SH - TASKBAR_H - h - 10
+    end
+    if x < 0 then
+        x = 0
+    end
+    if y < 0 then
+        y = 0
+    end
+    let win = [kind, title, x, y, w, h, false, 0, data]
+    push(windows, win)
+    return win
+end
+
+func start_app(kind)
+    # open an app's window, or bring it to the front if it is open already
+    let have = find_window(kind)
+    if have != nil then
+        to_front(have)
+        return
+    end
+    if kind == "clock" then
+        open("clock", "Clock", 460, 330, [])
+    elif kind == "files" then
+        # [the folder, what is in it, the row chosen with the keyboard]
+        open("files", "Files", 420, 400, [cwd(), list_folder(cwd()), 0])
+    elif kind == "notes" then
+        load_notes()
+        open("notes", "Notes - " + NOTES_FILE, 460, 340, [])
+    elif kind == "calc" then
+        # [what the display shows, the number before the operator, the operator, start afresh?]
+        open("calc", "Calculator", 232, 300, ["0", nil, "", true])
+    elif kind == "system" then
+        # read it again, so it is as things are now (and the clock with it)
+        read_clock()
+        open("system", "System", 520, 400, [])
+    elif kind == "about" then
+        open("about", "About", 380, 230, [])
+    end
+end
+
+
+# ---- Files and the viewer -------------------------------------------------------------------
+
+func list_folder(folder)
+    # what is in a folder, folders first (they end in "/"), with "../" to go up unless it is "/".
+    # nil if it can't be read (aerOS asks first, for a folder that isn't its own: a no is nil)
+    let names = la(folder)
+    if names == nil then
+        return nil
+    end
+    let folders = []
+    let files = []
+    if folder != "/" then
+        push(folders, "../")
+    end
+    for name in names do
+        if sub(name, len(name) - 1, 1) == "/" then
+            push(folders, name)
+        else
+            push(files, name)
+        end
+    end
+    return folders + files
+end
+
+func parent(folder)
+    # the folder a folder is in: "/home/alex/" -> "/home/"
+    let parts = split(folder, "/")
+    let up = "/"
+    # the parts are "", "home", "alex", "" for "/home/alex/": all but the last name
+    for i = 1 to len(parts) - 3 do
+        up = up + parts[i] + "/"
+    end
+    return up
+end
+
+func open_entry(win, name)
+    # a row of Files was clicked: go into a folder, or open a file in a viewer
+    let folder = win[W_DATA][0]
+    if name == "../" then
+        let up = parent(folder)
+        let names = list_folder(up)
+        if names != nil then
+            win[W_DATA] = [up, names, 0]
+            win[W_SCROLL] = 0
+        end
+    elif sub(name, len(name) - 1, 1) == "/" then
+        let names = list_folder(folder + name)
+        if names != nil then
+            win[W_DATA] = [folder + name, names, 0]
+            win[W_SCROLL] = 0
+        end
+    else
+        open_viewer(folder + name)
+    end
+end
+
+func open_viewer(path)
+    # a viewer window for one file's text
+    let contents = rdf(path)
+    let lines = []
+    if contents == nil then
+        lines = ["(this file couldn't be read)"]
+    else
+        lines = wrap(contents, (560 - 28) / CHAR_W)
+    end
+    open("view", path, 560, 420, lines)
+end
+
+
+# ---- Notes ----------------------------------------------------------------------------------
+
+func load_notes()
+    # read notes.txt the first time Notes is opened (there may not be one yet)
+    if notes_loaded then
+        return
+    end
+    notes_loaded = true
+    let saved = rdf(NOTES_FILE)
+    if saved != nil then
+        notes_text = saved
+    end
+end
+
+func save_notes()
+    # write what has been typed to notes.txt (aerOS asks first, the first time)
+    if wrf(NOTES_FILE, notes_text) then
+        notes_message = "Saved at " + time_text(false)
+        notes_changed = false
+    else
+        notes_message = "Couldn't save it"
+    end
+end
+
+func notes_key(k)
+    # a key typed into Notes
+    if k == KEY_BACKSPACE then
+        if len(notes_text) > 0 then
+            notes_text = sub(notes_text, 0, len(notes_text) - 1)
+        end
+    elif k == KEY_ENTER then
+        notes_text = notes_text + chr(10)
+    elif k == KEY_TAB then
+        notes_text = notes_text + "    "
+    elif k >= 32 and k < 127 then
+        notes_text = notes_text + chr(k)
+    end
+    notes_message = ""
+    notes_changed = true
+end
+
+
+# ---- the calculator -------------------------------------------------------------------------
+
+let CALC_KEYS = [["7", "8", "9", "/"], ["4", "5", "6", "*"], ["1", "2", "3", "-"],
+                 ["0", ".", "=", "+"], ["C"]]
+
+func number_of(s)
+    # the display's text as a number: whole, or decimal if it has a point
+    if find(s, ".") >= 0 then
+        return float(s)
+    end
+    return int(s)
+end
+
+func work_out(a, op, b)
+    # a op b, or nil if it can't be done (dividing by 0)
+    if op == "+" then
+        return a + b
+    elif op == "-" then
+        return a - b
+    elif op == "*" then
+        return a * b
+    elif op == "/" then
+        if b == 0 then
+            return nil
+        end
+        # a whole answer stays whole only if it really is: 7 / 2 is 3.5 here
+        return float(a) / b
+    end
+    return b
+end
+
+func calc_press(win, label)
+    # one of the calculator's keys
+    let state = win[W_DATA]
+    let shown = state[0]
+    if label == "C" then
+        win[W_DATA] = ["0", nil, "", true]
+    elif label == "." then
+        if state[3] then
+            shown = "0."
+        elif find(shown, ".") < 0 then
+            shown = shown + "."
+        end
+        win[W_DATA] = [shown, state[1], state[2], false]
+    elif find("0123456789", label) >= 0 then
+        if state[3] or shown == "0" then
+            shown = label
+        elif len(shown) < 16 then
+            shown = shown + label
+        end
+        win[W_DATA] = [shown, state[1], state[2], false]
+    else
+        # + - * / or =: finish the sum waiting, if there is one
+        let value = number_of(shown)
+        if value == nil then
+            value = 0
+        end
+        if state[1] != nil and state[2] != "" and not state[3] then
+            value = work_out(state[1], state[2], value)
+        end
+        if value == nil then
+            win[W_DATA] = ["can't divide by 0", nil, "", true]
+            return
+        end
+        if label == "=" then
+            win[W_DATA] = [str(value), nil, "", true]
+        else
+            win[W_DATA] = [str(value), value, label, true]
+        end
+    end
+end
+
+func calc_key(win, k)
+    # a key typed while the calculator is in front: the same as clicking its key
+    if k == KEY_ENTER then
+        calc_press(win, "=")
+    elif k == KEY_BACKSPACE then
+        calc_press(win, "C")
+    elif k > 0 and k < 127 then
+        let label = chr(k)
+        if find("0123456789.+-*/=", label) >= 0 then
+            calc_press(win, label)
+        elif label == "c" or label == "C" then
+            calc_press(win, "C")
+        end
+    end
+end
+
+
+# ---- drawing --------------------------------------------------------------------------------
+
+func draw_wallpaper()
+    # the sky, darker at the top, in bands
+    let bands = 24
+    let band = (SH - TASKBAR_H) / bands + 1
+    for i = 0 to bands - 1 do
+        rect(0, i * band, SW, band, blend(SKY_TOP, SKY_BOTTOM, i, bands - 1))
+    end
+    # the name, quietly, in the corner
+    text(SW - 150, SH - TASKBAR_H - 40, "aerOS", 0x5D8FBF, 3)
+end
+
+func draw_icon(kind, x, y)
+    # a small picture for each app, 48 x 40, drawn with rectangles and lines
+    if kind == "clock" then
+        rect(x + 8, y, 32, 32, 0xEDEDED)
+        rect(x + 10, y + 2, 28, 28, 0xFFFFFF)
+        line(x + 24, y + 16, x + 24, y + 6, INK)
+        line(x + 24, y + 16, x + 32, y + 16, ACCENT)
+    elif kind == "files" then
+        rect(x + 4, y + 4, 18, 6, 0xE8B04A)
+        rect(x + 4, y + 8, 40, 26, 0xF2C25C)
+    elif kind == "notes" then
+        rect(x + 10, y, 28, 34, 0xFFF6B3)
+        for i = 0 to 3 do
+            rect(x + 14, y + 8 + i * 6, 20, 2, 0xB7AE6A)
+        end
+    elif kind == "calc" then
+        rect(x + 10, y, 28, 34, 0x444A55)
+        rect(x + 13, y + 3, 22, 8, 0xBFE6C0)
+        for i = 0 to 2 do
+            for j = 0 to 2 do
+                rect(x + 13 + j * 8, y + 14 + i * 6, 6, 4, 0xDDDDDD)
+            end
+        end
+    elif kind == "system" then
+        rect(x + 4, y + 2, 40, 26, 0x2A2F38)
+        rect(x + 7, y + 5, 34, 20, 0x4DA3FF)
+        rect(x + 18, y + 28, 12, 4, 0x2A2F38)
+        rect(x + 12, y + 32, 24, 3, 0x2A2F38)
+    elif kind == "about" then
+        rect(x + 8, y, 32, 32, ACCENT)
+        text(x + 20, y + 8, "i", WHITE_INK, 1)
+    end
+end
+
+func icon_at(i)
+    # where icon i is: [x, y] of its top left
+    return [26, 24 + i * 78]
+end
+
+func draw_icons()
+    # the apps down the left of the desktop, each with its name under it
+    for i = 0 to len(APPS) - 1 do
+        let spot = icon_at(i)
+        draw_icon(APPS[i][0], spot[0], spot[1])
+        let name = APPS[i][1]
+        text(spot[0] + 24 - len(name) * 4, spot[1] + 42, name, WHITE_INK, 1)
+    end
+end
+
+func draw_window(win, is_front)
+    # one window: its shadow, title bar and buttons, then what is in it
+    let x = win[W_X]
+    let y = win[W_Y]
+    let w = win[W_W]
+    let h = win[W_H]
+    rect(x + 5, y + 5, w, h, SHADOW)
+    rect(x - 1, y - 1, w + 2, h + 2, 0x101014)
+    let bar = TITLE_OFF
+    if is_front then
+        bar = TITLE_ON
+    end
+    rect(x, y, w, TITLE_H, bar)
+    text(x + 8, y + 4, fit(win[W_TITLE], (w - 60) / CHAR_W), WHITE_INK, 1)
+    # _ shrinks it to the taskbar, x closes it
+    rect(x + w - 2 * BUTTON - 6, y + 3, BUTTON, BUTTON, 0x6F7C8A)
+    text(x + w - 2 * BUTTON - 2, y + 4, "_", WHITE_INK, 1)
+    rect(x + w - BUTTON - 3, y + 3, BUTTON, BUTTON, 0xC0392B)
+    text(x + w - BUTTON + 2, y + 4, "x", WHITE_INK, 1)
+    rect(x, y + TITLE_H, w, h - TITLE_H, BODY)
+    draw_content(win, x, y + TITLE_H, w, h - TITLE_H)
+end
+
+func draw_content(win, x, y, w, h)
+    # what is inside a window, by its kind
+    let kind = win[W_KIND]
+    if kind == "clock" then
+        draw_clock(x, y, w, h)
+    elif kind == "files" then
+        draw_files(win, x, y, w, h)
+    elif kind == "view" then
+        draw_lines(win[W_DATA], win[W_SCROLL], x, y, w, h)
+    elif kind == "notes" then
+        draw_notes(x, y, w, h)
+    elif kind == "calc" then
+        draw_calc(win, x, y, w, h)
+    elif kind == "system" then
+        draw_system(win, x, y, w, h)
+    elif kind == "about" then
+        draw_about(x, y)
+    end
+end
+
+func rows_fit(h)
+    # how many list rows fit in a window's inside, h pixels tall
+    return (h - 12) / ROW
+end
+
+func draw_scrollbar(first, shown, total, x, y, h)
+    # a thin bar down the right edge, showing which part of a long list is in view
+    if total <= shown then
+        return
+    end
+    rect(x, y + 4, 6, h - 8, 0xDDDDD8)
+    let top = (h - 8) * first / total
+    let size = (h - 8) * shown / total
+    if size < 10 then
+        size = 10
+    end
+    rect(x, y + 4 + top, 6, size, 0x9AA3AD)
+end
+
+func draw_lines(lines, first, x, y, w, h)
+    # lines of text, from line `first`, as many as fit
+    let shown = rows_fit(h)
+    let columns = (w - 28) / CHAR_W
+    for i = 0 to shown - 1 do
+        let n = first + i
+        if n < len(lines) then
+            text(x + 10, y + 6 + i * ROW, fit(lines[n], columns), INK, 1)
+        end
+    end
+    draw_scrollbar(first, shown, len(lines), x + w - 10, y, h)
+end
+
+func draw_files(win, x, y, w, h)
+    # the folder's name, then a row for each thing in it
+    let folder = win[W_DATA][0]
+    let names = win[W_DATA][1]
+    rect(x, y, w, ROW + 6, 0xE4E4DE)
+    text(x + 10, y + 4, fit(folder, (w - 20) / CHAR_W), FAINT, 1)
+    if names == nil then
+        text(x + 10, y + ROW + 12, "This folder can't be read.", INK, 1)
+        return
+    end
+    let top = y + ROW + 6
+    let shown = rows_fit(h - ROW - 6)
+    for i = 0 to shown - 1 do
+        let n = win[W_SCROLL] + i
+        if n < len(names) then
+            let name = names[n]
+            let row_y = top + 6 + i * ROW
+            let hovered = inside(pointer_x, pointer_y, x, row_y - 1, w - 12, ROW) and win == front()
+            if hovered or (n == win[W_DATA][2] and win == front()) then
+                rect(x + 4, row_y - 1, w - 18, ROW, SELECT)
+            end
+            # a folder gets a little yellow tab, a file a white page
+            if sub(name, len(name) - 1, 1) == "/" then
+                rect(x + 10, row_y + 2, 14, 11, 0xF2C25C)
+            else
+                rect(x + 12, row_y + 1, 10, 13, 0xFFFFFF)
+                rect(x + 12, row_y + 1, 10, 1, FAINT)
+            end
+            text(x + 32, row_y, fit(name, (w - 50) / CHAR_W), INK, 1)
+        end
+    end
+    draw_scrollbar(win[W_SCROLL], shown, len(names), x + w - 10, top, h - ROW - 6)
+end
+
+func draw_clock(x, y, w, h)
+    # the clock face on the left, the time, the date and the month on the right
+    let cx = x + 120
+    let cy = y + h / 2
+    let radius = 96
+    # the face: a ring of short lines, longer every 5 minutes
+    for i = 0 to 59 do
+        let angle = i * PI / 30
+        let inner = radius - 6
+        if i % 5 == 0 then
+            inner = radius - 14
+        end
+        line(cx + floor(sin(angle) * inner), cy - floor(cos(angle) * inner),
+             cx + floor(sin(angle) * radius), cy - floor(cos(angle) * radius), INK)
+    end
+    if not clock_known then
+        text(x + 250, y + 30, "No clock found", INK, 1)
+        return
+    end
+    let s = now_seconds()
+    # the hands, from the centre: hours (short), minutes, seconds (thin, orange)
+    hand(cx, cy, (s % 43200) * 2 * PI / 43200, 52, INK, 3)
+    hand(cx, cy, (s % 3600) * 2 * PI / 3600, 78, INK, 2)
+    hand(cx, cy, (s % 60) * 2 * PI / 60, 86, ACCENT, 1)
+    rect(cx - 3, cy - 3, 7, 7, ACCENT)
+
+    # the time and the date
+    text(x + 250, y + 14, time_text(true), INK, 2)
+    text(x + 250, y + 50, str(day) + " " + MONTHS[month - 1] + " " + year, FAINT, 1)
+
+    # this month: a row of day names, then the weeks, today in orange
+    let gx = x + 250
+    let gy = y + 84
+    for i = 0 to 6 do
+        text(gx + i * 28, gy, DAYS[i], FAINT, 1)
+    end
+    let first = weekday(1, month, year)
+    for d = 1 to days_in(month, year) do
+        let place = first + d - 1
+        let dx = gx + (place % 7) * 28
+        let dy = gy + 22 + (place / 7) * 20
+        if d == day then
+            rect(dx - 3, dy - 1, 24, 18, ACCENT)
+            text(dx, dy, two(d), WHITE_INK, 1)
+        else
+            text(dx, dy, two(d), INK, 1)
+        end
+    end
+end
+
+func hand(cx, cy, angle, length, colour, thickness)
+    # one of the clock's hands: a line from the centre, drawn `thickness` times side by side
+    let ex = cx + floor(sin(angle) * length)
+    let ey = cy - floor(cos(angle) * length)
+    for t = 0 to thickness - 1 do
+        line(cx + t, cy, ex + t, ey, colour)
+        line(cx, cy + t, ex, ey + t, colour)
+    end
+end
+
+func draw_notes(x, y, w, h)
+    # what has been typed, the last part of it if it doesn't all fit, and the Save button
+    rect(x, y, w, ROW + 10, 0xE4E4DE)
+    rect(x + 8, y + 4, 60, ROW, TITLE_ON)
+    text(x + 18, y + 5, "Save", WHITE_INK, 1)
+    text(x + 80, y + 5, notes_message, FAINT, 1)
+    let lines = wrap(notes_text, (w - 28) / CHAR_W)
+    let shown = rows_fit(h - ROW - 10)
+    let first = len(lines) - shown
+    if first < 0 then
+        first = 0
+    end
+    draw_lines(lines, first, x, y + ROW + 10, w, h - ROW - 10)
+    # the cursor: after the last character
+    let last = len(lines) - 1
+    let cursor_row = last - first
+    let cursor_x = x + 10 + len(lines[last]) * CHAR_W
+    if time() / 500 % 2 == 0 then
+        rect(cursor_x, y + ROW + 16 + cursor_row * ROW, 2, 15, INK)
+    end
+end
+
+func draw_calc(win, x, y, w, h)
+    # the display, and the keys in a grid
+    rect(x + 10, y + 10, w - 20, 40, 0x2A2F38)
+    let shown = win[W_DATA][0]
+    text(x + w - 18 - len(shown) * 2 * CHAR_W, y + 18, shown, 0xBFE6C0, 2)
+    for r = 0 to len(CALC_KEYS) - 1 do
+        let keys = CALC_KEYS[r]
+        for c = 0 to len(keys) - 1 do
+            let kx = x + 10 + c * 53
+            let ky = y + 60 + r * 42
+            let kw = 48
+            if len(keys) == 1 then
+                kw = w - 20     # C is the whole row
+            end
+            let colour = 0xDCDCD6
+            if find("/*-+=", keys[c]) >= 0 then
+                colour = 0xF3C27A
+            end
+            if inside(pointer_x, pointer_y, kx, ky, kw, 36) then
+                colour = 0xFFFFFF
+            end
+            rect(kx, ky, kw, 36, colour)
+            text(kx + kw / 2 - 8, ky + 10, keys[c], INK, 2)
+        end
+    end
+end
+
+func calc_key_at(win, px, py)
+    # the calculator key under px, py, or nil
+    let x = win[W_X]
+    let y = win[W_Y] + TITLE_H
+    let w = win[W_W]
+    for r = 0 to len(CALC_KEYS) - 1 do
+        let keys = CALC_KEYS[r]
+        for c = 0 to len(keys) - 1 do
+            let kw = 48
+            if len(keys) == 1 then
+                kw = w - 20
+            end
+            if inside(px, py, x + 10 + c * 53, y + 60 + r * 42, kw, 36) then
+                return keys[c]
+            end
+        end
+    end
+    return nil
+end
+
+func draw_system(win, x, y, w, h)
+    # sysinfo()'s rows: each group's name, then its rows
+    let lines = []
+    let group = ""
+    for row in system_rows do
+        if row[0] != group then
+            group = row[0]
+            if len(lines) > 0 then
+                push(lines, "")
+            end
+            push(lines, "[ " + group + " ]")
+        end
+        push(lines, "  " + row[1] + ": " + row[2])
+    end
+    draw_lines(lines, win[W_SCROLL], x, y, w, h)
+end
+
+func draw_about(x, y)
+    # who and what
+    text(x + 20, y + 16, "aerOS desktop", ACCENT, 2)
+    text(x + 20, y + 56, "A desktop with windows, written in AerLang.", INK, 1)
+    text(x + 20, y + 76, "It is a package: pkg install desktop", INK, 1)
+    text(x + 20, y + 106, "Drag a window by its title bar.", FAINT, 1)
+    text(x + 20, y + 124, "Tab opens the menu, Esc closes the front window.", FAINT, 1)
+    text(x + 20, y + 142, "Read it: /apps/desktop.aer", FAINT, 1)
+end
+
+func button_width()
+    # how wide each window's taskbar button is: 150 pixels apart, or closer with many windows,
+    # so they all fit between the start button and the clock
+    let room = SW - 100 - 80
+    if len(windows) > 0 and room / len(windows) < 150 then
+        return room / len(windows)
+    end
+    return 150
+end
+
+func draw_taskbar()
+    # the start button, a button for each window, and the clock
+    rect(0, SH - TASKBAR_H, SW, TASKBAR_H, TASKBAR)
+    rect(0, SH - TASKBAR_H, SW, 1, TASKBAR_LIGHT)
+    let start_colour = ACCENT
+    if menu_open then
+        start_colour = 0xFFA040
+    end
+    rect(6, SH - TASKBAR_H + 5, 84, TASKBAR_H - 10, start_colour)
+    text(20, SH - TASKBAR_H + 9, "aerOS", WHITE_INK, 1)
+    let top = front()
+    for i = 0 to len(windows) - 1 do
+        let win = windows[i]
+        let bx = 100 + i * button_width()
+        let colour = TASKBAR_LIGHT
+        if win == top then
+            colour = TITLE_ON
+        end
+        rect(bx, SH - TASKBAR_H + 5, button_width() - 6, TASKBAR_H - 10, colour)
+        text(bx + 8, SH - TASKBAR_H + 9, fit(win[W_TITLE], (button_width() - 22) / CHAR_W), WHITE_INK, 1)
+    end
+    text(SW - 60, SH - TASKBAR_H + 9, time_text(false), WHITE_INK, 1)
+end
+
+func menu_entries()
+    # what the start menu has: the apps, then leaving
+    let entries = []
+    for app in APPS do
+        push(entries, app[1])
+    end
+    push(entries, "Exit desktop")
+    return entries
+end
+
+func menu_top()
+    # the menu's top edge, so its bottom sits on the taskbar
+    return SH - TASKBAR_H - len(menu_entries()) * 28 - 12
+end
+
+func draw_menu()
+    # the start menu, just above the start button
+    let entries = menu_entries()
+    let top = menu_top()
+    rect(4, top - 2, 204, len(entries) * 28 + 14, 0x101014)
+    rect(6, top, 200, len(entries) * 28 + 10, 0x26262E)
+    for i = 0 to len(entries) - 1 do
+        let ey = top + 5 + i * 28
+        if i == menu_choice or inside(pointer_x, pointer_y, 6, ey, 200, 28) then
+            rect(8, ey, 196, 28, TITLE_ON)
+        end
+        if i < len(APPS) then
+            draw_icon_small(APPS[i][0], 16, ey + 6)
+        end
+        text(44, ey + 6, entries[i], WHITE_INK, 1)
+    end
+end
+
+func draw_icon_small(kind, x, y)
+    # a coloured square standing for an app in the menu
+    let colour = ACCENT
+    if kind == "clock" then
+        colour = 0xEDEDED
+    elif kind == "files" then
+        colour = 0xF2C25C
+    elif kind == "notes" then
+        colour = 0xFFF6B3
+    elif kind == "calc" then
+        colour = 0x8FA0B5
+    elif kind == "system" then
+        colour = 0x4DA3FF
+    end
+    rect(x, y, 16, 16, colour)
+end
+
+func draw_pointer()
+    # the mouse pointer, an arrow: a white inside with a black edge, row by row
+    for r = 0 to 15 do
+        let width = r
+        if r > 11 then
+            width = 11 - (r - 11) * 2
+        end
+        if width > 0 then
+            rect(pointer_x, pointer_y + r, width + 2, 1, 0x000000)
+            rect(pointer_x + 1, pointer_y + r, width, 1, 0xFFFFFF)
+        else
+            rect(pointer_x, pointer_y + r, 2, 1, 0x000000)
+        end
+    end
+end
+
+func draw_all()
+    # the whole screen, back to front, then shown at once
+    draw_wallpaper()
+    draw_icons()
+    let top = front()
+    for win in windows do
+        if not win[W_SHRUNK] then
+            draw_window(win, win == top)
+        end
+    end
+    draw_taskbar()
+    if menu_open then
+        draw_menu()
+    end
+    draw_pointer()
+    gshow()
+end
+
+
+# ---- the mouse and the keyboard -------------------------------------------------------------
+
+func click(px, py)
+    # the left button went down at px, py: whatever is on top there gets it
+    # the start menu first, as it is drawn over everything
+    if menu_open then
+        let entries = menu_entries()
+        let top = menu_top()
+        menu_open = false
+        if inside(px, py, 6, top, 200, len(entries) * 28 + 10) then
+            choose((py - top - 5) / 28)
+            return
+        end
+        # a click anywhere else only closes the menu (unless it is on the start button again)
+        if inside(px, py, 6, SH - TASKBAR_H + 5, 84, TASKBAR_H - 10) then
+            return
+        end
+    end
+
+    # the taskbar: the start button, or a window's button
+    if py >= SH - TASKBAR_H then
+        if inside(px, py, 6, SH - TASKBAR_H + 5, 84, TASKBAR_H - 10) then
+            menu_open = true
+            menu_choice = -1
+            return
+        end
+        for i = 0 to len(windows) - 1 do
+            if inside(px, py, 100 + i * button_width(), SH - TASKBAR_H + 5, button_width() - 6, TASKBAR_H - 10) then
+                let win = windows[i]
+                # clicking the front window's button shrinks it, any other brings it forward
+                if win == front() then
+                    win[W_SHRUNK] = true
+                else
+                    to_front(win)
+                end
+                return
+            end
+        end
+        return
+    end
+
+    # the windows, front first
+    let i = len(windows) - 1
+    while i >= 0 do
+        let win = windows[i]
+        if not win[W_SHRUNK] and inside(px, py, win[W_X], win[W_Y], win[W_W], win[W_H]) then
+            click_window(win, px, py)
+            return
+        end
+        i = i - 1
+    end
+
+    # the icons on the desktop
+    for n = 0 to len(APPS) - 1 do
+        let spot = icon_at(n)
+        if inside(px, py, spot[0] - 10, spot[1] - 4, 68, 66) then
+            start_app(APPS[n][0])
+            return
+        end
+    end
+end
+
+func click_window(win, px, py)
+    # a click on a window: bring it forward, then its buttons, title bar or inside
+    to_front(win)
+    let x = win[W_X]
+    let y = win[W_Y]
+    let w = win[W_W]
+    if inside(px, py, x + w - BUTTON - 3, y + 3, BUTTON, BUTTON) then
+        close(win)
+        return
+    end
+    if inside(px, py, x + w - 2 * BUTTON - 6, y + 3, BUTTON, BUTTON) then
+        win[W_SHRUNK] = true
+        return
+    end
+    if py < y + TITLE_H then
+        # take hold of the title bar, to drag it
+        dragging = win
+        drag_dx = px - x
+        drag_dy = py - y
+        return
+    end
+    let kind = win[W_KIND]
+    if kind == "files" then
+        let names = win[W_DATA][1]
+        let top = y + TITLE_H + ROW + 6 + 5
+        if names != nil and py >= top then
+            let n = win[W_SCROLL] + (py - top) / ROW
+            if n < len(names) then
+                win[W_DATA][2] = n
+                open_entry(win, names[n])
+            end
+        end
+    elif kind == "calc" then
+        let label = calc_key_at(win, px, py)
+        if label != nil then
+            calc_press(win, label)
+        end
+    elif kind == "notes" then
+        if inside(px, py, x + 8, y + TITLE_H + 4, 60, ROW) then
+            save_notes()
+        end
+    end
+end
+
+func choose(n)
+    # menu entry n was picked
+    if n >= 0 and n < len(APPS) then
+        start_app(APPS[n][0])
+    elif n == len(APPS) then
+        running = false
+    end
+end
+
+func scroll(win, by)
+    # scroll a list window by `by` rows, keeping inside the list
+    let total = 0
+    let shown = rows_fit(win[W_H] - TITLE_H)
+    if win[W_KIND] == "files" then
+        if win[W_DATA][1] != nil then
+            total = len(win[W_DATA][1])
+        end
+        shown = rows_fit(win[W_H] - TITLE_H - ROW - 6)
+    elif win[W_KIND] == "view" then
+        total = len(win[W_DATA])
+    elif win[W_KIND] == "system" then
+        total = len(system_rows) + 12
+    end
+    let first = win[W_SCROLL] + by
+    if first > total - shown then
+        first = total - shown
+    end
+    if first < 0 then
+        first = 0
+    end
+    win[W_SCROLL] = first
+end
+
+func press(k)
+    # a key was pressed
+    let top = front()
+    # Tab, or the menu open: the menu has the keyboard (Notes keeps Tab for itself)
+    if k == KEY_TAB and not (top != nil and top[W_KIND] == "notes" and not menu_open) then
+        menu_open = not menu_open
+        menu_choice = 0
+        return
+    end
+    if menu_open then
+        if k == KEY_UP then
+            menu_choice = (menu_choice + len(menu_entries()) - 1) % len(menu_entries())
+        elif k == KEY_DOWN then
+            menu_choice = (menu_choice + 1) % len(menu_entries())
+        elif k == KEY_ENTER then
+            menu_open = false
+            choose(menu_choice)
+        elif k == KEY_ESCAPE then
+            menu_open = false
+        end
+        return
+    end
+    if k == KEY_ESCAPE then
+        # the front window closes; with none open, the desktop ends
+        if top != nil then
+            close(top)
+        else
+            running = false
+        end
+        return
+    end
+    if top != nil and top[W_KIND] == "notes" then
+        notes_key(k)
+        return
+    end
+    if top != nil and top[W_KIND] == "calc" then
+        calc_key(top, k)
+        return
+    end
+    # Files: Up and Down choose a row, Enter opens it
+    if top != nil and top[W_KIND] == "files" and top[W_DATA][1] != nil then
+        if files_key(top, k) then
+            return
+        end
+    end
+    # the Viewer and System: the arrows scroll a line at a time
+    if top != nil and (top[W_KIND] == "view" or top[W_KIND] == "system") then
+        if k == KEY_UP then
+            scroll(top, -1)
+            return
+        elif k == KEY_DOWN then
+            scroll(top, 1)
+            return
+        end
+    end
+    # the lists scroll with Page Up and Page Down
+    if top != nil and k == KEY_PGDN then
+        scroll(top, 10)
+        return
+    end
+    if top != nil and k == KEY_PGUP then
+        scroll(top, -10)
+        return
+    end
+    # the arrows move the pointer, and Enter clicks: for working without a mouse
+    if k == KEY_LEFT then
+        pointer_x = pointer_x - 12
+    elif k == KEY_RIGHT then
+        pointer_x = pointer_x + 12
+    elif k == KEY_UP then
+        pointer_y = pointer_y - 12
+    elif k == KEY_DOWN then
+        pointer_y = pointer_y + 12
+    elif k == KEY_ENTER then
+        click(pointer_x, pointer_y)
+    end
+    keep_pointer_on_screen()
+end
+
+func keep_pointer_on_screen()
+    # the pointer stays inside the screen
+    if pointer_x < 0 then
+        pointer_x = 0
+    end
+    if pointer_y < 0 then
+        pointer_y = 0
+    end
+    if pointer_x > SW - 1 then
+        pointer_x = SW - 1
+    end
+    if pointer_y > SH - 1 then
+        pointer_y = SH - 1
+    end
+end
+
+func files_key(win, k)
+    # Up, Down and Enter in Files: move the chosen row (scrolling to keep it in view), or open
+    # it. True if the key was one of those
+    let names = win[W_DATA][1]
+    let chosen = win[W_DATA][2]
+    if k == KEY_UP and chosen > 0 then
+        chosen = chosen - 1
+    elif k == KEY_DOWN and chosen < len(names) - 1 then
+        chosen = chosen + 1
+    elif k == KEY_ENTER then
+        open_entry(win, names[chosen])
+        return true
+    elif k != KEY_UP and k != KEY_DOWN then
+        return false
+    end
+    win[W_DATA][2] = chosen
+    let shown = rows_fit(win[W_H] - TITLE_H - ROW - 6)
+    if chosen < win[W_SCROLL] then
+        win[W_SCROLL] = chosen
+    elif chosen >= win[W_SCROLL] + shown then
+        win[W_SCROLL] = chosen - shown + 1
+    end
+    return true
+end
+
+func follow_mouse()
+    # read the mouse: move the pointer, drag a window, and click. True if anything changed
+    let m = mouse()
+    if m == nil then
+        has_mouse = false
+        return false
+    end
+    let changed = m[0] != mouse_x_before or m[1] != mouse_y_before or m[2] != buttons_before
+    # the pointer follows the mouse only when it has moved (the arrow keys may have moved it)
+    if m[0] != mouse_x_before or m[1] != mouse_y_before then
+        pointer_x = m[0]
+        pointer_y = m[1]
+        mouse_x_before = m[0]
+        mouse_y_before = m[1]
+    end
+    let left = m[2] % 2 == 1
+    let was_left = buttons_before % 2 == 1
+    if left and not was_left then
+        click(pointer_x, pointer_y)
+    end
+    if not left then
+        dragging = nil
+    end
+    if dragging != nil then
+        # the window follows the pointer, but its title bar stays on the screen
+        let nx = pointer_x - drag_dx
+        let ny = pointer_y - drag_dy
+        if ny < 0 then
+            ny = 0
+        end
+        if ny > SH - TASKBAR_H - TITLE_H then
+            ny = SH - TASKBAR_H - TITLE_H
+        end
+        if nx < 60 - dragging[W_W] then
+            nx = 60 - dragging[W_W]
+        end
+        if nx > SW - 60 then
+            nx = SW - 60
+        end
+        dragging[W_X] = nx
+        dragging[W_Y] = ny
+    end
+    buttons_before = m[2]
+    return changed
+end
+
+
+# ---- the desktop ----------------------------------------------------------------------------
+
+func main()
+    if not gopen() then
+        print("The desktop needs a graphics screen: start aerOS from its CD (main.iso).")
+        return
+    end
+    SW = gw()
+    SH = gh()
+    gbuf(true)
+    pointer_x = SW / 2
+    pointer_y = SH / 2
+    NOTES_FILE = cwd() + "notes.txt"
+    read_clock()
+    # say hello with the clock
+    start_app("clock")
+
+    let shown_second = -1
+    let needs_drawing = true
+    while running do
+        if follow_mouse() then
+            needs_drawing = true
+        end
+        while haskey() do
+            press(key())
+            needs_drawing = true
+        end
+        # the clock (and the cursor in Notes) changes every half second
+        let half = time() / 500
+        if half != shown_second then
+            shown_second = half
+            needs_drawing = true
+        end
+        if needs_drawing then
+            draw_all()
+            needs_drawing = false
+        end
+        frame(30)
+    end
+    gclose()
+    print("Left the desktop.")
+end
+
+main()

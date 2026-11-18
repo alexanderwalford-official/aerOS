@@ -112,6 +112,7 @@ The first time, let AerOS reach the server: `fw web packages.intercon.network 80
 | `webserve` | a web server: show a folder to web browsers ([network](network.md)) |
 | `bench` | how fast the disk is |
 | `anim` | the animations AerLang can draw |
+| `desktop` | a desktop with windows: a clock, files, notes, a calculator and more (from the CD, for its graphics screen) |
 
 A package is its program, `/apps/<name>.aer`, and a folder of its own, `/apps/<name>/`, for the
 files it comes with (the viewer's pictures) and what it keeps there (Snake's high scores). It

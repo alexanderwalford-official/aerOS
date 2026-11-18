@@ -1,4 +1,5 @@
-# The packages that used to come built into AerOS, for the package server (docs/PACKAGES.md).
+# The packages on the package server (docs/PACKAGES.md): the ones that used to come built into
+# AerOS, and newer ones like the desktop.
 # One a line: name, version, description. Each one's program is next to this file (snake.aer),
 # and the files it comes with, if any, are in the folder named after it (viewer/). Publish them
 # all with:
@@ -10,6 +11,7 @@
 anim 1.0 Spinners, progress bars and moving text: AerLang's text animations
 bench 1.0 How fast AerOS reads and writes its disk
 clip 1.0 A 6 second video, to try AerOS's video player on
+desktop 1.0 A desktop with windows: clock, files, notes, calculator and more
 guess 1.0 Guess the number from 1 to 100
 maze3d 1.0 A maze in 3D, seen from inside, to find your way out of
 move 1.0 Move a square with the arrow keys: a small example of a game

@@ -94,8 +94,9 @@ writes every byte of what `httpget()` gave, zeros and all.
 
 ## The packages
 
-The repository's `packages/` folder holds the packages that used to be built in, ready to
-publish, with `packages/packages.txt` listing each one's version and description:
+The repository's `packages/` folder holds the packages that used to be built in, and newer ones
+like the desktop, ready to publish, with `packages/packages.txt` listing each one's version and
+description:
 
 | Package | What it is | Comes with |
 | --- | --- | --- |
@@ -108,6 +109,7 @@ publish, with `packages/packages.txt` listing each one's version and description
 | `webserve` | a small web server, in AerLang (see [the network](NETWORK.md)) | |
 | `bench` | how fast AerOS reads and writes its disk | |
 | `anim` | spinners, progress bars and moving text | |
+| `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, System and About, by mouse or keyboard | |
 
 The tests don't need the server for them: `t.package('snake')` puts one on a test's disk the
 way `pkg install` would (`tools/test/run.py`).
