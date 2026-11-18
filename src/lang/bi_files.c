@@ -2,7 +2,8 @@
     bi_files.c
     AerLang's built-in functions for files: reading and writing them (rdf, rdb, wrf, apf), seeing
     whether one is there (isf), deleting one (delf), listing a folder (la), the current folder
-    (cwd), and encrypted files (enc, dec, isenc, rdenc, see sys/fcrypt.h).
+    (cwd), making and deleting a folder (mkd, deld), and encrypted files (enc, dec, isenc, rdenc,
+    see sys/fcrypt.h).
 
     Every path a program gives goes through file_arg() or allowed_path() (bi_args.c) first, which
     ask the person at the keyboard if the program needs permission to use it (sys/perm.h). A
@@ -64,22 +65,36 @@ static value_t save_file (value_t* argv, int line, const char* fn, bool append) 
     if (!file_arg(argv, 0, line, fn, PERM_CHANGE, dir, name)) {
         return aer_bool(false);
     }
-    // any value can be saved, a number or a list is written the way print() would show it.
-    // This makes a new string we own, so it is released below
-    value_t text = aer_to_string(argv[1]);
+    // Bytes are written as they are. Any other value is written the way print() would show it
+    // (a number, a list...): that makes a new string we own, so it is released below
+    bool is_bytes = argv[1].type == V_BYTES;
+    value_t text = is_bytes ? argv[1] : aer_to_string(argv[1]);
+    const char* data = is_bytes ? (const char*)text.as.obj->data.bytes : text.as.obj->data.chars;
+    uint32_t length = text.as.obj->length;
     int result;
-    // writing needs a file that is already there, so a new one is created instead
-    if (fs_file_exists(dir, name)) {
-        result = fs_write_f(dir, name, text.as.obj->data.chars, append);
+    if (append) {
+        // apf adds text, up to its end
+        if (fs_file_exists(dir, name)) {
+            result = fs_write_f(dir, name, data, true);
+        } else {
+            result = fs_create_f(dir, name, data);
+        }
+    } else if (fs_file_exists(dir, name)) {
+        // wrf writes every byte, by its length rather than up to a '\0': text fetched with
+        // httpget() can be a picture, and a picture has zeros in it (pkg.aer saves them this way)
+        result = fs_write_bytes(dir, name, data, length, false);
     } else {
-        result = fs_create_f(dir, name, text.as.obj->data.chars);
+        // writing needs a file that is already there, so a new one is created instead
+        result = fs_create_bytes(dir, name, data, length);
     }
-    aer_release(text);
+    if (!is_bytes) {
+        aer_release(text);
+    }
     // the file system's errors are all negative (FS_ERR_...)
     return aer_bool(result >= 0);
 }
 
-// wrf(path, text): replace a file's contents with text, making the file if it isn't there. True if it worked
+// wrf(path, text): replace a file's contents with text (or bytes), making the file if it isn't there. True if it worked
 value_t bi_write_file (int argc, value_t* argv, int line) {
     (void)argc;
     return save_file(argv, line, "wrf", false);
@@ -191,6 +206,72 @@ value_t bi_delete_file (int argc, value_t* argv, int line) {
         return aer_bool(false);
     }
     return aer_bool(fs_delete_f(dir, name) == FS_OK);
+}
+
+// ---- folders ----------------------------------------------------------------------------------
+
+// The folder a path names, as a full path ending in "/", in out, if the program may make or
+// delete it: that changes the folder it is in, so it needs permission to change files there
+// ("/apps/viewer" or "/apps/viewer/" -> "/apps/viewer/", asking about "/apps/"). False if not
+static bool folder_arg (value_t* argv, int line, const char* fn, char out[FS_PATH_MAX]) {
+    char typed[FS_PATH_MAX];
+    scpy(typed, str_arg(argv, 0, line, fn)->data.chars, sizeof(typed));
+    // without a "/" on the end, so the path splits into the folder it is in and its name
+    size_t length = slen(typed);
+    if (length > 1 && typed[length - 1] == '/') {
+        typed[length - 1] = '\0';
+    }
+    char parent[FS_PATH_MAX], name[FS_NAME_MAX];
+    if (!fs_split_path(typed, parent, sizeof(parent), name, sizeof(name)) || name[0] == '\0'
+        || !fs_resolve_dir(typed, out, FS_PATH_MAX)) {
+        return false;
+    }
+    return perm_allows(parent, name, PERM_CHANGE);
+}
+
+// mkd(path): make a folder. True if it was made (false if it is there already, or can't be).
+// The program may then change files in it without asking, until it ends (sys/perm.h): it was
+// empty a moment ago, so nothing of yours is in it
+value_t bi_make_folder (int argc, value_t* argv, int line) {
+    (void)argc;
+    char folder[FS_PATH_MAX];
+    if (!folder_arg(argv, line, "mkd", folder) || fs_dir_exists(folder)) {
+        return aer_bool(false);
+    }
+    if (fs_create_d(folder, "") != FS_OK) {
+        return aer_bool(false);
+    }
+    perm_made_folder(folder);
+    return aer_bool(true);
+}
+
+// for fs_list, in deld: count the folders inside a folder (ctx is the count)
+static void count_folders (const char* name, bool is_dir, uint32_t size, void* ctx) {
+    (void)name; (void)size;
+    if (is_dir) {
+        (*(int*)ctx)++;
+    }
+}
+
+// deld(path): delete a folder and the files in it (pkg remove takes away a package's folder this
+// way). A folder with folders inside isn't deleted: those go first. True if it worked, false if
+// it isn't there (without asking anything) or can't be. It needs permission to change files in
+// the folder itself as well as in the one it is in: deleting its files is changing them
+value_t bi_delete_folder (int argc, value_t* argv, int line) {
+    (void)argc;
+    char folder[FS_PATH_MAX];
+    if (!folder_arg(argv, line, "deld", folder) || !fs_dir_exists(folder)
+        || !perm_allows(folder, "", PERM_CHANGE)) {
+        return aer_bool(false);
+    }
+    int folders = 0;
+    if (fs_list(folder, count_folders, &folders) < 0 || folders > 0) {
+        return aer_bool(false); // not there, or has folders inside
+    }
+    if (fs_empty_dir(folder, false, NULL, NULL) < 0) {
+        return aer_bool(false);
+    }
+    return aer_bool(fs_delete_d(folder) == FS_OK);
 }
 
 // sync(): put every change still held in the disk cache onto the disk now, rather than within

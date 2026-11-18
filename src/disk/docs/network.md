@@ -94,6 +94,7 @@ AerOS can serve web pages too: other computers connect to it. Nothing can, until
 with a serve rule, for one of AerOS's own ports:
 
 ```
+pkg install webserve                   once, to get it
 fw serve 8080                          anyone may connect to AerOS's port 8080
 fw serve 8080 10.0.2.2                 or only that computer may
 bg webserve 8080 /docs/                serve the manual, in the background
@@ -105,7 +106,8 @@ there. Each visit
 shows up at the prompt: `[webserve] GET /index.md 200`. `/` shows `index.html`, or a list of the
 files if there isn't one. `stop` stops it, and `fw del` shuts the port again at once.
 
-`webserve` is an ordinary AerLang program, `/bin/webserve.aer`: read it to see how a web server
+`webserve` is an ordinary AerLang program, a package (`pkg install webserve` gets it):
+read `/apps/webserve.aer` to see how a web server
 works, or make your own with `tcplisten`, `tcpaccept`, `tcprecv`, `tcpsend` and `tcpclose`. It
 reads the folder like any program: AerOS's own folders freely, yours only where you allow it.
 What it sends isn't sealed, so don't serve anything private.

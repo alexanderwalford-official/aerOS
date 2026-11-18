@@ -1,6 +1,7 @@
 # webserve: a small web server. It shows the files in one folder to web browsers on other
 # computers, while you carry on using AerOS
 #
+#     pkg install webserve                once, to get it
 #     fw serve 8080                       once: let other computers connect to port 8080
 #     bg webserve 8080                    serve the folder you are in, in the background
 #     bg webserve 8080 /home/alex/site/   ...or another folder

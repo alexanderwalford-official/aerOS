@@ -26,9 +26,11 @@ If you say no, the program carries on as if the file wasn't there: `rdf()` gives
 | --- | --- |
 | read in `/bin/`, `/docs/`, `/src/` or `/sys/` | no, these are AerOS's own files |
 | read in its own folder | no |
+| read in the folder named after it, next to it (`/apps/viewer/` for `/apps/viewer.aer`) | no, those are its own files: a package's pictures and the like |
 | read a file you named when you started it (`read notes.txt`) | no, that was you asking |
 | read anything else | yes |
 | change or delete any file | yes |
+| change files in a folder it has just made (`mkd`) | no, while it runs: nothing of yours is in it yet |
 | touch `/acc/`, where the accounts are kept | never allowed, whatever you answer |
 
 A permission covers one folder (not the folders inside it), so a program that reads ten

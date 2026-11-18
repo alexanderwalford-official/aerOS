@@ -85,7 +85,7 @@ So when the prompt comes back, everything you did is on the disk. Only if the po
 the middle of a program can its last second of changes be lost. AerOS's log is the exception:
 it is written straight away, as it is what says what happened after a crash. `sync` puts
 everything onto the disk at once and shows the cache's numbers; `sync()` does it from a
-program. `bench` times reading and writing, to see the difference.
+program. `bench` (`pkg install bench`) times reading and writing, to see the difference.
 
 ## The parts
 

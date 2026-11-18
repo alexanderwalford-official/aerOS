@@ -1152,7 +1152,6 @@ static void make_base_folders (void) {
     int made = 0;
     made += make_folder_if_missing("/acc/", "accounts");
     made += make_folder_if_missing("/bin/", "bin");
-    made += make_folder_if_missing("/bin/games/", "games");
     made += make_folder_if_missing("/apps/", "installed packages");
     made += make_folder_if_missing("/docs/", "the manual");
     made += make_folder_if_missing("/sys/", "system");

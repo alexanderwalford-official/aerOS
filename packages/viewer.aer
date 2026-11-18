@@ -11,6 +11,15 @@
 #
 # Keys: LEFT / RIGHT change picture, + / - zoom in and out, 0 fits the
 # picture to the screen again, and while zoomed in the arrows move around.
+#
+#     viewer              the pictures in this folder (and two to try it on, if there are none)
+#     viewer cat.bmp      just that one
+#
+# It comes as a package with two pictures, aeros.bmp and colours.bmp, which pkg puts in its own
+# folder, /apps/viewer/ (it may read that folder without asking: it is its own).
+
+# where pkg puts the pictures that come with the viewer
+let OWN_FOLDER = "/apps/viewer/"
 
 # ------------------------------------------------
 # General utilities
@@ -800,13 +809,14 @@ else
 
     find_pictures("", pictures)
 
-    if cwd() != "/bin/" then
-        find_pictures("/bin/", pictures)
+    # none here: the two that come with the viewer, in its own folder
+    if len(pictures) == 0 then
+        find_pictures(OWN_FOLDER, pictures)
     end
 end
 
 if len(pictures) == 0 then
-    print("No pictures here. Put some .bmp files in this directory or in /bin/.")
+    print("No pictures here. Put some .bmp files in this folder, or give one: viewer cat.bmp")
     exit()
 end
 

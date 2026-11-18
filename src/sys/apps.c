@@ -31,9 +31,20 @@
 
     To go back to the built-in copy of an app you have changed, delete it and restart.
 
-    Apps live in /bin/, and games in /bin/games/ (both are searched when an app is run by its
-    name, see aer_app_folders in lang/aerlang.h). When an app moves into a folder of its own,
-    an untouched old copy left in /bin/ by an older AerOS is deleted (tidy_old_copy).
+    FILES AEROS NO LONGER COMES WITH
+
+    An app can stop being built in: the games, the web server and the sample pictures and video
+    became packages (pkg install snake, see docs/PACKAGES.md), so AerOS itself is smaller. A
+    disk from an older AerOS still has its copies, and as /bin/ is searched before /apps/ (see
+    aer_app_folders in lang/aerlang.h), an old /bin/games/snake.aer would quietly run in place
+    of an installed snake package. So any file the record lists that isn't built in any more
+    is looked at (retire_old_files):
+
+        disk == recorded             untouched since AerOS installed it: deleted
+        anything else                changed by you: kept, and it is yours from now on (the
+                                     boot log says so)
+
+    and a folder left empty by that (/bin/games/) goes too.
 */
 
 #include "apps.h"
@@ -41,9 +52,14 @@
 #include "../lib/primary_definitions.h"
 #include "../lib/crypto.h"
 #include "../lib/aer_stdio.h"
+#include "syslog.h"
 
 // how many files the last apps_install() couldn't write (see apps_failed)
 static int failed = 0;
+// how many it deleted, as AerOS doesn't come with them any more (see apps_retired)
+static int retired = 0;
+// how many retry lines the record has room left for, in this apps_install() (RETRY_LINES_MAX)
+static int retry_room = 0;
 
 // every built-in file, where it goes and where its bytes are: builtin_files[] in apps.h, written
 // by the Makefile from src/disk/. The manual (refresh true) is simply kept the same as the
@@ -66,6 +82,10 @@ static bool same_as_disk (unsigned int i, uint32_t length) {
 #define RECORD_NAME "apps.lst"
 #define HASH_HEX (SHA256_SIZE * 2)                 // a SHA-256 written out in hex
 #define RECORD_LINE 96                             // a path, a space, the hash and a newline
+// how many old files that couldn't be deleted keep their line in the record, to try again next
+// boot (retire_one). Room is kept for this many on top of the built-in files' lines; any more
+// are left on the disk, as if they were yours
+#define RETRY_LINES_MAX 32
 // (the hash and the space, newline and '\0' take 67 of the 96, which leaves 29 for the path)
 
 // SHA-256 of some bytes, written as 64 lowercase hex digits
@@ -188,37 +208,99 @@ static void install_app (unsigned int i, const char* record, char keep[HASH_HEX 
     // otherwise it's your own version: kept, and not recorded as one of AerOS's
 }
 
-// An app that has moved into a folder of its own (the games, into /bin/games/) may still have
-// its old copy in /bin/ on a disk from an older AerOS. If that copy is one AerOS put there and
-// nobody has changed (it matches the record, or the built-in one), it goes. One you have
-// changed is yours, so it stays (and, as /bin/ is looked in first, it is the one that runs)
-static void tidy_old_copy (unsigned int i, const char* record) {
-    const char* old_dir = "/bin/";
-    // only files in a folder inside /bin/ ("/bin/games/"): one that lives in /bin/ itself, or
-    // somewhere else entirely (/sys/, /docs/), has no old copy to tidy up
-    if (seq(builtin_files[i].dir, old_dir) || strncmp(builtin_files[i].dir, old_dir, slen(old_dir)) != 0) {
-        return; // not an app that moved out of /bin/
+// is this path ("/bin/games/snake.aer") one of the built-in files?
+static bool is_builtin (const char* path) {
+    char builtin[RECORD_LINE];
+    for (unsigned int i = 0; i < (unsigned int)builtin_file_count; i++) {
+        sfmt(builtin, sizeof(builtin), "%s%s", builtin_files[i].dir, builtin_files[i].name);
+        if (seq(builtin, path)) {
+            return true;
+        }
     }
+    return false;
+}
+
+// for fs_list, to count what is in a folder: nothing to do for each entry, as fs_list counts them
+static void count_nothing (const char* name, bool is_dir, uint32_t size, void* ctx) {
+    (void)name; (void)is_dir; (void)size; (void)ctx;
+}
+
+// One file in the old record that isn't built in any more (see FILES AEROS NO LONGER COMES WITH
+// at the top). Deleted if it is still exactly what AerOS put there, kept if you have changed it.
+// The record line it should keep is added to new_record: none, unless deleting it failed (then
+// the next boot tries again)
+static void retire_one (const char* path, const char* recorded, char* new_record) {
+    // "/bin/games/snake.aer" -> the folder "/bin/games/" and the name "snake.aer"
+    const char* slash = strrchr(path, '/');
+    if (slash == NULL || slash[1] == '\0') {
+        return; // not a file's path: a damaged line, dropped
+    }
+    char dir[RECORD_LINE];
+    size_t dir_length = (size_t)(slash + 1 - path);
+    memcpy(dir, path, dir_length);
+    dir[dir_length] = '\0';
+    const char* name = slash + 1;
+
     uint32_t size = 0;
-    char* data = fs_read_bytes(old_dir, builtin_files[i].name, &size);
+    char* data = fs_read_bytes(dir, name, &size);
     if (data == NULL) {
-        return; // no old copy
+        return; // already gone (or never there)
     }
-    // hash the old copy and the built-in one, so they can be compared with each other and with
-    // the record. The old copy's bytes aren't needed after that
-    char path[RECORD_LINE];
-    char ondisk[HASH_HEX + 1], recorded[HASH_HEX + 1], builtin[HASH_HEX + 1];
-    sprintf(path, "%s%s", old_dir, builtin_files[i].name);
+    char ondisk[HASH_HEX + 1];
     hash_hex(data, size, ondisk);
-    hash_hex(builtin_files[i].start, (uint32_t)(builtin_files[i].end - builtin_files[i].start), builtin);
     free(data);
 
-    // untouched if it is the current built-in copy, or the version the record says AerOS put
-    // there. (The old /bin/ line then drops out of the record, as nothing writes it again)
-    bool untouched = scmp(ondisk, builtin) == 0
-                     || (recorded_hash(record, path, recorded) && scmp(ondisk, recorded) == 0);
-    if (untouched) {
-        fs_delete_f(old_dir, builtin_files[i].name);
+    if (scmp(ondisk, recorded) != 0) {
+        // changed since AerOS put it there: yours now, so it stays, and leaves the record
+        syslog_add("boot", "apps", "%s isn't built in any more, but you have changed it, so it is kept", path);
+        return;
+    }
+    if (fs_delete_f(dir, name) != FS_OK) {
+        // keep its line, so the next boot tries again (if there is room left for it)
+        if (retry_room > 0) {
+            char line[RECORD_LINE];
+            sfmt(line, sizeof(line), "%s %s\n", path, recorded);
+            strcat(new_record, line);
+            retry_room--;
+        }
+        failed++;
+        return;
+    }
+    retired++;
+    syslog_add("boot", "apps", "deleted %s: AerOS doesn't come with it any more (it may be a package now: PKG LIST)", path);
+    // a folder inside another (/bin/games/, not /bin/ itself) left empty by that goes too.
+    // fs_list counts what is in it: 0 is empty (and -1 means it isn't there)
+    int slashes = 0;
+    for (const char* c = dir; *c; c++) {
+        slashes += *c == '/';
+    }
+    if (slashes > 2 && fs_list(dir, count_nothing, NULL) == 0) {
+        fs_delete_d(dir);
+    }
+}
+
+// Go through the old record for files that aren't built in any more (retire_one has what
+// happens to each). new_record gets the lines that should stay
+static void retire_old_files (const char* record, char* new_record) {
+    // record is NULL when there is no record at all: then there is nothing to go through
+    const char* line = record;
+    while (line && *line) {
+        // a line is "<path> <hash>\n": copy it out, so it can be cut in two at the space
+        char copy[RECORD_LINE];
+        const char* end = strchr(line, '\n');
+        size_t length = end ? (size_t)(end - line) : slen(line);
+        if (length < sizeof(copy)) {
+            memcpy(copy, line, length);
+            copy[length] = '\0';
+            char* space = strchr(copy, ' ');
+            if (space != NULL && slen(space + 1) == HASH_HEX) {
+                *space = '\0';
+                if (!is_builtin(copy)) {
+                    retire_one(copy, space + 1, new_record);
+                }
+            }
+        }
+        line = end ? end + 1 : NULL;
     }
 }
 
@@ -226,14 +308,16 @@ static void tidy_old_copy (unsigned int i, const char* record) {
 int apps_install (void) {
     int installed = 0;
     failed = 0;
+    retired = 0;
+    retry_room = RETRY_LINES_MAX;
 
     // what was installed last time (NULL on a new disk, or one from before records were kept)
     char* old_record = fs_read_f(RECORD_DIR, RECORD_NAME);
     // the new record is built up from scratch, one line per file, so a file that is no longer
     // AerOS's version (or no longer built in) simply drops out of it. Room for a full line
-    // for every file, + 1 for the '\0' (sized when it runs: the linker fills in how many files
-    // there are, so the compiler can't know it)
-    char new_record[builtin_file_count * RECORD_LINE + 1];
+    // for every file and RETRY_LINES_MAX more, + 1 for the '\0' (sized when it runs: the linker
+    // fills in how many files there are, so the compiler can't know it)
+    char new_record[(builtin_file_count + RETRY_LINES_MAX) * RECORD_LINE + 1];
     new_record[0] = '\0';
 
     for (unsigned int i = 0; i < (unsigned int)builtin_file_count; i++) {
@@ -258,10 +342,9 @@ int apps_install (void) {
             continue;
         }
 
-        // an app or system file: tidy away an old copy left in /bin/ first, then install or update it
+        // an app or system file: install or update it
         char keep[HASH_HEX + 1];
         bool changed;
-        tidy_old_copy(i, old_record);
         install_app(i, old_record, keep, &changed);
         if (changed) {
             installed++;
@@ -273,6 +356,9 @@ int apps_install (void) {
             strcat(new_record, line);
         }
     }
+
+    // files AerOS put there once, but doesn't come with any more
+    retire_old_files(old_record, new_record);
 
     // only write the record when it says something new
     // (so a normal boot, with everything up to date, writes nothing to the disk at all)
@@ -311,4 +397,9 @@ const void* apps_builtin (const char* name, uint32_t* size) {
 // on the next boot
 int apps_failed (void) {
     return failed;
+}
+
+// how many files the last apps_install() deleted, as AerOS doesn't come with them any more
+int apps_retired (void) {
+    return retired;
 }

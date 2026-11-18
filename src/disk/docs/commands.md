@@ -66,10 +66,9 @@ See [Accounts and encryption](security.md).
 
 | Command | Does |
 | --- | --- |
-| `<app> [args]` | run `/bin/<app>.aer`, e.g. `hello` or `guess` |
+| `<app> [args]` | run `/bin/<app>.aer` (or an installed package, `/apps/<app>.aer`), e.g. `hello` |
 | `aer` | the AerLang prompt |
 | `sysinfo` | the system information screen: processor, memory, disks, devices |
-| `anim` | a demo of the animations AerLang can draw |
 | `run <code>` | run code as a process: `run s:hi` |
 | `que <app> [args]` | line a program up to run later (`que` lists them, `que clear` empties it) |
 | `scan <app>` | what a program can do, read before it runs, and any tricks in it (see [Programs ask first](perms.md)) |
@@ -86,6 +85,37 @@ go
 ```
 
 `que s:<text>` queues a line of text to print, handy between programs.
+
+## Packages
+
+More apps come from the package server, when you ask for them: `pkg` fetches one, checks it
+was signed by the packages' maker, shows you what it could do, and asks before installing it.
+
+| Command | Does |
+| --- | --- |
+| `pkg list` | what there is |
+| `pkg install <name>` | check one, show what it could do, and install it |
+| `pkg update [name]` | get newer versions of what you have (or of one) |
+| `pkg remove <name>` | take one off again, with its folder |
+| `pkg installed` | what you have |
+
+The first time, let AerOS reach the server: `fw web packages.intercon.network 80`. There is:
+
+| Package | What it is |
+| --- | --- |
+| `snake` | Snake, with high scores |
+| `maze3d` | a maze in 3D, seen from inside |
+| `move` | move a square with the arrow keys: a small example of a game |
+| `guess` | guess the number |
+| `viewer` | a picture viewer, with two pictures to try it on |
+| `clip` | a 6 second [video](video.md) |
+| `webserve` | a web server: show a folder to web browsers ([network](network.md)) |
+| `bench` | how fast the disk is |
+| `anim` | the animations AerLang can draw |
+
+A package is its program, `/apps/<name>.aer`, and a folder of its own, `/apps/<name>/`, for the
+files it comes with (the viewer's pictures) and what it keeps there (Snake's high scores). It
+may read its own folder without asking.
 | `pm` | show the process stack |
 
 ## Sound and screen

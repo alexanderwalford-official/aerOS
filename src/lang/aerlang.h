@@ -21,8 +21,9 @@
 #include <stddef.h>
 
 // the folders an app run by its name is looked for in, after the current folder, in order:
-// "/bin/" (apps), then "/bin/games/" (games), then "/apps/" (installed packages). The list ends
-// with NULL. Tab completion and "Did you mean ...?" go through the same list
+// "/bin/" (apps), then "/bin/games/" (games from an older AerOS, which came with them: they are
+// packages now), then "/apps/" (installed packages). The list ends with NULL. Tab completion and
+// "Did you mean ...?" go through the same list
 extern const char* const aer_app_folders[];
 
 // run a program file (absolute, relative to the current directory, or found in /bin/)

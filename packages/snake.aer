@@ -1,6 +1,6 @@
 # Snake for AerOS
-# Save this file as snake.aer, then run it with:
-#     snake
+#     pkg install snake     once, to get it
+#     snake                 to play
 #
 # Controls:
 #     Arrow keys  - steer
@@ -10,10 +10,10 @@
 # This game uses AerLang's graphics and non-blocking keyboard functions.
 # The board is made from square tiles, so the snake moves one tile per step.
 #
-# The best scores are kept in a database, /bin/games/scores.db (see "High scores" below),
-# which other games can keep their scores in too. The first time, AerOS asks if Snake may
-# change files in /bin/games/: answer A (always). Without it the game still works, just
-# without high scores.
+# The best scores are kept in a database in Snake's own folder, /apps/snake/scores.db (see
+# "High scores" below). The first time, AerOS asks if Snake may change files there: answer A
+# (always). Without it the game still works, just without high scores. (pkg remove snake takes
+# the scores away too.)
 
 # ---------------------------------------------------------------------------
 # Colours
@@ -127,13 +127,18 @@ end
 # ORDER BY score DESC gives the best first, and LIMIT only as many as are shown.
 # Only those are kept: save_score deletes the rest.
 
-let SCORES_FILE = "/bin/games/scores.db"
+let SCORES_FOLDER = "/apps/snake/"     # Snake's own folder (pkg install makes it)
+let SCORES_FILE = SCORES_FOLDER + "scores.db"
 let SCORES_SHOWN = 5        # how many high scores are listed
 let NAME_LONGEST = 10       # letters in a player's name
 
 func open_scores()
     # Open the database, and make the table the first time. Gives back nil if it
     # can't be opened (if you said no when AerOS asked): no high scores then.
+    if la(SCORES_FOLDER) == nil then
+        # no folder of its own (copied here by hand, rather than installed): make it
+        mkd(SCORES_FOLDER)
+    end
     let db = dbopen(SCORES_FILE)
     if db != nil then
         dbrun(db, "CREATE TABLE IF NOT EXISTS scores (game TEXT, name TEXT, score INTEGER)")

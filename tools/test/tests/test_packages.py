@@ -338,3 +338,113 @@ def test_pkg_from_server(t):
         if old is not None:
             old.shutdown()
         server.stop()
+
+
+def test_pkg_with_files(t):
+    # A package that comes with a file as well as its program: the file is binary, with zeros
+    # in it (as a picture has), signed on its own, put in the package's own folder, and read
+    # by the program there without asking. pkg remove takes the folder away too
+    server = Server(t)
+    try:
+        data = bytes(i % 7 for i in range(3000))
+        os.makedirs(t.path('pics'))
+        with open(os.path.join(t.path('pics'), 'zeros.bin'), 'wb') as f:
+            f.write(data)
+        program = server.program('pics', 'let data = rdb("/apps/pics/zeros.bin")\n'
+                                         'let right = true\n'
+                                         'for i = 0 to len(data) - 1 do\n'
+                                         '    if data[i] != i % 7 then\n'
+                                         '        right = false\n'
+                                         '    end\n'
+                                         'end\n'
+                                         'print("pics has " + len(data) + " bytes, right: " + right)\n')
+        done = server.aerpkg('publish', program, '1.0', 'Pictures')
+        must('uploaded pics, pics/zeros.bin' in done.stdout, f'publish with a file: {done.stdout}')
+
+        # served as signed, with a #file line in the index
+        must(server.get('/packages/pics/zeros.bin') == (200, data), 'zeros.bin should be served as is')
+        _, index = server.get('/index.txt')
+        line = [x for x in index.decode().split('\n') if x.startswith('#file pics ')]
+        must(len(line) == 1 and line[0].split(' ')[2] == 'zeros.bin', f'the #file line: {line}')
+        key = signer(server.key)
+        key.public_key().verify(bytes.fromhex(line[0].split(' ')[3]), data)
+
+        # publishing the same again with publish-all sends nothing; refused: a program among a
+        # package's files, and a file the index doesn't list
+        with open(t.path('packages.txt'), 'w') as f:
+            f.write('pics 1.0 Pictures\n')
+        done = server.aerpkg('publish-all', t.workdir)
+        must('already, just as it is here' in done.stdout, f'publish-all with nothing new: {done.stdout}')
+        pics_line = [x for x in index.decode().split('\n') if x.startswith('pics ')][0]
+        hidden = b'delf("/home/tester/notes.txt")\n'
+        status, said = server.post(dict(upload(key, f'#serial 9\n{pics_line}\n#file pics run.aer '
+                                                    f'{key.sign(hidden).hex()}\n', {}),
+                                        files={'pics/run.aer': base64.b64encode(hidden).decode()}))
+        must(status == 400 and 'not .aer' in said, f'a program among the files should be refused: {said}')
+        status, said = server.post(dict(upload(key, f'#serial 9\n{pics_line}\n', {}),
+                                        files={'pics/extra.bin': base64.b64encode(b'x').decode()}))
+        must(status == 400 and 'doesn\'t list it' in said, f'an unlisted file should be refused: {said}')
+
+        disk = t.disk(files={'/bin/pkgt.aer': pkg_copy(t, 'pkgt', f'http://10.0.2.2:{server.port}', server.public)})
+        aeros = t.boot(disk=disk, network='user,model=e1000')
+        aeros.first_login()
+        aeros.run(f'fw web 10.0.2.2 {server.port}')
+
+        aeros.cls()
+        install(aeros, 'pkgt install pics')
+        aeros.expect('It comes with 1 file(s), 3 KB, for /apps/pics/: zeros.bin')
+        aeros.expect('Installed pics 1.0')
+
+        # every byte as it was signed, read from its own folder without asking
+        asked = aeros.serial().count('[ ? ]')
+        aeros.cls()
+        aeros.run('pics', timeout=60)
+        aeros.expect_line('pics has 3000 bytes, right: true')
+        if aeros.serial().count('[ ? ]') != asked:
+            aeros.fail('pics asked before reading its own file')
+
+        # remove: the program and its folder both go
+        aeros.cls()
+        install(aeros, 'pkgt remove pics')
+        aeros.expect_line('Removed pics.')
+        aeros.cls()
+        aeros.run('print(la("/apps/pics/"), isf("/apps/pics.aer"))')
+        aeros.expect_line('nil false')
+    finally:
+        server.stop()
+
+
+def test_the_real_packages(t):
+    # The repository's packages/ folder, published with publish-all as it would be to the live
+    # server, and the viewer installed from it: its two pictures (149 KB) fetched over AerOS's
+    # TCP, checked, and written byte for byte
+    from aeros import read_disk_file
+    server = Server(t)
+    try:
+        done = server.aerpkg('publish-all', os.path.join(REPO, 'packages'))
+        must('Published serial 1' in done.stdout and 'viewer/aeros.bmp' in done.stdout,
+             f'publish-all of packages/: {done.stdout}')
+        # nothing has changed since, so a second one sends nothing
+        done = server.aerpkg('publish-all', os.path.join(REPO, 'packages'))
+        must('already, just as it is here' in done.stdout, f'a second publish-all: {done.stdout}')
+
+        disk = t.disk(files={'/bin/pkgt.aer': pkg_copy(t, 'pkgt', f'http://10.0.2.2:{server.port}', server.public)})
+        aeros = t.boot(disk=disk, network='user,model=e1000')
+        aeros.first_login()
+        aeros.run(f'fw web 10.0.2.2 {server.port}')
+        aeros.cls()
+        aeros.run('pkgt list', timeout=120)
+        aeros.expect_line('snake 1.0: Snake, with high scores')
+        aeros.cls()
+        install(aeros, 'pkgt install viewer')
+        aeros.expect('Installed viewer 1.0')
+        aeros.quit()
+        for name in ('aeros.bmp', 'colours.bmp'):
+            with open(os.path.join(REPO, 'packages', 'viewer', name), 'rb') as f:
+                if read_disk_file(disk, '/apps/viewer/' + name) != f.read():
+                    raise AssertionError(f'/apps/viewer/{name} is not the picture that was published')
+        with open(os.path.join(REPO, 'packages', 'viewer.aer'), 'rb') as f:
+            must(read_disk_file(disk, '/apps/viewer.aer') == f.read(), '/apps/viewer.aer is not the one published')
+        t.check_disk(disk)
+    finally:
+        server.stop()

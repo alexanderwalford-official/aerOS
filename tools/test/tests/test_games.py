@@ -1,11 +1,11 @@
-"""The games in /bin/games/, booted from the ISO so GRUB sets up a graphics screen.
+"""The games, booted from the ISO so GRUB sets up a graphics screen. They are packages (in the
+repository's packages/ folder), so each test puts its game on the disk the way pkg install
+would (t.package), rather than fetching it from a package server.
 
 In graphics mode the text screen can't be read, so these check the serial log (where the
 terminal's text also goes) and the pixels of screenshots."""
 
 import time
-
-from aeros import GUEST_PROMPT
 
 
 def colours(shot):
@@ -36,9 +36,15 @@ def wait_for_colour(aeros, colour, name, timeout=60):
         time.sleep(0.5)
 
 
+def boot_with(t, game, sound=False):
+    """Boot from the ISO with a game installed, and log in."""
+    aeros = t.boot(graphics=True, sound=sound, disk=t.disk(files=t.package(game)))
+    aeros.first_login()
+    return aeros
+
+
 def test_maze3d(t):
-    aeros = t.boot(graphics=True)
-    aeros.wait_for(GUEST_PROMPT, 60)
+    aeros = boot_with(t, 'maze3d')
     aeros.run('maze3d', 5)
     if colours(aeros.screenshot('title')) < 3:
         aeros.fail('the title screen looks empty')
@@ -70,8 +76,7 @@ def test_maze3d(t):
 
 def test_move(t):
     # move.aer: a square that moves while an arrow key is held, drawn with a back buffer
-    aeros = t.boot(graphics=True, sound=True)
-    aeros.wait_for(GUEST_PROMPT, 60)
+    aeros = boot_with(t, 'move', sound=True)
     aeros.ask('move', 3)
     first = aeros.screenshot('start')
     aeros.key('right', 1000)
@@ -85,9 +90,8 @@ def test_move(t):
 
 
 def test_snake(t):
-    aeros = t.boot(graphics=True)
-    aeros.wait_for(GUEST_PROMPT, 60)
-    # Snake asks first if it may keep its high scores in /bin/games/
+    aeros = boot_with(t, 'snake')
+    # Snake asks first if it may keep its high scores in its own folder, /apps/snake/
     aeros.ask('snake')
     aeros.wait_for('[ ? ]', 30)
     aeros.key('y')
@@ -111,18 +115,20 @@ GOLD = 0xFFD166   # Snake's colour for "NEW HIGH SCORE" and the high scores' hea
 def test_snake_high_scores(t):
     # A copy of Snake whose score starts at 7, so the snake running into the wall by itself
     # makes a high score, and asks for a name
-    game = open(t.repo('src', 'disk', 'bin', 'games', 'snake.aer')).read()
+    game = open(t.repo('packages', 'snake.aer')).read()
     if game.count('    score = 0\n') != 1:
         raise AssertionError("snake.aer's score = 0 line has changed: update this test")
     with open(t.path('snake7.aer'), 'w') as f:
         f.write(game.replace('    score = 0\n', '    score = 7\n'))
-    # (in /bin/: /bin/games/ isn't there until AerOS has added its built-in files)
-    disk = t.disk(files={'/bin/snake7.aer': t.path('snake7.aer')})
+    # installed as snake, in place of the real one
+    files = t.package('snake')
+    files['/apps/snake.aer'] = t.path('snake7.aer')
+    disk = t.disk(files=files)
 
     aeros = t.boot(graphics=True, disk=disk)
     aeros.first_login()
     before = aeros.prompts()
-    aeros.ask('snake7')
+    aeros.ask('snake')
     aeros.wait_for('[ ? ]', 30)
     aeros.key('a')
     time.sleep(4)
@@ -137,18 +143,18 @@ def test_snake_high_scores(t):
     time.sleep(2)
     aeros.screenshot('game_over')
     aeros.key('esc')
-    aeros.wait_prompt(before, 20, what='snake7')
+    aeros.wait_prompt(before, 20, what='snake')
     aeros.expect_not('Error')
 
-    # the score is in the database
+    # the score is in the database, in Snake's own folder
     aeros.cls()
-    aeros.run('sql /bin/games/scores.db SELECT game, name, score FROM scores')
+    aeros.run('sql /apps/snake/scores.db SELECT game, name, score FROM scores')
     aeros.expect_line('game | name | score', 'snake | Ann | 7', '(1 row)')
 
     # and on the title screen next time, without asking again (the serial log keeps
     # everything, so count the questions)
     asked = aeros.serial().count('[ ? ]')
-    aeros.ask('snake7')
+    aeros.ask('snake')
     time.sleep(4)
     if not has_colour(aeros.screenshot('title_with_scores'), GOLD):
         aeros.fail('the title screen does not show the high scores')

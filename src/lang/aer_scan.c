@@ -56,9 +56,9 @@ typedef struct {
 static const ability_t abilities[] = {
     { "read files",                       { "rdf", "rdb", "rdat", "isf", "la", "isenc", "rdenc", NULL },
       "asks before reading your files (AerOS's own it may read)" },
-    { "write files",                      { "wrf", "apf", "wrat", "trunc", NULL },
+    { "write files",                      { "wrf", "apf", "wrat", "trunc", "mkd", NULL },
       "asks you first" },
-    { "delete files",                     { "delf", NULL },
+    { "delete files",                     { "delf", "deld", NULL },
       "asks you first (UNDO brings back files from your home folder)" },
     { "encrypt or decrypt files",         { "enc", "dec", NULL },
       "asks you first" },

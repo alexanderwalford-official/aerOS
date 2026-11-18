@@ -8,7 +8,13 @@ nothing secret. See docs/PACKAGES.md.
 PUBLISHING TO THE PACKAGE SERVER
 
     python3 tools/aerpkg.py publish <program.aer> <version> <description...>
-        add a package, or a new version of one: chess.aer is published as "chess"
+        add a package, or a new version of one: chess.aer is published as "chess", with the
+        files in the folder next to it named after it (chess/), if there is one
+
+    python3 tools/aerpkg.py publish-all <packages folder>
+        publish every package listed in <packages folder>/packages.txt (the repo's packages/
+        folder, say) that isn't on the server already exactly as it is there, all in one go.
+        Packages on the server that the list doesn't have are left as they are
 
     python3 tools/aerpkg.py unpublish <name>
         take a package off the server
@@ -17,9 +23,9 @@ PUBLISHING TO THE PACKAGE SERVER
         once: make the secret token that lets you publish, in that file (only you can read
         it), and print its hash, for token_hash in the server's config file
 
-  Both publish and unpublish fetch the index the server has now, check it is signed by your
-  key, change that one package's line, give it the next serial number, sign it all, and send
-  it. They take these options:
+  publish, publish-all and unpublish fetch the index the server has now, check it is signed
+  by your key, change those packages' lines, give it the next serial number, sign it all, and
+  send it. They take these options:
 
     --server URL    the server (https://packages.intercon.network unless given). Only https://
                     is allowed, as the token goes with it, except http://localhost or
@@ -43,17 +49,35 @@ A STATIC SITE INSTEAD (no server program: for testing, or any plain web server)
   The packages folder holds packages.txt, one package a line ("chess 1.2 A game of chess"),
   and each package's program next to it (chess.aer). Lines starting with # are skipped.
 
+A PACKAGE'S FILES
+
+A package can come with files as well as its program: pictures, a video, sounds. They go in a
+folder next to the program, named after it:
+
+    packages/viewer.aer           the program: /apps/viewer.aer in AerOS
+    packages/viewer/aeros.bmp     its files: /apps/viewer/aeros.bmp
+    packages/viewer/colours.bmp
+
+Each is signed on its own, like the program. A file's name is an 8.3 name in lower case
+(aeros.bmp), and it can't be a program (.aer): AerOS shows you what a package's program could
+do before you install it, which it couldn't for programs hidden among its files.
+
 THE INDEX (what AerOS's pkg app reads)
 
     # AerOS packages: name, version, signature of packages/<name>.aer, description
     #serial 8
     chess 1.2 8111c088...6b0e A game of chess against AerOS
+    viewer 1.0 41d0e2a7...90c1 A picture viewer, with two pictures to try it on
+    #file viewer aeros.bmp 9b7c11e0...2f4a
+    #file viewer colours.bmp 03aa5c8d...e771
 
 A name is 1 to 8 of a-z, 0-9, _ and - (it becomes a file name on AerOS's disk, which has 8.3
-names). A version has no spaces. Signatures are 128 hex digits, as verify() wants. The serial
-goes up by one with every publish; pkg remembers the highest it has seen, and won't use an
-older index, so an old one can't be sent again to roll packages back. index.sig is the
-signature of the whole index, so the list itself can be checked too.
+names). A version has no spaces. Signatures are 128 hex digits, as verify() wants. Each
+"#file <package> <file> <signature>" line is one of a package's files, at
+packages/<package>/<file> on the server; it starts with # so an older pkg, which knows nothing
+of files, skips it. The serial goes up by one with every publish; pkg remembers the highest it
+has seen, and won't use an older index, so an old one can't be sent again to roll packages
+back. index.sig is the signature of the whole index, so the list itself can be checked too.
 """
 
 import argparse
@@ -64,7 +88,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import sys
 import urllib.error
 import urllib.parse
@@ -76,6 +99,10 @@ from aersign import load_private  # noqa: E402  (the same key files aersign.py m
 from cryptography.exceptions import InvalidSignature  # noqa: E402
 
 NAME = re.compile(r'^[a-z0-9_-]{1,8}$')
+# a package's file: an 8.3 name in lower case (it is written to AerOS's disk as it is)
+FILE_NAME = re.compile(r'^[a-z0-9_-]{1,8}\.[a-z0-9]{1,3}$')
+# the biggest file AerOS will fetch (HTTP_BODY_MAX in src/sys/http.h)
+FILE_MAX = 4 * 1024 * 1024
 HEADER = '# AerOS packages: name, version, signature of packages/<name>.aer, description'
 SERIAL = re.compile(r'^#serial ([0-9]{1,9})$')
 # the servers the token may go to over plain http://: only this computer
@@ -111,10 +138,56 @@ def fetch(url):
         sys.exit(f'{url}: can\'t reach the server ({error.reason})')
 
 
+def package_files(program_path):
+    """A package's program and files, from the program's path: (name, program, {file: bytes}).
+    Its files are in the folder next to the program, named after it (see A PACKAGE'S FILES).
+    Stops, saying why, if anything isn't as a package must be."""
+    name = os.path.basename(program_path)
+    if not name.endswith('.aer'):
+        sys.exit(f'{program_path}: a package\'s program is an AerLang file, ending in .aer')
+    name = name[:-len('.aer')]
+    if not NAME.match(name):
+        sys.exit(f'"{name}": a package name is 1 to 8 of a-z, 0-9, _ and - (rename the file)')
+    with open(program_path, 'rb') as f:
+        program = f.read()
+    files = {}
+    folder = os.path.join(os.path.dirname(program_path), name)
+    if os.path.isdir(folder):
+        for file in sorted(os.listdir(folder)):
+            path = os.path.join(folder, file)
+            if os.path.isdir(path):
+                sys.exit(f'{path}: a package\'s files can\'t have folders of their own')
+            if not FILE_NAME.match(file):
+                sys.exit(f'{path}: a package\'s file needs an 8.3 name in lower case, like aeros.bmp')
+            if file.endswith('.aer'):
+                sys.exit(f'{path}: a package can\'t carry other programs, only its own')
+            if os.path.getsize(path) > FILE_MAX:
+                sys.exit(f'{path}: bigger than AerOS can fetch (4 MB)')
+            with open(path, 'rb') as f:
+                files[file] = f.read()
+    return name, program, files
+
+
+def package_lines(key, name, version, description, program, files):
+    """The index lines for a package: its own line, then a #file line for each file."""
+    lines = [f'{name} {version} {key.sign(program).hex()} {description}']
+    for file in sorted(files):
+        lines.append(f'#file {name} {file} {key.sign(files[file]).hex()}')
+    return lines
+
+
+def check_words(version, description):
+    """Stop if a version or description isn't one the index can carry."""
+    if not version or ' ' in version or not printable(version):
+        sys.exit('the version must have no spaces, and only plain letters, numbers and signs')
+    if not description.strip() or not printable(description):
+        sys.exit('the description must be plain text (letters, numbers and signs, no accents)')
+
+
 def current_index(server, key):
-    """What the server lists now, checked: (serial, {name: its line}). (0, {}) if nothing has
-    been published yet. Stops if the index isn't signed by this key: nothing is built on an
-    index that might not be yours."""
+    """What the server lists now, checked: (serial, {name: its lines}), a package's lines being
+    its own line and then its #file lines. (0, {}) if nothing has been published yet. Stops if
+    the index isn't signed by this key: nothing is built on an index that might not be yours."""
     index = fetch(server + '/index.txt')
     signature = fetch(server + '/index.sig')
     if index is None:
@@ -127,24 +200,35 @@ def current_index(server, key):
                  '(Is it the right key, and the right server?)')
     serial = 0
     lines = {}
+    files = []
     for line in index.decode('ascii').split('\n'):
         match = SERIAL.match(line)
         if match:
             serial = int(match.group(1))
+        elif line.startswith('#file '):
+            files.append(line)
         elif line and not line.startswith('#'):
-            lines[line.split(' ')[0]] = line
+            lines[line.split(' ')[0]] = [line]
+    # each #file line goes with its package's line (the second word is the package)
+    for line in files:
+        package = line.split(' ')[1]
+        if package in lines:
+            lines[package].append(line)
     return serial, lines
 
 
-def send(server, token_path, key, serial, lines, programs):
-    """Make the index from the package lines, with this serial, sign it, and upload it with the
-    programs that are new or changed ({name: bytes})."""
-    index = '\n'.join([HEADER, f'#serial {serial}'] + [lines[n] for n in sorted(lines)]) + '\n'
-    index = index.encode('ascii')
+def send(server, token_path, key, serial, lines, programs, files=None):
+    """Make the index from the packages' lines, with this serial, sign it, and upload it with
+    the programs ({name: bytes}) and files ({"name/file": bytes}) that are new or changed."""
+    index = [HEADER, f'#serial {serial}']
+    for name in sorted(lines):
+        index += lines[name]
+    index = ('\n'.join(index) + '\n').encode('ascii')
     upload = {
         'index': base64.b64encode(index).decode(),
         'index_sig': key.sign(index).hex(),
         'packages': {name: base64.b64encode(data).decode() for name, data in programs.items()},
+        'files': {path: base64.b64encode(data).decode() for path, data in (files or {}).items()},
     }
     with open(os.path.expanduser(token_path)) as f:
         token = f.read().strip()
@@ -164,26 +248,46 @@ def send(server, token_path, key, serial, lines, programs):
 
 
 def publish(options):
-    path = options.program
-    name = os.path.basename(path)
-    if not name.endswith('.aer'):
-        sys.exit(f'{path}: a package\'s program is an AerLang file, ending in .aer')
-    name = name[:-len('.aer')]
+    name, program, files = package_files(options.program)
     description = ' '.join(options.description)
-    if not NAME.match(name):
-        sys.exit(f'"{name}": a package name is 1 to 8 of a-z, 0-9, _ and - (rename the file)')
-    if not options.version or ' ' in options.version or not printable(options.version):
-        sys.exit('the version must have no spaces, and only plain letters, numbers and signs')
-    if not description.strip() or not printable(description):
-        sys.exit('the description must be plain text (letters, numbers and signs, no accents)')
-    with open(path, 'rb') as f:
-        program = f.read()
+    check_words(options.version, description)
 
     server = check_server(options.server)
     key = load_private(os.path.expanduser(options.key))
     serial, lines = current_index(server, key)
-    lines[name] = f'{name} {options.version} {key.sign(program).hex()} {description}'
-    send(server, options.token, key, serial + 1, lines, {name: program})
+    lines[name] = package_lines(key, name, options.version, description, program, files)
+    send(server, options.token, key, serial + 1, lines, {name: program},
+         {f'{name}/{file}': data for file, data in files.items()})
+
+
+def publish_all(options):
+    server = check_server(options.server)
+    key = load_private(os.path.expanduser(options.key))
+    serial, lines = current_index(server, key)
+
+    # Ed25519 signatures are the same every time the same bytes are signed, so a package whose
+    # lines come out just as the server has them is already there as it is: nothing to send
+    programs, files, changed = {}, {}, []
+    for name, version, description in read_list(options.folder):
+        check_words(version, description)
+        _, program, its_files = package_files(os.path.join(options.folder, name + '.aer'))
+        new = package_lines(key, name, version, description, program, its_files)
+        if lines.get(name) == new:
+            continue
+        old_signatures = set(line.split(' ')[-1] for line in lines.get(name, []))
+        lines[name] = new
+        changed.append(f'{name} {version}')
+        # only what is new or different goes up: the server keeps the rest
+        if new[0].split(' ')[2] not in old_signatures:
+            programs[name] = program
+        for file, data in its_files.items():
+            if key.sign(data).hex() not in old_signatures:
+                files[f'{name}/{file}'] = data
+    if not changed:
+        print('Every package in the list is on the server already, just as it is here.')
+        return
+    print('Publishing: ' + ', '.join(changed))
+    send(server, options.token, key, serial + 1, lines, programs, files)
 
 
 def unpublish(options):
@@ -228,6 +332,8 @@ def read_list(folder):
                 sys.exit(f'packages.txt line {number}: "{name}" must be 1 to 8 of a-z, 0-9, _ and -')
             if not os.path.isfile(os.path.join(folder, name + '.aer')):
                 sys.exit(f'packages.txt line {number}: there is no {name}.aer next to it')
+            if any(name == other[0] for other in packages):
+                sys.exit(f'packages.txt line {number}: {name} is listed twice')
             packages.append((name, version, description))
     if not packages:
         sys.exit('packages.txt lists no packages')
@@ -240,15 +346,19 @@ def build(options):
     packages = read_list(folder)
     os.makedirs(os.path.join(site, 'packages'), exist_ok=True)
 
-    # each package's program, signed, and a line for it in the index
+    # each package's program and files, signed, and lines for them in the index
     lines = [HEADER]
     for name, version, description in packages:
-        source = os.path.join(folder, name + '.aer')
-        with open(source, 'rb') as f:
-            signature = key.sign(f.read()).hex()
-        shutil.copyfile(source, os.path.join(site, 'packages', name + '.aer'))
-        lines.append(f'{name} {version} {signature} {description}')
-        print(f'  {name} {version}')
+        _, program, files = package_files(os.path.join(folder, name + '.aer'))
+        with open(os.path.join(site, 'packages', name + '.aer'), 'wb') as f:
+            f.write(program)
+        if files:
+            os.makedirs(os.path.join(site, 'packages', name), exist_ok=True)
+        for file, data in files.items():
+            with open(os.path.join(site, 'packages', name, file), 'wb') as f:
+                f.write(data)
+        lines += package_lines(key, name, version, description, program, files)
+        print(f'  {name} {version}' + (f', with {len(files)} file(s)' if files else ''))
 
     # the index, and its own signature (no line break after it: pkg compares it as it is)
     index = ('\n'.join(lines) + '\n').encode()
@@ -283,6 +393,11 @@ def main():
     command.add_argument('description', nargs='+')
     server_options(command)
     command.set_defaults(run=publish)
+
+    command = commands.add_parser('publish-all')
+    command.add_argument('folder')
+    server_options(command)
+    command.set_defaults(run=publish_all)
 
     command = commands.add_parser('unpublish')
     command.add_argument('name')

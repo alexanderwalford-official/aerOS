@@ -109,6 +109,8 @@ value_t bi_truncate (int argc, value_t* argv, int line);
 value_t bi_file_exists (int argc, value_t* argv, int line);
 value_t bi_delete_file (int argc, value_t* argv, int line);
 value_t bi_sync (int argc, value_t* argv, int line);
+value_t bi_make_folder (int argc, value_t* argv, int line);
+value_t bi_delete_folder (int argc, value_t* argv, int line);
 value_t bi_cwd (int argc, value_t* argv, int line);
 value_t bi_list_files (int argc, value_t* argv, int line);
 value_t bi_encrypt_file (int argc, value_t* argv, int line);

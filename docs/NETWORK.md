@@ -193,7 +193,8 @@ and again, so a server waiting for visitors holds the network lock only for each
 of AerOS can use the network meanwhile (see "The network lock" in [threads](THREADS.md)).
 `SCAN` says a program "can let other computers connect to it".
 
-`webserve` (`src/disk/bin/webserve.aer`) is a web server in about 150 lines of AerLang, written
+`webserve` (a package: `pkg install webserve`, `packages/webserve.aer` in the repository) is a
+web server in about 150 lines of AerLang, written
 to be read:
 - it looks after all its visitors at once, in one loop: a quick look for a new one
   (`tcpaccept` with 0 ms, which doesn't wait), then a quick look at what each has sent
@@ -269,9 +270,8 @@ each descriptor pointing at a 2 KB buffer. See the top of `drivers/net/e1000.c`.
   terminal, or with the disk, can.
 * **No HTTPS, IPv6, fragments or broadcast messages.** Web pages, and anything a server in AerOS
   sends, go in the clear, and a sealed message is one packet.
-* **One answer at a time.** A server sends each piece of an answer only once the last is
-  acknowledged, and `webserve` answers one request before looking at the next: fine for pages,
-  slow for big files. (Threads inside a program, still to come, would let each visitor have
+* **One piece at a time.** A server sends each piece of an answer only once the last is
+  acknowledged: fine for pages, slow for big files. (Threads inside a program, still to come, would let each visitor have
   its own.)
 * **Polling.** Nothing arrives in the background: a message that comes while AerOS is busy with
   something else waits in the card (32 frames at most) until AerOS next looks.

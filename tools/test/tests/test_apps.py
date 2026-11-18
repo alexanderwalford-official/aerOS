@@ -1,5 +1,6 @@
-"""The built-in apps: the manual reader, the animation demo, the log viewer (aerlog), and how
-built-in apps are installed onto a disk and kept up to date (see the top of src/sys/apps.c)."""
+"""The built-in apps: the manual reader, the log viewer (aerlog), and how built-in apps are
+installed onto a disk, kept up to date, and taken away once AerOS doesn't come with them (see
+the top of src/sys/apps.c). And the animation demo, which is a package now."""
 
 import hashlib
 import re
@@ -33,8 +34,9 @@ def test_doc_reader(t):
 
 
 def test_animations(t):
-    aeros = t.boot()
-    aeros.wait_for(GUEST_PROMPT, 60)
+    # anim is a package: installed on the disk the way pkg install puts it
+    aeros = t.boot(disk=t.disk(files=t.package('anim')))
+    aeros.first_login()
     aeros.ask('anim')
     aeros.wait_for('Animations', 30)
     time.sleep(0.5)
@@ -58,7 +60,7 @@ def boot_and_stop(t, disk):
 def test_built_in_apps_are_installed(t):
     disk = t.disk()
     built_in_hello = open(t.repo('src', 'disk', 'bin', 'hello.aer'), 'rb').read()
-    built_in_viewer = open(t.repo('src', 'disk', 'bin', 'viewer.aer'), 'rb').read()
+    built_in_sysinfo = open(t.repo('src', 'disk', 'bin', 'sysinfo.aer'), 'rb').read()
 
     # a new disk gets every built-in file, and a record of what it was given
     printed = boot_and_stop(t, disk)
@@ -68,8 +70,8 @@ def test_built_in_apps_are_installed(t):
     if read_disk_file(disk, '/bin/hello.aer') != built_in_hello:
         raise Failure('/bin/hello.aer is not the built-in copy')
     record = read_disk_file(disk, '/sys/apps.lst').decode()
-    if '/bin/viewer.aer ' not in record:
-        raise Failure('/sys/apps.lst has no line for viewer.aer:\n' + record)
+    if '/bin/sysinfo.aer ' not in record:
+        raise Failure('/sys/apps.lst has no line for sysinfo.aer:\n' + record)
 
     # booting again has nothing to do
     if 'added or updated' in boot_and_stop(t, disk):
@@ -83,21 +85,59 @@ def test_built_in_apps_are_installed(t):
         raise Failure('a changed hello.aer was replaced')
 
     # an older copy that nobody changed (its hash is the one in the record) is brought up to date
-    older = b'# an older viewer\n'
+    older = b'# an older sysinfo\n'
     record = read_disk_file(disk, '/sys/apps.lst').decode()
-    record = re.sub(r'^/bin/viewer\.aer \S+', '/bin/viewer.aer ' + hashlib.sha256(older).hexdigest(),
+    record = re.sub(r'^/bin/sysinfo\.aer \S+', '/bin/sysinfo.aer ' + hashlib.sha256(older).hexdigest(),
                     record, flags=re.M)
     write_disk_file(disk, '/sys/apps.lst', record)
-    write_disk_file(disk, '/bin/viewer.aer', older)
+    write_disk_file(disk, '/bin/sysinfo.aer', older)
     boot_and_stop(t, disk)
-    if read_disk_file(disk, '/bin/viewer.aer') != built_in_viewer:
-        raise Failure('an untouched older viewer.aer was not updated')
+    if read_disk_file(disk, '/bin/sysinfo.aer') != built_in_sysinfo:
+        raise Failure('an untouched older sysinfo.aer was not updated')
 
     # a deleted app comes back
-    delete_disk_file(disk, '/bin/viewer.aer')
+    delete_disk_file(disk, '/bin/sysinfo.aer')
     boot_and_stop(t, disk)
-    if read_disk_file(disk, '/bin/viewer.aer') != built_in_viewer:
-        raise Failure('a deleted viewer.aer did not come back')
+    if read_disk_file(disk, '/bin/sysinfo.aer') != built_in_sysinfo:
+        raise Failure('a deleted sysinfo.aer did not come back')
+    t.check_disk(disk)
+
+
+def test_old_built_in_files_are_taken_away(t):
+    # A disk from an older AerOS, which came with Snake and a picture: their copies, and the
+    # record saying AerOS put them there. Now they are packages, so the copies nobody changed go
+    # (an old /bin/games/snake.aer would otherwise run in place of an installed snake package)
+    old_snake = b'print("the snake an older AerOS came with")\n'
+    old_picture = b'BM an older picture'
+    mine = b'print("my own version of the old maze")\n'
+    for name, data in (('snake.aer', old_snake), ('aeros.bmp', old_picture), ('maze3d.aer', mine)):
+        with open(t.path(name), 'wb') as f:
+            f.write(data)
+    disk = t.disk(files={'/bin/games/snake.aer': t.path('snake.aer'),
+                         '/bin/games/maze3d.aer': t.path('maze3d.aer'),
+                         '/bin/aeros.bmp': t.path('aeros.bmp')})
+    printed = boot_and_stop(t, disk)
+    record = read_disk_file(disk, '/sys/apps.lst').decode()
+    # what the record would have said: maze3d.aer as an older AerOS put it, before it was changed
+    record += ''.join(f'{path} {hashlib.sha256(data).hexdigest()}\n' for path, data in (
+        ('/bin/games/snake.aer', old_snake), ('/bin/aeros.bmp', old_picture),
+        ('/bin/games/maze3d.aer', b'the maze an older AerOS came with\n')))
+    write_disk_file(disk, '/sys/apps.lst', record)
+
+    printed = boot_and_stop(t, disk)
+    if '2 old built-in file(s) removed' not in printed:
+        raise Failure('the old built-in files were not taken away:\n' + printed[-800:])
+    if read_disk_file(disk, '/bin/games/snake.aer') is not None or read_disk_file(disk, '/bin/aeros.bmp') is not None:
+        raise Failure('an unchanged old built-in file is still there')
+    # the one you changed is yours: it stays, and the record forgets all three
+    if read_disk_file(disk, '/bin/games/maze3d.aer') != mine:
+        raise Failure('a changed old built-in file was taken away')
+    record = read_disk_file(disk, '/sys/apps.lst').decode()
+    if '/bin/games/' in record or '/bin/aeros.bmp' in record:
+        raise Failure('the record still lists files AerOS no longer comes with:\n' + record)
+    # and nothing to do the next time
+    if 'removed' in boot_and_stop(t, disk):
+        raise Failure('the next boot took files away again')
     t.check_disk(disk)
 
 
@@ -187,10 +227,10 @@ def test_installed_apps_run_by_name(t):
     aeros = t.boot()
     aeros.wait_for(GUEST_PROMPT, 60)
     aeros.run('mkf /apps/hiya.aer print("hi from an installed app")')
-    aeros.run('mkf /apps/snake.aer print("not the real snake")')
+    aeros.run('mkf /apps/sysinfo.aer print("not the real sysinfo")')
     aeros.cls()
     aeros.run('hiya')
     aeros.expect_line('hi from an installed app')
     aeros.cls()
-    aeros.run('scan snake')
-    aeros.expect('/bin/games/snake.aer can:')
+    aeros.run('scan sysinfo')
+    aeros.expect('/bin/sysinfo.aer only works with its own values')

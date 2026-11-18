@@ -315,6 +315,9 @@ int init_boot (void) {
         prtf("< APPS .. > %d built-in file(s) added or updated\n", installed);
         syslog_add("boot", "apps", "%d built-in file(s) added or updated", installed);
     }
+    if (apps_retired() > 0) {
+        prtf("< APPS .. > %d old built-in file(s) removed: they are packages now (PKG LIST)\n", apps_retired());
+    }
     // a file that couldn't be written is tried again next boot, but say so rather than nothing
     if (apps_failed() > 0) {
         prtf("[ ! ] %d built-in file(s) couldn't be written to the disk (full, or a drive error): "

@@ -1,5 +1,6 @@
 """TCP listening (src/sys/tcp.c, LISTENING in tcp.h): other computers connecting to AerOS, and
-the webserve app (src/disk/bin/webserve.aer) answering them.
+the webserve app (packages/webserve.aer, put on the test's disk as pkg install would) answering
+them.
 
 QEMU forwards a port on this computer to AerOS's port 8080 (hostfwd), so connecting to
 127.0.0.1:<port> here reaches whatever listens on 8080 in AerOS. To AerOS, the connection comes
@@ -46,7 +47,8 @@ def start(aeros, line):
 
 def test_a_web_server(t):
     port = free_port()
-    aeros = t.boot(disk=t.disk(), network=f'user,model=e1000,hostfwd=tcp:127.0.0.1:{port}-:8080')
+    aeros = t.boot(disk=t.disk(files=t.package('webserve')),
+                   network=f'user,model=e1000,hostfwd=tcp:127.0.0.1:{port}-:8080')
     aeros.first_login()
 
     # without a serve rule, nothing may listen: webserve says what would allow it

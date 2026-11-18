@@ -108,9 +108,10 @@ orange, also called `BROWN`), `BRIGHT`, `DARK_GRAY`, `LIGHT_BLUE`, `LIGHT_GREEN`
 **Lists:** `list(n, fill)`, `push(l, x)`, `pop(l)`, `insert(l, i, x)`, `remove(l, i)`,
 `bytes(n)`.
 
-**Files:** `rdf(path)` (nil if missing), `rdb(path)`, `wrf(path, text)`,
+**Files:** `rdf(path)` (nil if missing), `rdb(path)`, `wrf(path, text)` (text or bytes),
 `apf(path, text)`, `isf(path)`, `delf(path)`, `la(dir)`,
-`cwd()`. A program [asks you first](perms.md) before it reads your files or changes any
+`cwd()`. **Folders:** `mkd(path)` makes one (the program may then change files in it without
+asking, until it ends), `deld(path)` deletes one and the files in it. A program [asks you first](perms.md) before it reads your files or changes any
 file, and if you say no the function fails as if the file wasn't there. `rdf("notes.txt@2")`
 reads an [old version](versions.md) of a file.
 
@@ -196,7 +197,7 @@ negative: only the part on the screen is drawn, which is how the viewer zooms in
 
 ```
 gopen()
-image(rdb("/bin/aeros.bmp"), 0, 0)
+image(rdb("/apps/viewer/aeros.bmp"), 0, 0)   # after pkg install viewer
 text(10, 320, "Press a key", 0xFFFFFF, 2)
 key()
 ```
@@ -208,7 +209,7 @@ key is held right now (`"a"`, `KEY_LEFT`, `KEY_SPACE`, `KEY_SHIFT`...), without 
 at once: up to 8 sounds play together. `sstop(n)` stops one, `isply(n)` asks if it still
 plays. Use `keydown` for things that last (moving) and `haskey()` / `key()` for single
 presses (jumping): every press waits there until it is read, so a quick tap is never missed.
-`/bin/games/move.aer` uses them all.
+The `move` package (`pkg install move`) uses them all.
 
 **The mouse:** `mouse()` gives `[x, y, buttons]`, where the pointer is in pixels and which
 buttons are held (`MOUSE_LEFT` 1, `MOUSE_RIGHT` 2, `MOUSE_MIDDLE` 4 added up), or nil if there
@@ -217,7 +218,7 @@ stops at the edge of the screen, so it is the one for turning a camera, and it g
 with no mouse. `mousedown(MOUSE_LEFT)` asks if a button is held. AerOS draws no pointer for a
 program, so it draws its own. The terminal shows one while its prompt waits, but a program has
 the mouse to itself: it switches on when the program asks about it and off when it ends. In
-QEMU, click the window first (Ctrl+Alt+G lets go). `/bin/games/maze3d.aer` looks around with it.
+QEMU, click the window first (Ctrl+Alt+G lets go). The `maze3d` package looks around with it.
 
 ```
 gopen()
@@ -239,11 +240,18 @@ end
 | File | Shows |
 | --- | --- |
 | `/bin/hello.aer` | input, functions, lists, loops |
-| `/bin/games/guess.aer` | random numbers and a game loop |
-| `/bin/viewer.aer` | graphics, pictures and a menu |
-| `/bin/games/move.aer` | smooth movement, held keys and mixed sounds |
-| `/bin/games/snake.aer` | a whole game: graphics, a back buffer, held keys, lists, and high scores in a database |
-| `/bin/games/maze3d.aer` | a 3D maze drawn with ray casting: decimals, sin / cos, sprites and mouse look |
 | `/bin/read.aer` | this reader: text handling, a whole app |
 | `/bin/sysinfo.aer` | system information: lists, layout and scrolling |
-| `/bin/anim.aer` | spinners, progress bars and moving text |
+| `/bin/pkg.aer` | installing packages: fetching, checking signatures, files |
+
+And these [packages](commands.md), once installed (`pkg install guess`), are in `/apps/`:
+
+| File | Shows |
+| --- | --- |
+| `/apps/guess.aer` | random numbers and a game loop |
+| `/apps/viewer.aer` | graphics, pictures and a menu |
+| `/apps/move.aer` | smooth movement, held keys and mixed sounds |
+| `/apps/snake.aer` | a whole game: graphics, a back buffer, held keys, lists, and high scores in a database |
+| `/apps/maze3d.aer` | a 3D maze drawn with ray casting: decimals, sin / cos, sprites and mouse look |
+| `/apps/anim.aer` | spinners, progress bars and moving text |
+| `/apps/webserve.aer` | a web server: TCP, and serving files |

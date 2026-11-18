@@ -22,7 +22,9 @@ WHAT IT ANSWERS
     GET  /index.txt               the signed list of packages, byte for byte as it was signed
     GET  /index.sig               its signature (128 hex digits, no line break)
     GET  /packages/<name>.aer     a package's program
-    POST /admin/publish           a new signed index, and any programs that are new or changed
+    GET  /packages/<name>/<file>  one of the files a package comes with (a picture, a video...)
+    POST /admin/publish           a new signed index, and any programs and files that are new
+                                  or changed
 
 It only listens on 127.0.0.1: nginx stands in front of it (tools/pkgserver/nginx.conf). nginx
 passes the GETs through on plain http:// (AerOS can't do HTTPS, and doesn't need to, as
@@ -37,12 +39,13 @@ HOW AN UPLOAD IS CHECKED (check_upload below)
     3. Its "#serial <number>" is higher than the one being served now. So an old upload, even a
        genuine one, can't be sent again to roll the packages back.
     4. Every package line is well formed, and every package it lists has a program (uploaded
-       now, or already here) that matches the signature on its line.
+       now, or already here) that matches the signature on its line. The same for every file
+       its "#file <package> <file> <signature>" lines list.
     5. Nothing is uploaded that the index doesn't list.
 
 Only if all of that holds is anything changed, all at once in one transaction: the new
-programs are kept, programs the new index no longer lists are deleted, and the new index
-replaces the old one. So the site is never half updated, and someone who steals the token
+programs and files are kept, those the new index no longer lists are deleted, and the new
+index replaces the old one. So the site is never half updated, and someone who steals the token
 still can't publish anything that wasn't signed with the private key.
 """
 
@@ -62,6 +65,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 # a package name: it becomes /apps/<name>.aer on AerOS's disk, which has 8.3 file names
 NAME = re.compile(r'^[a-z0-9_-]{1,8}$')
+# a file a package comes with: an 8.3 name in lower case, as pkg.aer writes it to AerOS's disk
+# (/apps/<name>/<file>). Never a program (.aer): only a package's own program is shown to you,
+# with scan(), before you install it
+FILE_NAME = re.compile(r'^[a-z0-9_-]{1,8}\.[a-z0-9]{1,3}$')
 # a signature: 128 hex digits, as verify() in AerLang wants
 SIGNATURE = re.compile(r'^[0-9a-f]{128}$')
 # the serial line: "#serial 42"
@@ -69,7 +76,7 @@ SERIAL = re.compile(r'^#serial ([0-9]{1,9})$')
 # the biggest program AerOS will fetch (HTTP_BODY_MAX in src/sys/http.h), and so the biggest
 # index too
 FILE_MAX = 4 * 1024 * 1024
-# the biggest upload: a 4 MB program grows by a third in base64, plus the index
+# the biggest upload: a 4 MB program or file grows by a third in base64, plus the index
 UPLOAD_MAX = 8 * 1024 * 1024
 
 CONFIG = {}   # the config file's settings, read once at the start (read_config)
@@ -90,6 +97,13 @@ def open_database():
         CREATE TABLE IF NOT EXISTS packages (
             name    TEXT PRIMARY KEY,
             program BLOB NOT NULL
+        );
+        -- the files packages come with, exactly as they were signed
+        CREATE TABLE IF NOT EXISTS files (
+            package TEXT NOT NULL,
+            name    TEXT NOT NULL,
+            data    BLOB NOT NULL,
+            PRIMARY KEY (package, name)
         );
         -- the index being served, and its signature: one row (id 1), or none before the first
         -- publish
@@ -122,16 +136,23 @@ def signed(data, signature_hex):
         return False
 
 
+def good_file(name):
+    """Is this a name a package's file may have?"""
+    return bool(FILE_NAME.match(name)) and not name.endswith('.aer')
+
+
 def read_index(index):
-    """The serial number and the package lines of an index, as (serial, {name: signature}).
-    The rules are the ones pkg.aer reads it by: lines are split at '\\n'; blank lines and lines
-    starting with # are skipped; a package line is "name version signature description"."""
+    """The serial number, package lines and file lines of an index, as (serial, {name: signature},
+    {(package, file): signature}). The rules are the ones pkg.aer reads it by: lines are split at
+    '\\n'; blank lines and other lines starting with # are skipped; a package line is "name
+    version signature description", and a file line "#file package file signature"."""
     try:
         text = index.decode('ascii')
     except UnicodeDecodeError:
         raise Refused('the index must be plain ASCII text')
     serial = None
     packages = {}
+    files = {}
     for number, line in enumerate(text.split('\n'), start=1):
         # only printable characters: no tabs, and no '\r', which pkg would take as part of a line
         if any(not (32 <= ord(c) < 127) for c in line):
@@ -141,6 +162,20 @@ def read_index(index):
             if match is None or serial is not None:
                 raise Refused(f'index line {number}: there must be one "#serial <number>" line')
             serial = int(match.group(1))
+            continue
+        if line.startswith('#file'):
+            parts = line.split(' ')
+            if len(parts) != 4 or parts[0] != '#file':
+                raise Refused(f'index line {number}: a file line is "#file <package> <file> <signature>"')
+            package, file, signature = parts[1], parts[2], parts[3]
+            if not NAME.match(package) or not good_file(file):
+                raise Refused(f'index line {number}: "{file}" isn\'t a name a package\'s file can have '
+                              f'(8.3, lower case, not .aer)')
+            if not SIGNATURE.match(signature):
+                raise Refused(f'index line {number}: the signature must be 128 hex digits')
+            if (package, file) in files:
+                raise Refused(f'index line {number}: {package}/{file} is listed twice')
+            files[(package, file)] = signature
             continue
         if line == '' or line.startswith('#'):
             continue
@@ -157,13 +192,17 @@ def read_index(index):
         packages[name] = signature
     if serial is None:
         raise Refused('the index has no "#serial <number>" line')
-    return serial, packages
+    for package, file in files:
+        if package not in packages:
+            raise Refused(f'the index lists the file {package}/{file}, but no package {package}')
+    return serial, packages, files
 
 
 def check_upload(db, upload):
     """Check an upload (the JSON the publish command sends, already parsed) against the rules
     at the top of this file. Gives back (serial, index, signature, {name: program} uploaded,
-    names listed), or raises Refused saying what is wrong. Changes nothing."""
+    {(package, file): data} uploaded, names listed, files listed), or raises Refused saying what
+    is wrong. Changes nothing."""
     if not isinstance(upload, dict):
         raise Refused('the upload must be a JSON object')
     try:
@@ -171,12 +210,16 @@ def check_upload(db, upload):
         index_sig = upload['index_sig']
         programs = {name: base64.b64decode(data, validate=True)
                     for name, data in upload.get('packages', {}).items()}
+        uploaded_files = {tuple(path.split('/', 1)): base64.b64decode(data, validate=True)
+                          for path, data in upload.get('files', {}).items()}
     except (KeyError, TypeError, AttributeError, ValueError):
         raise Refused('the upload needs "index" (base64), "index_sig" (hex) and "packages" '
-                      '({name: base64})')
+                      '({name: base64}), and may have "files" ({"name/file": base64})')
     # (checked before any name is put in a message or the log)
     if not all(NAME.match(name) for name in programs):
         raise Refused('an uploaded package\'s name isn\'t 1 to 8 of a-z, 0-9, _ and -')
+    if not all(len(path) == 2 and NAME.match(path[0]) and good_file(path[1]) for path in uploaded_files):
+        raise Refused('an uploaded file isn\'t "<package>/<file>", with an 8.3 name (not .aer)')
     if not isinstance(index_sig, str) or not SIGNATURE.match(index_sig):
         raise Refused('index_sig must be 128 hex digits')
     if len(index) > FILE_MAX:
@@ -187,7 +230,7 @@ def check_upload(db, upload):
         raise Refused('the index isn\'t signed by the packages\' key')
 
     # 3. newer than the one being served
-    serial, listed = read_index(index)
+    serial, listed, listed_files = read_index(index)
     row = db.execute('SELECT serial FROM site WHERE id = 1').fetchone()
     current = row[0] if row else 0
     if serial <= current:
@@ -207,12 +250,29 @@ def check_upload(db, upload):
             program = row[0]
         if not signed(program, signature):
             raise Refused(f'{name}\'s program doesn\'t match the signature on its line')
+    # ...and every file listed
+    for (package, file), signature in listed_files.items():
+        if (package, file) in uploaded_files:
+            data = uploaded_files[(package, file)]
+            if len(data) > FILE_MAX:
+                raise Refused(f'{package}/{file} is too big for AerOS to fetch')
+        else:
+            row = db.execute('SELECT data FROM files WHERE package = ? AND name = ?',
+                             (package, file)).fetchone()
+            if row is None:
+                raise Refused(f'the index lists {package}/{file}, but it wasn\'t uploaded and isn\'t here')
+            data = row[0]
+        if not signed(data, signature):
+            raise Refused(f'{package}/{file} doesn\'t match the signature on its line')
 
     # 5. nothing uploaded that isn't listed
     for name in programs:
         if name not in listed:
             raise Refused(f'{name} was uploaded, but the index doesn\'t list it')
-    return serial, index, index_sig, programs, list(listed)
+    for package, file in uploaded_files:
+        if (package, file) not in listed_files:
+            raise Refused(f'{package}/{file} was uploaded, but the index doesn\'t list it')
+    return serial, index, index_sig, programs, uploaded_files, list(listed), list(listed_files)
 
 
 def publish(upload, address):
@@ -224,20 +284,26 @@ def publish(upload, address):
         # both pass the serial check against the same old serial
         db.execute('BEGIN IMMEDIATE')
         try:
-            serial, index, index_sig, programs, listed = check_upload(db, upload)
+            serial, index, index_sig, programs, files, listed, listed_files = check_upload(db, upload)
             for name, program in programs.items():
                 db.execute('INSERT OR REPLACE INTO packages (name, program) VALUES (?, ?)',
                            (name, program))
-            # programs the new index doesn't list any more
+            for (package, file), data in files.items():
+                db.execute('INSERT OR REPLACE INTO files (package, name, data) VALUES (?, ?, ?)',
+                           (package, file, data))
+            # programs and files the new index doesn't list any more
             gone = [name for (name,) in db.execute('SELECT name FROM packages')
                     if name not in listed]
             for name in gone:
                 db.execute('DELETE FROM packages WHERE name = ?', (name,))
+            for package, file in db.execute('SELECT package, name FROM files').fetchall():
+                if (package, file) not in listed_files:
+                    db.execute('DELETE FROM files WHERE package = ? AND name = ?', (package, file))
             db.execute('INSERT OR REPLACE INTO site (id, serial, index_txt, index_sig) '
                        'VALUES (1, ?, ?, ?)', (serial, index, index_sig))
             db.execute('INSERT INTO publishes (serial, at, address, uploaded) VALUES (?, ?, ?, ?)',
                        (serial, time.strftime('%Y-%m-%d %H:%M:%S'), address,
-                        ' '.join(sorted(programs)) or '-'))
+                        ' '.join(sorted(programs) + sorted(f'{p}/{f}' for p, f in files)) or '-'))
             db.execute('COMMIT')
         except BaseException:
             db.execute('ROLLBACK')
@@ -245,8 +311,8 @@ def publish(upload, address):
     finally:
         db.close()
     message = f'Published serial {serial}: {len(listed)} package(s) listed'
-    if programs:
-        message += ', uploaded ' + ', '.join(sorted(programs))
+    if programs or files:
+        message += ', uploaded ' + ', '.join(sorted(programs) + sorted(f'{p}/{f}' for p, f in files))
     if gone:
         message += ', removed ' + ', '.join(gone)
     return message + '.'
@@ -302,6 +368,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                  (match.group(1),)).fetchone()
                 if row is not None:
                     self.send(200, row[0])
+                    return
+            match = re.fullmatch(r'/packages/([a-z0-9_-]{1,8})/([a-z0-9_-]{1,8}\.[a-z0-9]{1,3})', path)
+            if match:
+                row = db.execute('SELECT data FROM files WHERE package = ? AND name = ?',
+                                 (match.group(1), match.group(2))).fetchone()
+                if row is not None:
+                    self.send(200, row[0], 'application/octet-stream')
                     return
             self.send(404, 'No such page.\n')
         finally:

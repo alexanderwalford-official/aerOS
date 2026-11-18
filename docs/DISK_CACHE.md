@@ -82,7 +82,7 @@ milliseconds. A program that must be sure, like a game saving progress, can call
 
 ## How much faster
 
-`bench` (`src/disk/bin/bench.aer`) does the same work every run. These are typical numbers in
+`bench` (a package: `pkg install bench`, `packages/bench.aer`) does the same work every run. These are typical numbers in
 QEMU, with the disk image on Windows through WSL. The "after" times include `sync()`, so they
 count getting everything onto the disk, not just into memory:
 

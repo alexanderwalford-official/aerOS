@@ -4,14 +4,14 @@ Its report is long, so these look in the serial log, which keeps everything prin
 
 def test_scan(t):
     disk = t.disk(files={'/bin/phish.aer': t.files + '/phish.aer',
-                         '/bin/clean.aer': t.files + '/clean.aer'})
+                         '/bin/clean.aer': t.files + '/clean.aer', **t.package('snake')})
     aeros = t.boot(disk=disk)
     aeros.first_login()
 
-    # a built-in app: Snake keeps high scores in a database and draws on the whole screen,
-    # and nothing about it is suspicious
+    # an installed package: Snake keeps high scores in a database and draws on the whole
+    # screen, and nothing about it is suspicious
     aeros.run('scan snake')
-    aeros.expect_printed('/bin/games/snake.aer can:',
+    aeros.expect_printed('/apps/snake.aer can:',
                          '  use databases (dbopen, dbrun, dbquery)',
                          '  draw on the whole screen (gopen)',
                          'Nothing looks suspicious.')

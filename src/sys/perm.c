@@ -5,9 +5,11 @@
 
         1. no program running (the terminal, code at the prompt)     allowed
         2. /acc/ (the accounts), or changing AerOS's log             refused
-        3. reading the system's files, the program's own, or a
-           file named after it on the command line                   allowed
-        4. answered already while this program runs (Y or N)         that answer
+        3. reading the system's files, the program's own (its folder,
+           and the folder named after it next to it), or a file
+           named after it on the command line                        allowed
+        4. answered already while this program runs (Y or N), or     that answer
+           a folder it made itself (mkd) while it runs               (allowed)
         5. answered "always" before (kept in /acc/perms)             allowed
         6. otherwise                                                 ask (but a program in
                                                                      the background can't:
@@ -119,6 +121,21 @@ static bool system_folder (const char* folder) {
         }
     }
     return false;
+}
+
+// Is this the folder of the program's own files: the one next to it with its name, without the
+// .aer? /apps/viewer.aer has /apps/viewer/, where an installed package keeps its pictures and
+// the like (pkg.aer puts them there). Nothing else goes in that folder, so reading it is no more
+// private than reading the program itself
+static bool own_files (const char* folder) {
+    char mine[FS_PATH_MAX];
+    size_t length = slen(perm_running->name);
+    // "viewer.aer" without its last 4 characters is "viewer"
+    if (length <= 4 || strcasecmp(perm_running->name + length - 4, ".aer") != 0) {
+        return false;
+    }
+    sfmt(mine, sizeof(mine), "%s%.*s/", perm_running->folder, (int)(length - 4), perm_running->name);
+    return strcasecmp(folder, mine) == 0;
 }
 
 // Was this file (or folder) named on the command line, after the program's name? Each word is
@@ -416,6 +433,17 @@ bool perm_confirm (const char* question) {
 //  The rules
 // =================================================================================================
 
+// Keep an answer about a folder for rule 4, while the running program runs. Once the list is
+// full, new answers just aren't kept, and the question is asked each time
+static void remember_decision (const char* folder, perm_kind_t kind, bool allowed) {
+    if (perm_running->decision_count < DECISIONS_MAX) {
+        scpy(perm_running->decisions[perm_running->decision_count].folder, folder, FS_PATH_MAX);
+        perm_running->decisions[perm_running->decision_count].kind = kind;
+        perm_running->decisions[perm_running->decision_count].allowed = allowed;
+        perm_running->decision_count++;
+    }
+}
+
 // may the running program read or change this file? Goes through rules 1 to 6 at the top
 bool perm_allows (const char* folder, const char* name, perm_kind_t kind) {
     // 1. the terminal and the code typed at it are you
@@ -437,7 +465,7 @@ bool perm_allows (const char* folder, const char* name, perm_kind_t kind) {
     }
     // 3. free to read
     if (kind == PERM_READ) {
-        bool own_folder = strcasecmp(folder, perm_running->folder) == 0;
+        bool own_folder = strcasecmp(folder, perm_running->folder) == 0 || own_files(folder);
         if (system_folder(folder) || own_folder || named_by_you(folder, name)) {
             TRACE("%s may read %s%s without asking: %s", perm_running->name, folder, name,
                   own_folder ? "it is the program's own folder" :
@@ -471,13 +499,16 @@ bool perm_allows (const char* folder, const char* name, perm_kind_t kind) {
     if (answer == ANSWER_ALWAYS) {
         remember_always(folder, kind);
     }
-    // remember the answer for rule 4, so the same question isn't asked again and again. Once
-    // the list is full, new answers just aren't kept and the question is asked each time
-    if (perm_running->decision_count < DECISIONS_MAX) {
-        scpy(perm_running->decisions[perm_running->decision_count].folder, folder, FS_PATH_MAX);
-        perm_running->decisions[perm_running->decision_count].kind = kind;
-        perm_running->decisions[perm_running->decision_count].allowed = answer != ANSWER_NO;
-        perm_running->decision_count++;
-    }
+    // remember the answer for rule 4, so the same question isn't asked again and again
+    remember_decision(folder, kind, answer != ANSWER_NO);
     return answer != ANSWER_NO;
+}
+
+// the running program has just made this folder (mkd): it may change what is in it until it
+// ends, without asking (rule 4). It was empty a moment ago, so nothing of yours is in it
+void perm_made_folder (const char* folder) {
+    if (perm_running != NULL) {
+        TRACE("%s made %s, so it may change files in it while it runs", perm_running->name, folder);
+        remember_decision(folder, PERM_CHANGE, true);
+    }
 }

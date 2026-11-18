@@ -84,9 +84,9 @@ anything by itself. The clipboard is emptied when you log out.
 | `doc` | open this manual |
 | `la` | list the files here |
 | `hello` | run the hello program |
-| `guess` | play a guessing game |
-| `viewer` | look at the pictures in `/bin/` (`+` / `-` zoom, arrows move around) |
 | `sysinfo` | see what's inside this computer |
+| `pkg list` | the games and apps you can install (after `fw web packages.intercon.network 80`) |
+| `pkg install snake` | get one: then `snake` plays it |
 | `ply /sys/startup.wav` | hear the startup sound again |
 | `edt notes.txt` | write a file |
 | `aer` | try AerLang, type `exit` to leave |

@@ -18,10 +18,15 @@
 
         reading in /bin/, /docs/, /src/ or /sys/     never asks: the system's own files
         reading in the program's own folder          never asks: its own files
+        reading in the folder named after the        never asks: its own files too (an
+          program, next to it (/apps/viewer/           installed package's pictures and
+          for /apps/viewer.aer)                        the like, see docs/PACKAGES.md)
         reading a file or folder named after the     never asks: typing "read notes.txt"
           program's name when it was started           was you asking for it
         reading anything else                        asks
         changing or deleting any file                asks
+        ...in a folder the program made (mkd)        never asks while it runs: nothing of
+                                                       yours can be in it yet
         anything in /acc/ (the accounts)             never allowed, whatever the answer
 
     A permission is for one folder (not the folders inside it), so a program that reads ten
@@ -70,6 +75,10 @@ bool perm_confirm (const char* question);
 // `folder`? Asks if it needs to (see above). name is "" when it is about the folder itself
 // (listing it). Always true when no program is running
 bool perm_allows (const char* folder, const char* name, perm_kind_t kind);
+
+// The running program has just made this folder (AerLang's mkd()): it may change files in it
+// without asking, until it ends. Does nothing at the terminal, which may anyway
+void perm_made_folder (const char* folder);
 
 // the "always" answers the logged in user has given (PERM lists them): fn is called for each,
 // numbered from 1. Returns how many there are

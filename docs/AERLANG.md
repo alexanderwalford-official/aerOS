@@ -199,9 +199,13 @@ the mouse copies to at the prompt, sys/clipboard.h) ·
 `list(n, fill)` · `push(l, x)` · `pop(l)` · `insert(l, i, x)` · `remove(l, i)` · `bytes(n)`
 
 **Files** (paths can be relative or absolute)
-`rdf(path)` (nil if missing) · `rdb(path)` · `wrf(path, text)` ·
+`rdf(path)` (nil if missing) · `rdb(path)` · `wrf(path, text)` (text or bytes, every byte of
+it, so a picture fetched with `httpget` can be saved) ·
 `apf(path, text)` · `isf(path)` · `delf(path)` ·
 `la(dir)` (directories end in `/`) · `cwd()` the current directory, e.g. `"/bin/"` ·
+`mkd(path)` make a folder: true if it was made, false if it is there already or can't be (the
+program may then change files in it without being asked, until it ends: nothing of yours is in
+it yet) · `deld(path)` delete a folder and the files in it (not one with folders inside) ·
 `sync()` put every change onto the disk now (AerOS does it within a second anyway, see
 [the disk cache](DISK_CACHE.md); for a program that wants to be sure, like a game saving)
 
@@ -258,7 +262,8 @@ for) · `nrecv(port, ms)` wait up to ms milliseconds: the message, or nil ·
 text if the status was 2xx, or nil
 
 **TCP** (plain connections both ways: a server, or a client for any protocol; see NETWORK.md,
-"Listening, and a web server", and `/bin/webserve.aer` for a whole web server)
+"Listening, and a web server", and the `webserve` package, `packages/webserve.aer`, for a
+whole web server)
 `tcplisten(port)` let other computers connect to AerOS's port (`FW SERVE <port>` must allow it):
 a number, or nil · `tcpaccept(listener, ms)` wait for a visitor: a connection, or nil ·
 `tcpconnect(host, port)` connect out (`FW WEB` must allow it): a connection, or nil ·
@@ -313,7 +318,7 @@ while not haskey() do
 end
 ```
 
-`/bin/anim.aer` shows them all.
+The `anim` package (`pkg install anim`, `packages/anim.aer` in the repository) shows them all.
 
 **Graphics**
 Call `gopen()` to take over the screen (it returns false if there is no graphics screen) and
@@ -329,7 +334,7 @@ Colours are numbers like `0xFF7F00`, or `rgb(255, 127, 0)`. Drawing off the edge
 
 ```
 gopen()
-let picture = rdb("/bin/aeros.bmp")
+let picture = rdb("/apps/viewer/aeros.bmp")      # a picture the viewer package comes with
 image(picture, 0, 0)
 text(10, 320, "Press a key", 0xFFFFFF, 2)
 key()
@@ -389,12 +394,13 @@ while not keydown(KEY_ESCAPE) do
 end
 ```
 
-`/bin/games/move.aer` is a small example of all of these. How they work: the back buffer is in
+The `move` package (`packages/move.aer`) is a small example of all of these. How they work:
+the back buffer is in
 `src/drivers/video/gfx.c`, held keys in `src/drivers/input/IO.c`, and the mixer in
 `src/sys/mixer.c`, which feeds the sound card from the timer interrupt so sound keeps playing
 smoothly whatever the program is doing.
 
-`/bin/games/maze3d.aer` (run it with `maze3d`) goes further: a first-person 3D maze, drawn with
+The `maze3d` package (`pkg install maze3d`) goes further: a first-person 3D maze, drawn with
 ray casting the way early 3D games were. For each strip of the screen it sends a ray across a
 grid of squares until it hits a wall, and draws that wall shorter the further away it is. The
 crystals are sprites, placed with the same maths backwards and hidden behind nearer walls. It
@@ -403,7 +409,9 @@ and its comments explain each step,
 so it is meant to be read and changed: draw your own maze in `MAP`, add wall colours, or widen
 `STRIP_WIDTH` for more speed on a slow computer.
 
-`/bin/viewer.aer` is a complete app built from these: a picture picker and viewer that zooms
-(`+` / `-`, `0` to fit) by drawing the picture bigger than the screen and moving it around.
+The `viewer` package is a complete app built from these: a picture picker and viewer that
+zooms (`+` / `-`, `0` to fit) by drawing the picture bigger than the screen and moving it
+around. (The games, the viewer and the other packages are in the repository's `packages/`
+folder, to read without installing them: see [packages](PACKAGES.md#the-packages).)
 `/bin/read.aer` is a bigger one: the Markdown / HTML reader behind the `DOC` command, with its
 own parsers, word wrapping and link navigation, all in AerLang.

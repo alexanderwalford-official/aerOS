@@ -441,16 +441,24 @@ def delete_disk_file(disk, path):
 
 def make_disk(path, size_mb=32, fat32=False, files=None):
     """Make an empty FAT disk labelled AEROS (the label AerOS looks for), with mtools.
-    files maps a path on the disk ('/bin/x.aer') to a file to copy there."""
+    files maps a path on the disk ('/bin/x.aer') to a file to copy there, or a folder
+    ('/apps/snake/', ending in /) to None, to make it empty. The folders they are in are made."""
     with open(path, 'wb') as f:
         f.truncate(size_mb * 1024 * 1024)
     sectors = size_mb * 2048
     fat = ['-F'] if fat32 else []
     subprocess.run(['mformat', '-i', path, '-T', str(sectors), '-h', '16', '-s', '63', '-v', 'AEROS']
                    + fat + ['::'], check=True, capture_output=True)
+    made = set()
     for target, source in (files or {}).items():
-        folder = os.path.dirname(target)
-        if folder not in ('', '/'):
-            subprocess.run(['mmd', '-D', 's', '-i', path, '::' + folder], capture_output=True)
-        subprocess.run(['mcopy', '-o', '-i', path, source, '::' + target], check=True, capture_output=True)
+        # every folder on the way, from the top ('/apps', then '/apps/viewer')
+        parts = target.strip('/').split('/')
+        folders = parts if target.endswith('/') else parts[:-1]
+        for depth in range(1, len(folders) + 1):
+            folder = '/' + '/'.join(folders[:depth])
+            if folder not in made:
+                subprocess.run(['mmd', '-D', 's', '-i', path, '::' + folder], capture_output=True)
+                made.add(folder)
+        if source is not None:
+            subprocess.run(['mcopy', '-o', '-i', path, source, '::' + target], check=True, capture_output=True)
     return path

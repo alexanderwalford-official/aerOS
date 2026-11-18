@@ -21,7 +21,7 @@ extend it.
 | terminal | `PLY clip.mpg` (the same command as for sounds: AerOS looks inside the file to tell) |
 | AerLang | `video("clip.mpg")` plays it and comes back when it ends, true if it played |
 | keys | Esc or Ctrl+C stop, Space pauses, Left / Right skip 5 seconds, any other key shows the controls |
-| try it | `PLY /bin/sample.mpg`, a 6 second built-in clip |
+| try it | `pkg install clip`, then `clip`: a 6 second video, in the `clip` package (`packages/clip/sample.mpg`) |
 
 Making a file AerOS plays, with ffmpeg:
 

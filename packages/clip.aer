@@ -1,0 +1,13 @@
+# clip: a 6 second video, to try AerOS's video player on
+#
+#     pkg install clip      once, to get it (the video comes with it)
+#     clip                  play it: Space pauses, Left / Right skip, Esc stops
+#
+# The video, sample.mpg, is in clip's own folder, /apps/clip/, where pkg put it. PLY plays it
+# too, at the prompt: ply /apps/clip/sample.mpg
+
+let VIDEO = "/apps/clip/sample.mpg"
+
+if video(VIDEO) == false then
+    print("Couldn't play " + VIDEO + ": pkg update clip gets it again.")
+end
