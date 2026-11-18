@@ -7,10 +7,11 @@
        magic number 0x2BADB002 in eax and the address of a "multiboot information" structure
        in ebx. That structure describes the machine: how much memory there is, the boot
        device, the kernel command line, modules, a full memory map and more. Bit N of its
-       flags field says whether the Nth group of fields is filled in. We use three of them:
-       the memory sizes, the memory map (the biggest free stretch of RAM becomes extra heap)
-       and the framebuffer GRUB switched the screen to (entry.asm asks for a 1024 x 768 x 32
-       graphics mode in the multiboot header).
+       flags field says whether the Nth group of fields is filled in. We use five of them:
+       the memory sizes, the command line, the modules (GRUB loads a second copy of main.elf
+       as one, so the installer can put AerOS on a disk: sys/install.h), the memory map (the
+       biggest free stretch of RAM becomes extra heap) and the framebuffer GRUB switched the
+       screen to (entry.asm asks for a 1024 x 768 x 32 graphics mode in the multiboot header).
        https://www.gnu.org/software/grub/manual/multiboot/multiboot.html#Boot-information-format
        https://wiki.osdev.org/Multiboot
 
@@ -39,6 +40,7 @@
 #include "../drivers/audio/ac97.h"
 #include "net.h"
 #include "rt.h"
+#include "thread.h"
 #include "syslog.h"
 #include "../lib/primary_definitions.h"
 #include <stdarg.h>
@@ -58,7 +60,9 @@ typedef struct __attribute__((packed)) multiboot_info {
     uint32_t mem_upper; // KB of memory above 1MB
     uint32_t boot_device;
     uint32_t cmdline; // the command line (flags bit 2): the address of a '\0' terminated string
-    uint32_t unused1[6]; // modules, symbols
+    uint32_t mods_count; // the modules (flags bit 3): how many
+    uint32_t mods_addr;  // and where the list of them is (multiboot_module_t each)
+    uint32_t unused1[4]; // symbols
     uint32_t mmap_length; // the memory map (flags bit 6): its size in bytes
     uint32_t mmap_addr;   // and where it is
     uint32_t unused2[9];  // drives, config table, bootloader name, APM, VBE
@@ -76,6 +80,16 @@ typedef struct __attribute__((packed)) multiboot_info {
 
 // bit 2 of the info flags: the command line field is valid
 #define MULTIBOOT_INFO_CMDLINE     0x00000004
+// bit 3 of the info flags: the module fields are valid
+#define MULTIBOOT_INFO_MODULES     0x00000008
+
+// one module: a file GRUB loaded into memory for us ("module /boot/main.elf" in grub.cfg)
+typedef struct __attribute__((packed)) {
+    uint32_t start;    // its first byte
+    uint32_t end;      // one past its last byte
+    uint32_t string;   // what grub.cfg said after the file's name (a '\0' terminated string)
+    uint32_t reserved;
+} multiboot_module_t;
 // bit 6 of the info flags: the memory map fields are valid
 #define MULTIBOOT_INFO_MEMORY_MAP  0x00000040
 #define MULTIBOOT_MEMORY_AVAILABLE 1
@@ -91,6 +105,32 @@ typedef struct __attribute__((packed)) {
 extern char end[]; // the first byte after the kernel (linker.ld)
 
 uint32_t boot_heap_extra_kb = 0;
+
+// a copy of AerOS's own kernel file, main.elf, if GRUB loaded one as a module (see boot.h)
+const void* boot_kernel_file = NULL;
+uint32_t boot_kernel_file_size = 0;
+// the memory the modules are in, from the first byte of the lowest to the end of the highest
+// (0 and 0 with none): the heap is kept out of it, so it never hands their memory out
+static uint64_t modules_start = 0, modules_end = 0;
+
+// Find the module GRUB loaded (the first one: grub.cfg only loads main.elf). It stays where GRUB
+// put it, usually just after the kernel, which is memory the heap would otherwise take: so only
+// its address is kept here, and boot_add_memory leaves its memory out of the heap
+static void boot_find_modules (const multiboot_info_t* info) {
+    const multiboot_module_t* modules = (const multiboot_module_t*)(uintptr_t)info->mods_addr;
+    for (uint32_t i = 0; i < info->mods_count; i++) {
+        if (modules_end == 0 || modules[i].start < modules_start) {
+            modules_start = modules[i].start;
+        }
+        if (modules[i].end > modules_end) {
+            modules_end = modules[i].end;
+        }
+    }
+    if (info->mods_count > 0 && modules[0].end > modules[0].start) {
+        boot_kernel_file = (const void*)(uintptr_t)modules[0].start;
+        boot_kernel_file_size = modules[0].end - modules[0].start;
+    }
+}
 
 // give the heap the biggest stretch of free RAM above the kernel (the built-in 4MB is only enough
 // to get going: pictures, programs and their data need far more)
@@ -111,6 +151,16 @@ static void boot_add_memory (const multiboot_info_t* info) {
         uint64_t stop = e->base + e->length;
         if (start < (uintptr_t)end) {
             start = (uintptr_t)end;
+        }
+        // if the modules are in it, the bigger of the two parts either side of them
+        if (modules_end > modules_start && start < modules_end && stop > modules_start) {
+            uint64_t before = modules_start > start ? modules_start - start : 0;
+            uint64_t after = stop > modules_end ? stop - modules_end : 0;
+            if (after >= before) {
+                start = modules_end;
+            } else {
+                stop = modules_start;
+            }
         }
         if (stop > 0x100000000ULL) {
             stop = 0x100000000ULL;
@@ -187,6 +237,16 @@ void boot_parse_multiboot (uint32_t magic, uint32_t info_addr) {
     if ((info->flags & MULTIBOOT_INFO_CMDLINE) && info->cmdline != 0 &&
         boot_has_word((const char*)(uintptr_t)info->cmdline, "fast")) {
         boot_option = BOOT_OPT_FAST;
+    }
+    // ...and "demo" boots in demo mode, as if it was picked in the boot options (the installer's
+    // test boots this way: tools/test/tests/test_install.py)
+    if ((info->flags & MULTIBOOT_INFO_CMDLINE) && info->cmdline != 0 &&
+        boot_has_word((const char*)(uintptr_t)info->cmdline, "demo")) {
+        boot_option = BOOT_OPT_DEMO;
+    }
+    // the copy of main.elf GRUB loaded for the installer, before the heap is given any memory
+    if (info->flags & MULTIBOOT_INFO_MODULES) {
+        boot_find_modules(info);
     }
     // a graphics framebuffer (UEFI PCs). Without paging we can only reach the first 4GB, so a
     // framebuffer above that can't be used and we stay with VGA text mode
@@ -273,7 +333,9 @@ int init_boot (void) {
     char now[FS_DATETIME_MAX];
     boot_report("[ OK ]", "clock", "Real time clock: %s", rtc_datetime(now, sizeof(now)));
     // check SHA-256, HMAC, PBKDF2 and AES against published test vectors before trusting them with passwords
-    boot_report(crypto_selftest() ? "[ OK ]" : "[FAIL]", "crypto", "Crypto self-test (SHA-256, HMAC, PBKDF2, AES-256)");
+    boot_report(crypto_selftest() ? "[ OK ]" : "[FAIL]", "crypto", "Crypto self-test (SHA-256, SHA-512, HMAC, PBKDF2, AES-256, Ed25519)");
+    // two threads take turns, sleep and finish, and main waits for them (sys/thread.h)
+    boot_report(thread_selftest() ? "[ OK ]" : "[FAIL]", "threads", "Threads self-test (taking turns, sleeping, waiting)");
     // a missing sound card isn't a problem, only PLY needs one
     if (ac97_init()) {
         boot_report("[ OK ]", "sound", "Sound: %s", ac97_name());
@@ -311,6 +373,9 @@ int init_boot (void) {
     if (installed > 0) {
         prtf("< APPS .. > %d built-in file(s) added or updated\n", installed);
         syslog_add("boot", "apps", "%d built-in file(s) added or updated", installed);
+    }
+    if (apps_retired() > 0) {
+        prtf("< APPS .. > %d old built-in file(s) removed: they are packages now (PKG LIST)\n", apps_retired());
     }
     // a file that couldn't be written is tried again next boot, but say so rather than nothing
     if (apps_failed() > 0) {

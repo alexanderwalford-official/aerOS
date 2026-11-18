@@ -8,8 +8,8 @@
                          prompt, and the table of every command (with HLP, which prints it)
         cmd_files.c      LA SD RD MKF WR MKD DEL VERS UNDO ENC DEC EDT
         cmd_system.c     ECH CLS CLK UP MEM DRV BP PLY RES RT RBT OFF
-        cmd_network.c    NET FW MSG LSN
-        cmd_programs.c   AER RUN PM QUE GO, and running an app by its name ("hello")
+        cmd_network.c    NET FW MSG LSN GET
+        cmd_programs.c   AER RUN PM QUE GO SCAN, and running an app by its name ("hello")
         cmd_database.c   SQL (AerDB databases, db/aerdb.h)
         cmd_help.c       DOC WHY SRC SHOW
         cmd_accounts.c   ME USRS MKU DELU PW OUT PERM
@@ -117,6 +117,10 @@ void cli_clock (char* arguments);
 void cli_uptime (char* arguments);
 void cli_memory (char* arguments);
 void cli_drives (char* arguments);
+void cli_sync (char* arguments);
+void cli_threads (char* arguments);
+void cli_background (char* arguments);
+void cli_stop (char* arguments);
 void cli_beep (char* arguments);
 void cli_reboot (char* arguments);
 void cli_shutdown (char* arguments);
@@ -129,6 +133,7 @@ void cli_network (char* arguments);
 void cli_firewall (char* arguments);
 void cli_message (char* arguments);
 void cli_listen (char* arguments);
+void cli_get (char* arguments);
 
 // cmd_programs.c
 void cli_aer (char* arguments);
@@ -136,6 +141,7 @@ void cli_run (char* arguments);
 void cli_pman (char* arguments);
 void cli_queue (char* arguments);
 void cli_go (char* arguments);
+void cli_scan (char* arguments);
 
 // cmd_database.c
 void cli_sql (char* arguments);

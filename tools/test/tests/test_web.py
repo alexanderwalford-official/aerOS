@@ -1,0 +1,121 @@
+"""TCP and HTTP: GET and httpget() fetching pages from a web server on this computer (src/sys/tcp.c,
+src/sys/http.c).
+
+QEMU's user networking puts this computer at 10.0.2.2 as AerOS sees it, so a web server here on
+127.0.0.1:<port> is http://10.0.2.2:<port>/ to AerOS."""
+
+import http.server
+import threading
+
+from aeros import GUEST_PROMPT, free_port
+
+HELLO = b'Hello from the web!\n'
+# big enough to need many TCP segments, and several fills of AerOS's 16 KB buffer
+BIG = b''.join(b'line %05d of the big file\n' % i for i in range(8000))
+
+
+class Pages(http.server.BaseHTTPRequestHandler):
+    """The pages the tests fetch."""
+    protocol_version = 'HTTP/1.1'
+
+    def send(self, status, body, content_type='text/plain', headers=()):
+        self.send_response(status)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(body)))
+        for name, value in headers:
+            self.send_header(name, value)
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path == '/hello.txt':
+            self.send(200, HELLO)
+        elif self.path == '/big.txt':
+            self.send(200, BIG)
+        elif self.path == '/moved':
+            self.send(302, b'', headers=[('Location', '/hello.txt')])
+        elif self.path == '/chunked':
+            # the body in pieces, each with its length in hex first, then a 0 length piece
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain')
+            self.send_header('Transfer-Encoding', 'chunked')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            for piece in (b'Sent ', b'in three ', b'pieces\n'):
+                self.wfile.write(b'%x\r\n%s\r\n' % (len(piece), piece))
+            self.wfile.write(b'0\r\n\r\n')
+        else:
+            self.send(404, b'No such page\n')
+
+    def log_message(self, *args):
+        pass  # quiet
+
+
+def test_get_and_httpget(t):
+    port = free_port()
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Pages)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    site = f'http://10.0.2.2:{port}'
+    try:
+        aeros = t.boot(network='user,model=e1000')
+        aeros.wait_for(GUEST_PROMPT, 60)
+
+        # nothing can be fetched until a web rule allows the computer and port
+        aeros.cls()
+        aeros.run(f'get {site}/hello.txt')
+        aeros.expect(f'The firewall has no web rule for 10.0.2.2 port {port}',
+                     f'FW WEB 10.0.2.2 {port} allows fetching from it.')
+        aeros.run(f'fw web 10.0.2.2 {port}')
+        aeros.expect(f'Allowed web pages from 10.0.2.2 port {port}')
+        aeros.cls()
+        aeros.run('fw')
+        rule = [row for row in aeros.text().split('\n') if f'port {port}' in row]
+        if not rule or rule[0].split()[-1] != 'web':
+            aeros.fail('FW should list the rule as a web rule')
+
+        # a page, shown
+        aeros.cls()
+        aeros.run(f'get {site}/hello.txt', timeout=90)
+        aeros.expect_line(f'200 OK, {len(HELLO)} bytes, text/plain', 'Hello from the web!')
+
+        # a big one, saved in a file: every byte arrives, in order
+        aeros.cls()
+        aeros.run(f'get {site}/big.txt big.txt', timeout=120)
+        aeros.expect_line(f'200 OK, {len(BIG)} bytes, text/plain', 'Saved in big.txt.')
+        aeros.cls()
+        aeros.run('len(rdf("big.txt"))')
+        aeros.expect_line(str(len(BIG)))
+        aeros.run('let lines = split(rdf("big.txt"), chr(10))')
+        aeros.run('print(lines[4000], lines[7999])')
+        aeros.expect_line('line 04000 of the big file line 07999 of the big file')
+
+        # in pieces, moved somewhere else, and not there at all
+        aeros.cls()
+        aeros.run(f'get {site}/chunked', timeout=90)
+        aeros.expect_line('200 OK, 21 bytes, text/plain', 'Sent in three pieces')
+        aeros.cls()
+        aeros.run(f'get {site}/moved', timeout=90)
+        aeros.expect_line(f'200 OK, {len(HELLO)} bytes, text/plain', 'Hello from the web!')
+        aeros.cls()
+        aeros.run(f'get {site}/nothing', timeout=90)
+        aeros.expect_line('404 Not Found, 13 bytes, text/plain', 'No such page')
+
+        # from AerLang: the page's text, or nil if it isn't there
+        aeros.cls()
+        aeros.run(f'httpget("{site}/hello.txt")', timeout=90)
+        aeros.expect('Hello from the web!')
+        aeros.run(f'httpget("{site}/nothing") == nil', timeout=90)
+        aeros.expect_line('true')
+
+        # a web rule only allows fetching pages: no sealed messages to that computer and port
+        aeros.cls()
+        aeros.run(f'msg 10.0.2.2 {port} hello')
+        aeros.expect("Can't send to 10.0.2.2: the firewall blocks it")
+
+        # and HTTPS isn't something AerOS can do yet
+        aeros.cls()
+        aeros.run('get https://example.com/')
+        aeros.expect("AerOS can't do HTTPS yet")
+    finally:
+        server.shutdown()

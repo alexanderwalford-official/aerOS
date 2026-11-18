@@ -1,0 +1,28 @@
+# aerpkg.service - runs the AerOS package server (tools/pkgserver/server.py) with systemd
+#
+# Goes in /etc/systemd/system/aerpkg.service. Then:
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now aerpkg
+#     journalctl -u aerpkg          (what it has been doing: requests, publishes, refusals)
+#
+# It runs as its own user, "aerpkg", which can write only its database folder.
+
+[Unit]
+Description=AerOS package server
+After=network.target
+
+[Service]
+User=aerpkg
+Group=aerpkg
+ExecStart=/usr/bin/python3 /opt/aerpkg/server.py /etc/aerpkg/server.conf
+Restart=on-failure
+
+# what the server may touch: its database folder, and nothing else of the system
+StateDirectory=aerpkg
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

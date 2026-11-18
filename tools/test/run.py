@@ -64,8 +64,19 @@ class Test:
         return os.path.join(self.workdir, name)
 
     def repo(self, *parts):
-        """A file in the repository, e.g. t.repo('src', 'disk', 'bin', 'viewer.aer')."""
+        """A file in the repository, e.g. t.repo('src', 'disk', 'bin', 'pkg.aer')."""
         return os.path.join(REPO, *parts)
+
+    def package(self, name):
+        """A package from the repository's packages/ folder, installed the way pkg install puts it:
+        files= entries for t.disk, for /apps/<name>.aer and its folder /apps/<name>/ with the
+        files it comes with. (So a test of a game doesn't need the package server)"""
+        files = {f'/apps/{name}.aer': self.repo('packages', name + '.aer'), f'/apps/{name}/': None}
+        folder = self.repo('packages', name)
+        if os.path.isdir(folder):
+            for file in sorted(os.listdir(folder)):
+                files[f'/apps/{name}/{file}'] = os.path.join(folder, file)
+        return files
 
     def check_disk(self, disk):
         """Fail the test if the disk image isn't a consistent FAT volume (see fatcheck.py).

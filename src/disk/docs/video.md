@@ -1,11 +1,15 @@
 # Video
 
 AerOS plays **MPEG-1** videos, the `.mpg` files that DVDs' older cousin, the Video CD, used.
-Its patents have all run out, so it is free for anyone to use. Try the built-in clip:
+Its patents have all run out, so it is free for anyone to use. Try the `clip` package, a
+6 second video:
 
 ```
-ply /bin/sample.mpg
+pkg install clip
+clip
 ```
+
+or `ply /apps/clip/sample.mpg`, once it is installed.
 
 The picture fills as much of the screen as it can, keeping its shape, and the sound plays
 along with it. Videos need a graphics screen: started from the ISO, AerOS has one.

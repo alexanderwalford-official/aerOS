@@ -44,9 +44,9 @@ dbclose(db)
 | `dbquery(db, sql, values)` | runs a SELECT: a list of rows, each a list of its values |
 | `dbclose(db)` | closes it (anything left open closes when the program ends) |
 
-Snake keeps its high scores this way, in `/bin/games/scores.db`: read
-`/bin/games/snake.aer` for a whole example, or see them with
-`sql /bin/games/scores.db SELECT * FROM scores`.
+Snake (`pkg install snake`) keeps its high scores this way, in its own folder,
+`/apps/snake/scores.db`: read `/apps/snake.aer` for a whole example, or see them with
+`sql /apps/snake/scores.db SELECT * FROM scores`.
 
 Each `?` in the SQL takes the next of the values. Use `?` for anything that comes from
 outside the program, rather than adding it to the SQL text. A mistake in the SQL stops the

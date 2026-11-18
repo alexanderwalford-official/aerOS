@@ -1,0 +1,139 @@
+# bench: how fast AerOS reads and writes its disk
+#
+#     bench
+#
+# Times the same work each run, so two runs can be compared (before and after a change, or
+# one computer against another): one big file written and read back, lots of small files, and
+# a database. Everything goes in /sys/tmp/ (outside your home folder, so no old versions are
+# kept), and is deleted at the end. AerOS asks once whether bench may change files there.
+#
+# The times are in milliseconds (ms, thousandths of a second). The disk cache (sys/disk_cache.h)
+# shows in two places: writes are held in memory and put on the disk together, which the
+# "onto the disk" lines time, and reading something used lately comes from memory.
+
+let FOLDER = "/sys/tmp/"
+let SMALL_FILES = 50     # how many small files
+let ROWS = 200           # how many database rows
+
+
+# ---- helpers -------------------------------------------------------------------------------
+
+func text_of(kb)
+    # a string of kb kilobytes (kb * 1024 characters), made by doubling 16 characters
+    let text = "AerOS benchmark."
+    while len(text) < kb * 1024 do
+        text = text + text
+    end
+    return sub(text, 0, kb * 1024)
+end
+
+func show(what, started, kb)
+    # print one result: what was done, how long it took since `started` (a time()), and the
+    # speed in KB a second when kb (how much was moved) isn't 0
+    let ms = time() - started
+    let line = "  " + what + ": " + ms + " ms"
+    if kb > 0 and ms > 0 then
+        line = line + "  (" + (kb * 1000 / ms) + " KB a second)"
+    end
+    print(line)
+    return ms
+end
+
+func to_disk()
+    # Writes are held in the disk cache and put on the disk together later (sys/disk_cache.h),
+    # so a write's time is only part of the story: this times the rest, sync() putting
+    # everything still waiting onto the disk
+    let started = time()
+    sync()
+    show("onto the disk (sync)", started, 0)
+end
+
+
+# ---- the tests -----------------------------------------------------------------------------
+
+func big_file()
+    # one 256 KB file: written once, then read back three times
+    print("One 256 KB file")
+    let text = text_of(256)
+    let path = FOLDER + "bench.dat"
+
+    let started = time()
+    wrf(path, text)
+    show("write", started, 256)
+    to_disk()
+
+    for i = 1 to 3 do
+        started = time()
+        let back = rdf(path)
+        show("read " + i, started, 256)
+        if back != text then
+            print("  ! what was read back isn't what was written")
+        end
+    end
+    delf(path)
+end
+
+func small_files()
+    # SMALL_FILES files of 1 KB each: written, read back twice, then deleted. Many small files
+    # mean many changes to folders and the FAT, not just the file data
+    print(str(SMALL_FILES) + " files of 1 KB")
+    let text = text_of(1)
+
+    let started = time()
+    for i = 1 to SMALL_FILES do
+        wrf(FOLDER + "b" + i + ".tmp", text)
+    end
+    show("write", started, SMALL_FILES)
+    to_disk()
+
+    for round = 1 to 2 do
+        started = time()
+        for i = 1 to SMALL_FILES do
+            rdf(FOLDER + "b" + i + ".tmp")
+        end
+        show("read " + round, started, SMALL_FILES)
+    end
+
+    started = time()
+    for i = 1 to SMALL_FILES do
+        delf(FOLDER + "b" + i + ".tmp")
+    end
+    show("delete", started, 0)
+end
+
+func database()
+    # ROWS rows put in a database one at a time, then looked up 20 times
+    print("A database of " + ROWS + " rows")
+    let path = FOLDER + "bench.db"
+    if isf(path) then
+        delf(path)
+    end
+    let db = dbopen(path)
+    dbrun(db, "CREATE TABLE items (n INTEGER, name TEXT)")
+
+    let started = time()
+    for i = 1 to ROWS do
+        dbrun(db, "INSERT INTO items VALUES (?, ?)", [i, "item " + i])
+    end
+    show("insert", started, 0)
+    to_disk()
+
+    started = time()
+    for i = 1 to 20 do
+        dbquery(db, "SELECT name FROM items WHERE n = ?", [i * 10])
+    end
+    show("20 lookups", started, 0)
+
+    dbclose(db)
+    delf(path)
+end
+
+
+# ---- run them ------------------------------------------------------------------------------
+
+print("bench: reading and writing the disk (times in ms, lower is faster)")
+let total = time()
+big_file()
+small_files()
+database()
+show("All of it", total, 0)

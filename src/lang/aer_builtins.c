@@ -80,6 +80,11 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("trunc", bi_truncate, 2, 2),
     BUILTIN("isf", bi_file_exists, 1, 1),
     BUILTIN("delf", bi_delete_file, 1, 1),
+    BUILTIN("mkd", bi_make_folder, 1, 1),
+    BUILTIN("deld", bi_delete_folder, 1, 1),
+    BUILTIN("disks", bi_disks, 0, 0),
+    BUILTIN("install", bi_install, 1, 1),
+    BUILTIN("sync", bi_sync, 0, 0),
     BUILTIN("enc", bi_encrypt_file, 2, 2),
     BUILTIN("dec", bi_decrypt_file, 2, 2),
     BUILTIN("isenc", bi_is_encrypted, 1, 1),
@@ -98,6 +103,17 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("cmd", bi_cmd, 1, 1),
     BUILTIN("nsend", bi_net_send, 3, 3),
     BUILTIN("nrecv", bi_net_receive, 2, 2),
+    BUILTIN("httpget", bi_http_get, 1, 1),
+    BUILTIN("tcplisten", bi_tcp_listen, 1, 1),
+    BUILTIN("tcpaccept", bi_tcp_accept, 2, 2),
+    BUILTIN("tcpconnect", bi_tcp_connect, 2, 2),
+    BUILTIN("tcprecv", bi_tcp_receive, 2, 2),
+    BUILTIN("tcpsend", bi_tcp_send, 2, 2),
+    BUILTIN("tcpclose", bi_tcp_close, 1, 1),
+    BUILTIN("tcpunlisten", bi_tcp_unlisten, 1, 1),
+    BUILTIN("verify", bi_verify, 3, 3),
+    BUILTIN("packagekey", bi_package_key, 0, 0),
+    BUILTIN("scan", bi_scan, 1, 1),
     BUILTIN("dbopen", bi_dbopen, 1, 2),
     BUILTIN("dbrun", bi_dbrun, 2, 3),
     BUILTIN("dbquery", bi_dbquery, 2, 3),
@@ -147,7 +163,7 @@ const int aer_builtin_count = sizeof(aer_builtins) / sizeof(aer_builtins[0]);
 // 14 names, so 16 leaves room for the NULL and one more
 static const struct {
     uint32_t part;
-    const char* names[24];   // ends with NULL
+    const char* names[28];   // ends with NULL
 } parts[] = {
     { APP_GRAPHICS, { "gopen", "gclose", "gw", "gh", "gclear", "rgb", "pixel", "rect", "line",
                       "text", "image", "imgsz", "gbuf", "gshow", NULL } },
@@ -155,8 +171,9 @@ static const struct {
     { APP_VIDEO,    { "video", NULL } },
     { APP_FILES,    { "rdf", "rdb", "wrf", "apf", "isf", "delf", "la", "cwd", "enc", "dec",
                       "isenc", "rdenc", "rdat", "wrat", "trunc", "dbopen", "dbrun", "dbquery",
-                      "dbclose", NULL } },
-    { APP_NETWORK,  { "nsend", "nrecv", NULL } },
+                      "dbclose", "sync", "mkd", "deld", "disks", "install", NULL } },
+    { APP_NETWORK,  { "nsend", "nrecv", "httpget", "tcplisten", "tcpaccept", "tcpconnect",
+                      "tcprecv", "tcpsend", "tcpclose", "tcpunlisten", NULL } },
 };
 
 // the part a built-in's name belongs to, 0 for the ones every program has (print, len...)
@@ -184,6 +201,35 @@ uint32_t aer_profile (const token_t* tokens, int count) {
         }
     }
     return uses;
+}
+
+// The built-ins only the program in front can use, as well as the graphics, sound and video
+// parts above: they read the keyboard or the mouse, draw on the screen, or ask a question, and
+// the keyboard and the screen belong to whoever is in front. A program running in the
+// background (BG, sys/jobs.c) can't use them: it shares the computer with the prompt
+static const char* const front_only[] = {
+    "input", "inpw", "key", "haskey", "keydown", "mouse", "mousemove", "mousedown",
+    "cls", "color", "at", "progress", "spinner", "frame", "big", "clip", "setclip",
+    "logclear", "setlogging", "cmd", "queue", "install", NULL
+};
+
+// the first built-in a program's tokens name that only the program in front can use (see
+// aer_internal.h). Like aer_profile, any name counts, called or not
+const char* aer_front_only (const token_t* tokens, int count) {
+    for (int i = 0; i < count; i++) {
+        if (tokens[i].type != T_NAME) {
+            continue;
+        }
+        if (part_of(tokens[i].text) & (APP_GRAPHICS | APP_SOUND | APP_VIDEO)) {
+            return tokens[i].text;
+        }
+        for (int f = 0; front_only[f] != NULL; f++) {
+            if (scmp(front_only[f], tokens[i].text) == 0) {
+                return tokens[i].text;
+            }
+        }
+    }
+    return NULL;
 }
 
 // the C function's name behind a built-in, "gopen" -> "bi_gfx_open" (see aerlang.h)
@@ -231,8 +277,14 @@ void aer_give_screen_back (void) {
 
 // a program that ends (or crashes) in graphics mode gets the terminal back automatically
 void aer_builtins_finish (void) {
+    database_finish(); // databases the program left open are closed
+    network_finish();  // ...and its TCP connections, and the ports it listened on
+    // a program in the background never had the sound, the mouse or the screen (aer_front_only),
+    // and they may be the program in front's right now: leave them be
+    if (aer->background) {
+        return;
+    }
     mixer_stop_all(); // sounds from splay() stop with the program (their memory is about to go)
     mouse_stop();     // the mouse was the program's: the terminal's pointer takes it back at the prompt
-    database_finish(); // databases a program left open are closed
     aer_give_screen_back();
 }

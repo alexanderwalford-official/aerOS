@@ -39,7 +39,7 @@ When a test fails, the report says what it expected and shows the screen as it w
 is kept in `tools/test/out/<test name>/`, with AerOS's serial log (everything AerOS printed)
 and any screenshots, so you can see what happened.
 
-The network test and the test of the decryptor in `docs/SECURITY.md` need Python's
+The network test, the package tests and the test of the decryptor in `docs/SECURITY.md` need Python's
 `cryptography` package (`pip install cryptography`), like `tools/aernet.py`. Without it, they
 are skipped rather than failed.
 
@@ -48,19 +48,24 @@ are skipped rather than failed.
 | File | Tests |
 | --- | --- |
 | `test_basics.py` | booting, commands, files without a disk, "did you mean" |
-| `test_terminal.py` | usage messages, Tab completion, Page Up / Page Down, and the editor (save, run, quit) |
+| `test_terminal.py` | usage messages, Tab completion, Page Up / Page Down, the editor (save, run, quit), a line exactly as wide as the screen, and the big title moving up whole as the screen scrolls |
+| `test_install.py` | installing AerOS on a blank disk from demo mode (`disks()`, `install()`, saying no first) and then starting QEMU from that disk alone; the same from the real CD, picking demo mode in the boot options; and `install()` refusing outside demo mode. `AerOS(words=, module=, from_disk=)` give the kernel's command line, a module as GRUB gives one, and a start from the disk with its own GRUB ([installing](INSTALLING.md)) |
 | `test_aerlang.py` | the language (`files/langtest.aer` checks every statement and expression), and AerLang at the prompt |
 | `test_explain.py` | WHY, SRC, SHOW and the read-only `/src/` folder |
 | `test_processes.py` | RUN, and the queue: QUE, GO, Ctrl+C, `queue()` |
 | `test_disk.py` | a real FAT disk: accounts and logging in, file versions, encryption, DEL on big files and folders, the wipe after three wrong passwords, a full disk reported rather than ignored, permissions, and changing files in place (`files/pages.aer`, on FAT16, FAT32 and in memory) |
-| `test_apps.py` | the DOC reader, the animation demo, and how built-in apps are installed and kept up to date on a disk |
+| `test_apps.py` | the DOC reader, the animation demo, how built-in apps are installed and kept up to date on a disk, and how the ones AerOS no longer comes with are taken away (unless you changed them) |
 | `test_crypto.py` | the boot's crypto self-test, and the decryptor printed in `docs/SECURITY.md` run on a file AerOS encrypted |
 | `test_media.py` | WAV files in three formats and an MP3 (recorded and checked for the right notes), the startup sound, and video |
 | `test_input.py` | the mouse in AerLang; at the prompt, the pointer (text and graphics mode), selecting and copying, double clicks, pasting (right click and Ctrl+V), clicking to move the cursor and the wheel; and held keys |
-| `test_games.py` | Maze 3D, Snake (and its high scores) and `move.aer`, booted from the ISO in graphics mode |
+| `test_games.py` | Maze 3D, Snake (and its high scores) and `move.aer`, booted from the ISO in graphics mode. They are packages: `t.package('snake')` puts one on the test's disk the way `pkg install` would |
 | `test_database.py` | AerDB from AerLang (`files/aerdb.aer`: every statement, many pages, reopening, COMPACT), the SQL command, and SHOW on a query |
+| `test_scan.py` | SCAN on Snake, on a program full of tricks (`files/phish.aer`, only ever scanned) and on one that only mentions a built-in in a comment and a string (`files/clean.aer`) |
 | `test_logs.py` | AerOS's log: boots, the boot log's entries, OFF, noticing a boot that didn't end properly, reading it from a program (`files/logs.aer`), that only AerOS can change it, and clearing it or turning it off (the question and password) |
 | `test_network.py` | the firewall and sealed messages, against `tools/aernet.py` |
+| `test_web.py` | TCP and HTTP: GET and httpget() against a web server started by the test (a page, a 216 KB file checked line by line, chunked, a redirect, a 404), web rules, and HTTPS turned away |
+| `test_packages.py` | the package server (`tools/pkgserver/server.py`) and `aerpkg.py publish`/`unpublish`, with a test key: what is served, and every upload it must refuse (wrong token, an old serial, a changed program, a stranger's key); then AerOS in QEMU running `pkg list` and `pkg install` from it, a new version, and an old index sent again being refused; a package with a file (binary, zeros and all), refused files (a program among them, one the index doesn't list), and `pkg remove` taking its folder; and the repository's own `packages/` published with `publish-all` and the viewer installed from it, its pictures checked byte for byte |
+| `test_trust.py` | verify() against signatures made by Python's cryptography package and by `tools/aersign.py` (and four wrong ones), packagekey(), scan(), and the boot self-test line |
 
 Every test that writes to a disk finishes by checking the disk is still a consistent FAT volume:
 `tools/test/fatcheck.py` walks every folder and checks the FAT copies agree, each file's

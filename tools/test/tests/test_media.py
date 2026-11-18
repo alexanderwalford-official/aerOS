@@ -90,10 +90,12 @@ def test_startup_sound(t):
 
 
 def test_video(t):
-    # /bin/sample.mpg is built in. It plays full screen, and Escape stops it
-    aeros = t.boot(graphics=True, sound=True)
-    aeros.wait_for(GUEST_PROMPT, 60)
-    aeros.ask('ply /bin/sample.mpg', 3)
+    # The clip package: a program and the video it comes with, in its own folder, which it
+    # reads without asking (its own files). It plays full screen, and Escape stops it
+    aeros = t.boot(graphics=True, sound=True, disk=t.disk(files=t.package('clip')))
+    aeros.first_login()
+    asked = aeros.serial().count('[ ? ]')
+    aeros.ask('clip', 3)
     first = aeros.screenshot('playing')
     time.sleep(1)
     if aeros.screenshot('later')[2] == first[2]:
@@ -102,4 +104,6 @@ def test_video(t):
     aeros.key('esc')
     aeros.wait_prompt(before, 20)
     # the player says how it went on the serial port
-    aeros.expect_printed('video: /bin/sample.mpg', 'pictures shown')
+    aeros.expect_printed('video: /apps/clip/sample.mpg', 'pictures shown')
+    if aeros.serial().count('[ ? ]') != asked:
+        aeros.fail('clip asked before reading its own video')

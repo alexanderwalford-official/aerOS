@@ -5,8 +5,9 @@
 | Folder | Holds |
 | --- | --- |
 | `/acc/` | the accounts file, `users`, and what programs may always do, `perms` |
-| `/bin/` | the apps: `hello.aer`, `read.aer`, pictures... |
-| `/bin/games/` | the games: `snake.aer`, `maze3d.aer`, `guess.aer`, `move.aer` |
+| `/bin/` | the apps: `hello.aer`, `read.aer`, `pkg.aer`... |
+| `/apps/` | [packages](commands.md) you have installed with `pkg`: run by name like the built-in ones |
+| `/apps/<name>/` | each package's own folder: the files it came with, and what it keeps |
 | `/docs/` | this manual |
 | `/home/<name>/` | each user's own folder, where the prompt starts |
 | `/home/<name>/versions/` | the [old versions](versions.md) of the files in it |
@@ -19,7 +20,8 @@ The apps and this manual are built into AerOS and copied onto the disk when it s
 they are there even with no disk at all. A newer AerOS updates its apps for you, but if you
 change an app in `/bin/` your version is kept: `/sys/apps.lst` remembers which version
 AerOS installed, so it can tell yours apart. To get the built-in copy back, delete your
-version and restart. The manual is always refreshed.
+version and restart. The manual is always refreshed. And when AerOS stops coming with
+something (the games are packages now), its old copy is deleted, unless you changed it.
 
 ## Paths
 

@@ -16,11 +16,27 @@
 #include "../drivers/video/VGA_linear.h"
 #include "../drivers/input/IO.h"
 #include "../sys/clipboard.h"
+#include "../sys/jobs.h"
 
 // printing and input
 
+// Roughly how many characters showing these values takes: a string's length, and a guess for
+// anything else (a number, a list), plus room for the program's name in front of the line
+static uint32_t printed_size (int argc, value_t* argv) {
+    uint32_t size = 32;
+    for (int i = 0; i < argc; i++) {
+        size += (argv[i].type == V_STR ? argv[i].as.obj->length : 64) + 1;
+    }
+    return size;
+}
+
 // show every value the way print() does, with one space between each (shared by print and write)
 static void print_values (int argc, value_t* argv) {
+    // in the background, what is printed waits to be shown at the prompt (sys/jobs.h): wait
+    // for room for it first, so none of it is lost
+    if (aer->background) {
+        jobs_wait_for_room(printed_size(argc, argv));
+    }
     for (int i = 0; i < argc; i++) {
         // a space before every value but the first, so there is none at the end of the line
         if (i > 0) {

@@ -5,11 +5,15 @@
 
         1. no program running (the terminal, code at the prompt)     allowed
         2. /acc/ (the accounts), or changing AerOS's log             refused
-        3. reading the system's files, the program's own, or a
-           file named after it on the command line                   allowed
-        4. answered already while this program runs (Y or N)         that answer
+        3. reading the system's files, the program's own (its folder,
+           and the folder named after it next to it), or a file
+           named after it on the command line                        allowed
+        4. answered already while this program runs (Y or N), or     that answer
+           a folder it made itself (mkd) while it runs               (allowed)
         5. answered "always" before (kept in /acc/perms)             allowed
-        6. otherwise                                                 ask
+        6. otherwise                                                 ask (but a program in
+                                                                     the background can't:
+                                                                     refused)
 
     /acc/perms holds one line for each "always", e.g.
 
@@ -28,48 +32,65 @@
 #include "../lib/primary_definitions.h"
 #include "trace.h"
 #include "syslog.h"
+#include "thread.h"
+#include "../lib/aer_stdlib.h"
 
 #define PERM_FILE_FOLDER "/acc/"
 #define PERM_FILE_NAME   "perms"
 #define ARGS_MAX 128           // the most of a program's arguments kept for rule 3
 #define DECISIONS_MAX 16       // answers remembered while one program runs
 
-// the program that is running (rule 1: none, while running is false)
-static struct {
-    bool running;
+// a program that is running, and the Y and N answers given while it runs (rule 4)
+struct perm_program {
     char folder[FS_PATH_MAX];      // where its file is, "/bin/"
     char name[FS_NAME_MAX];        // and its name, "viewer.aer"
     char args[ARGS_MAX];           // what was typed after it
-} program;
+    struct {
+        char folder[FS_PATH_MAX];
+        perm_kind_t kind;
+        bool allowed;
+    } decisions[DECISIONS_MAX];
+    int decision_count;
+};
 
-// the Y and N answers given while it runs (rule 4)
-static struct {
-    char folder[FS_PATH_MAX];
-    perm_kind_t kind;
-    bool allowed;
-} decisions[DECISIONS_MAX];
-static int decision_count = 0;
+// The program the rules are for: NULL for the terminal and code typed at the prompt (rule 1).
+// Each thread has its own (perm_keep_per_thread), so a program running in the background
+// (sys/jobs.c) has its own rules and answers, apart from the one in front
+typedef struct perm_program perm_program_t;
+static perm_program_t* perm_running = NULL;
 
-// a program is starting: remember who it is and what was typed after it, with no answers yet
-void perm_program_started (const char* folder, const char* name, const char* args) {
-    program.running = true;
-    scpy(program.folder, folder, sizeof(program.folder));
-    scpy(program.name, name, sizeof(program.name));
-    scpy(program.args, args != NULL ? args : "", sizeof(program.args));
-    // Y and N answers only last while one program runs, so a new one starts with none
-    decision_count = 0;
+// give each thread its own perm_running (see perm.h)
+void perm_keep_per_thread (void) {
+    thread_keep(&perm_running, sizeof(perm_running));
 }
 
-// the program has finished: back to rule 1 (everything allowed) for the terminal
+// A program is starting: remember who it is and what was typed after it, with no answers yet.
+// False if there isn't the memory: then it mustn't run, as without this the rules would treat
+// it as the terminal (rule 1), which may do anything
+bool perm_program_started (const char* folder, const char* name, const char* args) {
+    perm_program_t* program = malloc(sizeof(perm_program_t));
+    if (program == NULL) {
+        return false;
+    }
+    scpy(program->folder, folder, sizeof(program->folder));
+    scpy(program->name, name, sizeof(program->name));
+    scpy(program->args, args != NULL ? args : "", sizeof(program->args));
+    // Y and N answers only last while one program runs, so a new one starts with none
+    program->decision_count = 0;
+    perm_running = program;
+    return true;
+}
+
+// the program has finished: back to rule 1 (everything allowed) for the terminal. Its Y and N
+// answers go with it, so the next program can't use them
 void perm_program_ended (void) {
-    program.running = false;
-    // forget its Y and N answers, so the next program can't use them
-    decision_count = 0;
+    free(perm_running);
+    perm_running = NULL;
 }
 
 // the running program's file name (see perm.h)
 const char* perm_program_name (void) {
-    return program.running ? program.name : "";
+    return perm_running != NULL ? perm_running->name : "";
 }
 
 // the words "read" and "change", as they are kept in /acc/perms and shown in questions
@@ -102,14 +123,29 @@ static bool system_folder (const char* folder) {
     return false;
 }
 
+// Is this the folder of the program's own files: the one next to it with its name, without the
+// .aer? /apps/viewer.aer has /apps/viewer/, where an installed package keeps its pictures and
+// the like (pkg.aer puts them there). Nothing else goes in that folder, so reading it is no more
+// private than reading the program itself
+static bool own_files (const char* folder) {
+    char mine[FS_PATH_MAX];
+    size_t length = slen(perm_running->name);
+    // "viewer.aer" without its last 4 characters is "viewer"
+    if (length <= 4 || strcasecmp(perm_running->name + length - 4, ".aer") != 0) {
+        return false;
+    }
+    sfmt(mine, sizeof(mine), "%s%.*s/", perm_running->folder, (int)(length - 4), perm_running->name);
+    return strcasecmp(folder, mine) == 0;
+}
+
 // Was this file (or folder) named on the command line, after the program's name? Each word is
 // tried as a file ("notes.txt" -> this folder and that name) and as a folder ("pics" -> every
 // file in /home/alex/pics/)
 static bool named_by_you (const char* folder, const char* name) {
-    // strtok_r cuts up what it reads, so it works on a copy, keeping program.args whole for
+    // strtok_r cuts up what it reads, so it works on a copy, keeping perm_running->args whole for
     // the next check
     char words[ARGS_MAX];
-    scpy(words, program.args, sizeof(words));
+    scpy(words, perm_running->args, sizeof(words));
     char* save = NULL;
     for (char* word = strtok_r(words, " ", &save); word != NULL; word = strtok_r(NULL, " ", &save)) {
         // the word is turned into a full path the same way the file system would, so
@@ -159,7 +195,7 @@ static bool split_entry (char* line, entry_t* entry) {
 
 // the running program's full path, "/bin/viewer.aer", as it is written in /acc/perms
 static void program_path (char* out, size_t size) {
-    sfmt(out, size, "%s%s", program.folder, program.name);
+    sfmt(out, size, "%s%s", perm_running->folder, perm_running->name);
 }
 
 // rule 5: has the person logged in said "always" to this program for this folder before?
@@ -343,16 +379,30 @@ static answer_t ask_in_graphics (const char* question, const char* choices, bool
     return answer;
 }
 
+// can a question be put to the person? Only from the thread in front, main (sys/thread.h): the
+// keyboard is its. A program running in the background (BG, sys/jobs.c) is on a thread of its own
+static bool may_ask (void) {
+    return thread_current() == 0;
+}
+
 // rule 6: put the question to the person, on whichever screen the program is using
 static answer_t ask (const char* folder, const char* name, perm_kind_t kind) {
     char question[FS_PATH_MAX + FS_NAME_MAX * 2 + 48];
     // an empty name means the program wants the folder's list of files, not one file
     if (name[0] != '\0') {
-        sfmt(question, sizeof(question), "%s wants to %s files in %s (%s)", program.name, kind_word(kind), folder, name);
+        sfmt(question, sizeof(question), "%s wants to %s files in %s (%s)", perm_running->name, kind_word(kind), folder, name);
     } else {
-        sfmt(question, sizeof(question), "%s wants to read the list of files in %s", program.name, folder);
+        sfmt(question, sizeof(question), "%s wants to read the list of files in %s", perm_running->name, folder);
     }
     const char* choices = "Y = yes, this time    A = always    N = no";
+
+    // Only the thread in front (main) has the keyboard: a program in the background can't ask,
+    // so the answer is no. It says why, in its output (sys/jobs.c shows it at the prompt)
+    if (!may_ask()) {
+        prtf("%s, but it is in the background, where it can't ask. Run it once without BG and "
+             "answer A (always) to let it.\n", question);
+        return ANSWER_NO;
+    }
 
     // a width of 0 means graphics mode isn't on, so the text screen is showing
     bool graphics = gfx_width() > 0;
@@ -361,6 +411,11 @@ static answer_t ask (const char* folder, const char* name, perm_kind_t kind) {
 
 // a yes / no question, asked like a permission question but every time (see perm.h)
 bool perm_confirm (const char* question) {
+    // (a program in the background can't ask: see ask above)
+    if (!may_ask()) {
+        prtf("%s: not asked, as the program is in the background, so no.\n", question);
+        return false;
+    }
     const char* choices = "Y = yes    N = no";
     bool graphics = gfx_width() > 0;
     answer_t answer;
@@ -378,30 +433,41 @@ bool perm_confirm (const char* question) {
 //  The rules
 // =================================================================================================
 
+// Keep an answer about a folder for rule 4, while the running program runs. Once the list is
+// full, new answers just aren't kept, and the question is asked each time
+static void remember_decision (const char* folder, perm_kind_t kind, bool allowed) {
+    if (perm_running->decision_count < DECISIONS_MAX) {
+        scpy(perm_running->decisions[perm_running->decision_count].folder, folder, FS_PATH_MAX);
+        perm_running->decisions[perm_running->decision_count].kind = kind;
+        perm_running->decisions[perm_running->decision_count].allowed = allowed;
+        perm_running->decision_count++;
+    }
+}
+
 // may the running program read or change this file? Goes through rules 1 to 6 at the top
 bool perm_allows (const char* folder, const char* name, perm_kind_t kind) {
     // 1. the terminal and the code typed at it are you
-    if (!program.running) {
+    if (perm_running == NULL) {
         return true;
     }
     // 2. the accounts: never. This comes before any asking, so a program can't talk anyone
     // into letting it read password hashes or write itself an "always" in /acc/perms
     if (strncasecmp(folder, PERM_FILE_FOLDER, slen(PERM_FILE_FOLDER)) == 0) {
-        TRACE("%s may never touch %s: the accounts are off limits to programs", program.name, folder);
+        TRACE("%s may never touch %s: the accounts are off limits to programs", perm_running->name, folder);
         return false;
     }
     // ...and AerOS's log can be read (rule 3) but never changed, so there's nothing to ask
     bool is_log = strcasecmp(folder, SYSLOG_FOLDER) == 0 && strcasecmp(name, SYSLOG_FILE) == 0;
     if (kind == PERM_CHANGE && is_log) {
         TRACE("%s may not change %s%s: only AerOS adds to its log (dbopen(path, \"read\") reads it)",
-              program.name, folder, name);
+              perm_running->name, folder, name);
         return false;
     }
     // 3. free to read
     if (kind == PERM_READ) {
-        bool own_folder = strcasecmp(folder, program.folder) == 0;
+        bool own_folder = strcasecmp(folder, perm_running->folder) == 0 || own_files(folder);
         if (system_folder(folder) || own_folder || named_by_you(folder, name)) {
-            TRACE("%s may read %s%s without asking: %s", program.name, folder, name,
+            TRACE("%s may read %s%s without asking: %s", perm_running->name, folder, name,
                   own_folder ? "it is the program's own folder" :
                   system_folder(folder) ? "it is one of AerOS's own folders" : "you named it");
             return true;
@@ -409,37 +475,40 @@ bool perm_allows (const char* folder, const char* name, perm_kind_t kind) {
     }
     // 4. answered already. A yes to "change" covers reading too, but a no only rules out what
     // was asked: after "no" to changing, the program may still be asked about reading
-    for (int i = 0; i < decision_count; i++) {
-        if (strcasecmp(decisions[i].folder, folder) != 0) {
+    for (int i = 0; i < perm_running->decision_count; i++) {
+        if (strcasecmp(perm_running->decisions[i].folder, folder) != 0) {
             continue;
         }
-        if (decisions[i].allowed && covers(decisions[i].kind, kind)) {
+        if (perm_running->decisions[i].allowed && covers(perm_running->decisions[i].kind, kind)) {
             return true;
         }
-        if (!decisions[i].allowed && decisions[i].kind == kind) {
+        if (!perm_running->decisions[i].allowed && perm_running->decisions[i].kind == kind) {
             return false;
         }
     }
     // 5. "always", from before
     if (always_allowed(folder, kind)) {
-        TRACE("%s may use %s: you said \"always\" before (PERM lists it)", program.name, folder);
+        TRACE("%s may use %s: you said \"always\" before (PERM lists it)", perm_running->name, folder);
         return true;
     }
 
     // 6. ask
     answer_t answer = ask(folder, name, kind);
-    TRACE("asked you about %s%s for %s: %s", folder, name, program.name,
+    TRACE("asked you about %s%s for %s: %s", folder, name, perm_running->name,
           answer == ANSWER_NO ? "no" : answer == ANSWER_ALWAYS ? "always" : "yes, this time");
     if (answer == ANSWER_ALWAYS) {
         remember_always(folder, kind);
     }
-    // remember the answer for rule 4, so the same question isn't asked again and again. Once
-    // the list is full, new answers just aren't kept and the question is asked each time
-    if (decision_count < DECISIONS_MAX) {
-        scpy(decisions[decision_count].folder, folder, FS_PATH_MAX);
-        decisions[decision_count].kind = kind;
-        decisions[decision_count].allowed = answer != ANSWER_NO;
-        decision_count++;
-    }
+    // remember the answer for rule 4, so the same question isn't asked again and again
+    remember_decision(folder, kind, answer != ANSWER_NO);
     return answer != ANSWER_NO;
+}
+
+// the running program has just made this folder (mkd): it may change what is in it until it
+// ends, without asking (rule 4). It was empty a moment ago, so nothing of yours is in it
+void perm_made_folder (const char* folder) {
+    if (perm_running != NULL) {
+        TRACE("%s made %s, so it may change files in it while it runs", perm_running->name, folder);
+        remember_decision(folder, PERM_CHANGE, true);
+    }
 }

@@ -1,7 +1,8 @@
 # The network
 
 AerOS can send short messages to other computers, and get them back, but only to computers
-you have allowed, and never in a form anyone else can read.
+you have allowed, and never in a form anyone else can read. It can also fetch web pages
+(plain `http://`), again only from computers you have allowed.
 
 ## The firewall blocks everything
 
@@ -61,12 +62,61 @@ net ip 192.168.1.50/24 192.168.1.1 192.168.1.1     address, gateway, DNS server
 
 - **Finding a neighbour (ARP):** before sending, AerOS asks which network card has an address.
   That carries addresses only, never a message.
-- **Looking up a name (DNS):** `fw allow example.com 5000` asks the DNS server for the address
+- **Looking up a name (DNS):** `fw allow example.com 5000` (or `fw web example.com`) asks the DNS server for the address
   once, when the rule is made, because DNS can't be encrypted. Nothing else uses DNS.
+- **Web pages:** everything `get` and `httpget` send and receive is plain text, as the web is
+  without HTTPS.
+
+## Web pages
+
+A web server knows nothing of seals, so it gets a different kind of rule, a web rule, with no
+password:
+
+```
+fw web example.com                     allow fetching pages from example.com (port 80)
+fw web 10.0.2.2 8080                   or from an address, on another port
+get http://example.com/                show a page
+get http://example.com/notes.txt n.txt save one in a file
+```
+
+`get` says how it went first: `200 OK, 1256 bytes, text/html` (200 is "here it is", 404 "no
+such page"). A page that has moved is followed to its new address, if a web rule allows that
+too. From a program, `httpget(url)` gives back the page's text, or nil.
+
+Web pages aren't sealed: anything fetched can be read, or changed, on the way. That's fine for
+public pages, and for files that are checked once they arrive, but don't fetch anything private
+this way. A web rule only allows fetching pages, never sealed messages, and a rule with a
+password never allows web pages: the two kinds don't stand in for each other.
+
+## A web server
+
+AerOS can serve web pages too: other computers connect to it. Nothing can, until you allow it
+with a serve rule, for one of AerOS's own ports:
+
+```
+pkg install webserve                   once, to get it
+fw serve 8080                          anyone may connect to AerOS's port 8080
+fw serve 8080 10.0.2.2                 or only that computer may
+bg webserve 8080 /docs/                serve the manual, in the background
+```
+
+Then `http://<AerOS's address>:8080/` in a browser shows it. In QEMU started with `make run`,
+port 8080 on your computer is passed through to AerOS's, so it is `http://localhost:8080/`
+there. Each visit
+shows up at the prompt: `[webserve] GET /index.md 200`. `/` shows `index.html`, or a list of the
+files if there isn't one. `stop` stops it, and `fw del` shuts the port again at once.
+
+`webserve` is an ordinary AerLang program, a package (`pkg install webserve` gets it):
+read `/apps/webserve.aer` to see how a web server
+works, or make your own with `tcplisten`, `tcpaccept`, `tcprecv`, `tcpsend` and `tcpclose`. It
+reads the folder like any program: AerOS's own folders freely, yours only where you allow it.
+What it sends isn't sealed, so don't serve anything private.
 
 ## What it can't do (yet)
 
-No web pages (that needs TCP), no IPv6, and a message must fit in one packet: 1428 bytes. The
-card is an Intel e1000 (QEMU's own, and one VirtualBox offers).
+No HTTPS (so `https://` addresses don't work: try the `http://` one), no IPv6, and a sealed
+message must fit in one packet: 1428 bytes. The
+biggest page `get` will fetch is 4 MB. The card is an Intel e1000 (QEMU's own, and one
+VirtualBox offers).
 
 See also: [Accounts and encryption](security.md), [Ask AerOS why](why.md).

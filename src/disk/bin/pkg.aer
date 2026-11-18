@@ -1,0 +1,542 @@
+# This app is part of the operating system's tooling to provide critical functionality to the user.
+# The operting system will automatically restore this file if it is missing, but the user will not be able to manage packages until it is restored.
+
+# Alexander Walford 2026
+
+# pkg: install extra apps from the package server (docs/PACKAGES.md)
+#
+#     pkg list             what is available
+#     pkg install <name>   check it, show what it could do, ask, then install it
+#     pkg remove <name>    take it off again
+#     pkg installed        what you have installed
+#     pkg update [name]    get newer versions of what you have installed (or just one)
+#
+# Everything fetched is checked with verify() against the key built into AerOS (packagekey())
+# before it is used, and nothing is written until you say yes.
+#
+# A package is a program, /apps/<name>.aer, and a folder of its own, /apps/<name>/, for the
+# files it comes with (pictures, a video...) and anything it keeps itself (Snake's high scores).
+# The program reads that folder without asking: it is its own.
+
+# where the packages come from (http://10.0.2.2:8000 is this computer, while testing in QEMU)
+let SERVER = "http://packages.intercon.network" # http://10.0.2.2:8000
+# one line for each installed package: "name version". (File names on AerOS's disk are at most
+# 8 letters, a dot and 3 more, so "installed.txt" wouldn't fit)
+let INSTALLED = "/apps/packages.txt"
+# the highest serial number of an index that has been installed from (see index_serial)
+let SERIAL = "/apps/serial.txt"
+
+
+# ---- the index -----------------------------------------------------------------------------
+
+func fetch_index()
+    # get the index of packages from the server, check it, and return it as a string
+    if packagekey() == "" then
+        print("AerOS has no package key, so packages can't be checked.")
+        return nil
+    end
+
+    # definet he index and signature as the text of the index and its signature from the server
+    let index = httpget(SERVER + "/index.txt")
+    let signature = httpget(SERVER + "/index.sig")
+
+    # if either is nil: say the server can't be reached, and return nil
+    if index == nil or signature == nil then
+        print("Can't reach the package server: fw web packages.intercon.network 80 allows it.")
+        return nil
+    end
+
+    # if the signature doesn't check out: say the index can't be verified, and return nil
+    if verify(index, signature, packagekey()) == false then
+        print("The package index from the server can't be verified, so it won't be used.")
+        return nil
+    end
+    
+    return index
+end
+
+func index_serial(index)
+    # The number on the index's "#serial <number>" line, or 0 if it has none. Every index the
+    # server publishes has a higher number than the one before, and the line is signed with
+    # the rest of the index. So an index with a lower number than one used before is an old
+    # one, sent again by someone in the way to bring back an old version of a package
+    for line in split(index, chr(10)) do
+        if sub(line, 0, 8) == "#serial " then
+            let number = int(sub(line, 8, len(line) - 8))
+            if number != nil then
+                return number
+            end
+        end
+    end
+    return 0
+end
+
+func seen_serial()
+    # the highest serial number installed from so far: the number in SERIAL, or 0 if there
+    # isn't one yet
+    let saved = rdf(SERIAL)
+    if saved == nil then
+        return 0
+    end
+    let number = int(saved)
+    if number == nil then
+        return 0
+    end
+    return number
+end
+
+func good_file_name(name)
+    # Is this a name pkg will write a package's file under? An 8.3 name (1 to 8 letters, a dot,
+    # 1 to 3 more), with no "/" or ".." that could put it outside the package's folder, and not
+    # a program (.aer): only the package's own program is shown to you with scan() before you
+    # say yes, so a program hidden among its files couldn't be
+    let parts = split(name, ".")
+    if len(parts) != 2 or find(name, "/") >= 0 then
+        return false
+    end
+    if len(parts[0]) < 1 or len(parts[0]) > 8 or len(parts[1]) < 1 or len(parts[1]) > 3 then
+        return false
+    end
+    return lower(parts[1]) != "aer"
+end
+
+func find_files(index, name)
+    # The files a package comes with, as a list of [file name, signature]: the index's lines
+    # "#file <package> <file name> <signature>" for this package. (They start with # so an older
+    # pkg, which doesn't know about files, skips them the way it skips the #serial line)
+    let files = []
+    for line in split(index, chr(10)) do
+        if sub(line, 0, 6) == "#file " then
+            let parts = split(line, " ")
+            if len(parts) == 4 and parts[1] == name then
+                push(files, [parts[2], parts[3]])
+            end
+        end
+    end
+    return files
+end
+
+func find_package(index, name)
+    # The line for one package as [name, version, signature, description, files], or nil if
+    # the index has no such package. files is find_files' list of what it comes with. (Blank
+    # lines and lines starting with # aren't packages)
+    for line in split(index, chr(10)) do
+        # the same lines list_packages shows: not blank, and not a # comment
+        if line != "" and sub(line, 0, 1) != "#" then
+            let parts = split(line, " ")
+            # a package line has at least four parts: name, version, signature, description
+            if parts[0] == name and len(parts) >= 4 then
+                # the description is every word from parts[3] on, put back together
+                let description = parts[3]
+                for i = 4 to len(parts) - 1 do
+                    description = description + " " + parts[i]
+                end
+                return [parts[0], parts[1], parts[2], description, find_files(index, name)]
+            end
+        end
+    end
+    # no line for that name
+    return nil
+end
+
+func fetch_current_index()
+    # fetch_index, but also refuse an index older than one used before (index_serial says why).
+    # The index, or nil after saying what was wrong
+    let index = fetch_index()
+    if index == nil then
+        return nil
+    end
+    let serial = index_serial(index)
+    let seen = seen_serial()
+    if serial < seen then
+        print("The package index from the server is older than one used before")
+        print("(number " + serial + ", but " + seen + " was seen), so it won't be used.")
+        return nil
+    end
+    return index
+end
+
+func remember_serial(index)
+    # keep this index's serial number, if it is the highest yet, so an older index is refused
+    # from now on
+    let serial = index_serial(index)
+    if serial > seen_serial() then
+        if wrf(SERIAL, str(serial)) == false then
+            print("Couldn't write " + SERIAL + ": older package lists won't be noticed.")
+        end
+    end
+end
+
+
+# ---- what is installed ---------------------------------------------------------------------
+
+func read_installed()
+    # INSTALLED as a list of [name, version], one for each package (an empty list if nothing
+    # is installed yet)
+    let packages = []
+    let installed = rdf(INSTALLED)
+    if installed == nil then
+        return packages
+    end
+    for line in split(installed, chr(10)) do
+        if line != "" then
+            let parts = split(line, " ")
+            push(packages, [parts[0], parts[1]])
+        end
+    end
+    return packages
+end
+
+func installed_version(name)
+    # the version of name that is installed, or nil if it isn't
+    for entry in read_installed() do
+        if entry[0] == name then
+            return entry[1]
+        end
+    end
+    return nil
+end
+
+func set_installed(name, version)
+    # Set name's line in INSTALLED to "name version": replaced if it is there, added if not.
+    # The new text is built first and written once, so the list is never left half written.
+    # True if it worked
+    let text = ""
+    for entry in read_installed() do
+        if entry[0] != name then
+            text = text + entry[0] + " " + entry[1] + chr(10)
+        end
+    end
+    text = text + name + " " + version + chr(10)
+    return wrf(INSTALLED, text)
+end
+
+
+# ---- getting one package -------------------------------------------------------------------
+
+func get_package(package, verb)
+    # Fetch a package's program and its files, check their signatures, show what it could do,
+    # and ask before going on (verb is the question's first word: "Install" or "Update").
+    # package is find_package's [name, version, signature, description, files]. If every step
+    # passed and the answer was y: [program, files], where files is a list of [file name, what
+    # is in it]. nil, after saying why, if not. Nothing is written here
+    let name = package[0]
+
+    # its program, from the server
+    let program = httpget(SERVER + "/packages/" + name + ".aer")
+    if program == nil then
+        print("Couldn't fetch " + name + " from the package server.")
+        return nil
+    end
+
+    # verify the signature of the program against the signature in the index, using the built-in key
+    if verify(program, package[2], packagekey()) == false then
+        print(name + " isn't signed by the packages' maker, so it won't be used.")
+        return nil
+    end
+
+    # the files it comes with, each checked the same way
+    let files = []
+    let size = 0
+    for file in package[4] do
+        if good_file_name(file[0]) == false then
+            print(name + " comes with a file called " + file[0] + ", which pkg won't write, so it won't be used.")
+            return nil
+        end
+        let data = httpget(SERVER + "/packages/" + name + "/" + file[0])
+        if data == nil then
+            print("Couldn't fetch " + name + "'s file " + file[0] + " from the package server.")
+            return nil
+        end
+        if verify(data, file[1], packagekey()) == false then
+            print(name + "'s file " + file[0] + " isn't signed by the packages' maker, so it won't be used.")
+            return nil
+        end
+        push(files, [file[0], data])
+        size = size + len(data)
+    end
+
+    # show what it could do (scan gives [what it can do, what is worth a closer look])
+    let found = scan(program)
+    print(name + " " + package[1] + ": " + package[3])
+    if len(found[0]) == 0 then
+        print("  It only works with its own values, prints, and reads what you type.")
+    end
+    for line in found[0] do
+        print("  " + line)
+    end
+    for line in found[1] do
+        print("  ! " + line)
+    end
+    # and what comes with it (only the program can do anything: the files are just data)
+    if len(files) > 0 then
+        let names = []
+        for file in files do
+            push(names, file[0])
+        end
+        print("  It comes with " + len(files) + " file(s), " + (size / 1024 + 1) + " KB, for /apps/" + name + "/: " + join(names, ", "))
+    end
+
+    # ask: anything but "y" cancels
+    let answer = input(verb + " " + name + " " + package[1] + "? (y/n) ")
+    if answer != "y" then
+        print("pkg: " + name + " left as it is")
+        return nil
+    end
+    return [program, files]
+end
+
+func write_package(name, got)
+    # Write what get_package gave: the files first, into the package's own folder, then the
+    # program, so a program is never there without its files. True if it all worked; false
+    # after saying what didn't
+    let folder = "/apps/" + name + "/"
+    # make the folder (false if it is there already, from before: that's fine)
+    mkd(folder)
+    for file in got[1] do
+        if wrf(folder + file[0], file[1]) == false then
+            print("Couldn't write " + folder + file[0] + ".")
+            return false
+        end
+    end
+    if wrf("/apps/" + name + ".aer", got[0]) == false then
+        print("Couldn't write /apps/" + name + ".aer.")
+        return false
+    end
+    return true
+end
+
+
+# ---- the commands --------------------------------------------------------------------------
+
+func list_packages()
+    # pkg list: every package in the (checked) index, with its version and description
+    
+    # check to make sure index is available
+    let index = fetch_index()
+    if index == nil then
+        return
+    end
+
+    # split the index into lines, and for each line that isn't blank or a comment, split it into parts
+    for line in split(index, chr(10)) do
+        if line != "" and sub(line, 0, 1) != "#" then
+            let parts = split(line, " ")
+            # the description is every word from parts[3] on, put back together
+            let description = parts[3]
+            for i = 4 to len(parts) - 1 do
+                description = description + " " + parts[i]
+            end
+            print(parts[0] + " " + parts[1] + ": " + description)
+        end
+    end
+
+end
+
+func install(name)
+    # pkg install <name>: docs/PACKAGES.md steps 4 to 8. Every check stops the install if it
+    # fails, and nothing is written until the very end
+
+    print("[ ! ] pkg install: " + name)
+
+    # already installed? Then pkg update is the way to get a newer one (installing it again
+    # would give it two lines in INSTALLED)
+    let have = installed_version(name)
+    if have != nil then
+        print(name + " " + have + " is already installed: pkg update " + name + " gets a newer one.")
+        return
+    end
+
+    # the checked index (fetch_current_index says why, if it can't give one)
+    let index = fetch_current_index()
+    if index == nil then
+        return
+    end
+
+    # the package's line in it: [name, version, signature, description]
+    let package = find_package(index, name)
+    if package == nil then
+        print("There is no package called " + name + ".")
+        return
+    end
+
+    # fetch it, check it, show what it could do, and ask (get_package says why if it stops)
+    let got = get_package(package, "Install")
+    if got == nil then
+        return
+    end
+
+    # write /apps/<name>.aer and its files, in /apps/<name>/
+    if write_package(name, got) == false then
+        print(name + " isn't installed.")
+        return
+    end
+
+    # its line in INSTALLED: "name version"
+    if set_installed(name, package[1]) == false then
+        print("Installed /apps/" + name + ".aer, but couldn't add it to " + INSTALLED + ".")
+        return
+    end
+    remember_serial(index)
+    print("Installed " + name + " " + package[1] + ": type " + name + " to run it.")
+end
+
+func update(only)
+    # pkg update [name]: every installed package (or just `only`, if it isn't nil) that the
+    # index has a different version of, checked and asked about the same way as pkg install.
+    # "Different" rather than "newer": the index is signed and can't be an old one (the serial
+    # check), so whatever version it lists is the one its maker wants you to have
+    let installed = read_installed()
+    if len(installed) == 0 then
+        print("Nothing is installed yet.")
+        return
+    end
+    if only != nil and installed_version(only) == nil then
+        print(only + " isn't installed: pkg install " + only + " gets it.")
+        return
+    end
+
+    print("[ ! ] pkg update")
+    let index = fetch_current_index()
+    if index == nil then
+        return
+    end
+
+    let updated = 0
+    let current = 0
+    for entry in installed do
+        let name = entry[0]
+        if only == nil or name == only then
+            let package = find_package(index, name)
+            if package == nil then
+                # taken off the server: what you have keeps working, so it is left alone
+                print(name + " " + entry[1] + " isn't on the package server any more, so it's left as it is.")
+            elif package[1] == entry[1] then
+                current = current + 1
+            else
+                print(name + ": " + entry[1] + " -> " + package[1])
+                let got = get_package(package, "Update")
+                if got != nil then
+                    # the new program and files, then its new version in INSTALLED
+                    if write_package(name, got) == false then
+                        print(name + " " + entry[1] + " is kept.")
+                    elif set_installed(name, package[1]) == false then
+                        print("Updated /apps/" + name + ".aer, but couldn't change its line in " + INSTALLED + ".")
+                    else
+                        updated = updated + 1
+                    end
+                end
+            end
+        end
+    end
+
+    remember_serial(index)
+    print("Updated " + updated + ", " + current + " already up to date.")
+end
+
+func remove(name)
+    # pkg remove <name>: delete /apps/<name>.aer and its folder, /apps/<name>/ (the files it
+    # came with, and anything it kept there), and its line from INSTALLED
+    
+    # get the contents of INSTALLED, or say nothing is installed yet
+    let installed = rdf(INSTALLED)
+
+    # check if the file exists and has content: if not, say nothing is installed yet
+    if installed == nil or installed == "" then
+        print("Nothing is installed yet.")
+        return
+    end
+
+    # is it in the list? (each line is "name version", so the first word is the name)
+    let found = false
+    for line in split(installed, chr(10)) do
+        if line != "" then
+            if split(line, " ")[0] == name then
+                found = true
+            end
+        end
+    end
+
+    # if the package isn't found in INSTALLED, say so and return
+    if found == false then
+        print(name + " isn't installed.")
+        return
+    end
+
+    # delete the package's program (AerOS asks first; if the answer is no, it stays installed)
+    if delf("/apps/" + name + ".aer") == false then
+        print("Couldn't delete /apps/" + name + ".aer, so " + name + " is still installed.")
+        return
+    end
+    # and its folder, with what is in it. (deld is false if there isn't one, as a package
+    # installed by an older pkg has none, and AerOS asks first, so a "no" keeps it)
+    deld("/apps/" + name + "/")
+
+    # rewrite INSTALLED without the package's line: build the new text first, then write it
+    # once, so the list is never left half written
+    let kept = ""
+    for line in split(installed, chr(10)) do
+        if line != "" and split(line, " ")[0] != name then
+            kept = kept + line + chr(10)
+        end
+    end
+    if wrf(INSTALLED, kept) == false then
+        print("Removed /apps/" + name + ".aer, but couldn't update " + INSTALLED + ".")
+        return
+    end
+
+    print("Removed " + name + ".")
+end
+
+func show_installed()
+    # pkg installed: the lines of INSTALLED, or "Nothing is installed yet."
+    
+    let installed = rdf(INSTALLED)
+
+    # check if the file exists and has content: if not, say nothing is installed yet
+    if installed == nil or installed == "" then
+        print("Nothing is installed yet.")
+        return
+    end
+
+    # split and print each line, skipping blank lines
+    print("Installed packages:")
+    for line in split(installed, chr(10)) do
+        if line != "" then
+            print("  " + line)
+        end
+    end
+end
+
+func show_help()
+    print("pkg list             what is available")
+    print("pkg install <name>   check a package, show what it could do, and install it")
+    print("pkg remove <name>    take an installed package off again")
+    print("pkg installed        what you have installed")
+    print("pkg update [name]    get newer versions of what you have installed (or just one)")
+end
+
+
+# ---- which command -------------------------------------------------------------------------
+#
+# args is the list of words typed after "pkg": "pkg install chess" gives ["install", "chess"].
+# len(args) is checked before args[1] is read: reading past the end of a list is an error
+
+if len(args) == 0 then
+    show_help()
+elif args[0] == "list" then
+    list_packages()
+elif args[0] == "installed" then
+    show_installed()
+elif args[0] == "install" and len(args) == 2 then
+    install(args[1])
+elif args[0] == "remove" and len(args) == 2 then
+    remove(args[1])
+elif args[0] == "update" and len(args) == 1 then
+    update(nil)
+elif args[0] == "update" and len(args) == 2 then
+    update(args[1])
+else
+    print("pkg doesn't know \"" + join(args, " ") + "\".")
+    show_help()
+end

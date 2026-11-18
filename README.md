@@ -20,12 +20,16 @@ It's an opensource operating system and its design is remarkably simple consider
 AerOS is written to be read. Every source file starts with an explanation of what it does and how, and these guides tie it all together:
 
 - [What makes AerOS different](docs/DIFFERENT.md): how WHY and SRC, AerLang at the prompt, permissions and file versions work inside
-- [The network](docs/NETWORK.md): the e1000 driver, the firewall, sealed messages, and `tools/aernet.py` for the other end
+- [The network](docs/NETWORK.md): the e1000 driver, the firewall, sealed messages, TCP both ways (with `webserve`, a web server in AerLang), and `tools/aernet.py` for the other end
 - [How AerOS works](docs/ARCHITECTURE.md): the source tree, the boot sequence, memory, interrupts, files, and recipes for adding commands, functions and drivers
 - [AerLang](docs/AERLANG.md): the built-in programming language
 - [Security](docs/SECURITY.md): user accounts, password hashing and file encryption, with every algorithm explained
 - [Sound](docs/AUDIO.md): the AC'97 driver and WAV / MP3 playback
+- [Threads](docs/THREADS.md): several things taking turns on the processor, switching only at safe points (so only the network needs a lock), and `bg` to run a program in the background
+- [The disk cache](docs/DISK_CACHE.md): recently used parts of the disk kept in memory, changes written in batches, and what that costs if the power goes
 - [The log](docs/LOGS.md): every boot, warning and shutdown kept in a database, how a crash is noticed, and why only AerOS can write to it
+- [Installing AerOS](docs/INSTALLING.md): putting AerOS on a disk from demo mode, so a PC starts it without the CD: GRUB, a FAT32 volume and the kernel, all written by AerOS itself
+- [Packages](docs/PACKAGES.md): extra apps (the games, a picture viewer, a web server...) from a package server, with any pictures or video they come with, all signed by their maker and checked before they are installed. They are in `packages/`
 - [Testing](docs/TESTING.md): `make test` boots AerOS in QEMU and checks it works, and how to write a test
 
 ## But why basic C?

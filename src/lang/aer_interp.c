@@ -47,12 +47,18 @@
 #include "../sys/explain.h"
 #include "../sys/perm.h"
 #include "../sys/appmode.h"
+#include "../sys/thread.h"
 
 #define STACK_RESERVE (32 * 1024) // stop a runaway program before it uses the last 32KB of stack
 
-extern char stack[]; // the bottom of the kernel stack (entry.asm)
-
+// the running session (see aer_state_t). Each thread has its own (aer_keep_per_thread), so a
+// program in the background never sees the one in front's
 aer_state_t* aer = 0;
+
+// give each thread its own `aer` (see aerlang.h)
+void aer_keep_per_thread (void) {
+    thread_keep(&aer, sizeof(aer));
+}
 
 // ---- memory -----------------------------------------------------------------------------------
 //
@@ -62,15 +68,14 @@ aer_state_t* aer = 0;
 //                       ^ the pointer aer_alloc hands out
 //
 // so aer_free_all() can give everything back when the program ends, even after an error left
-// things half built. aer_free() unlinks one block early (used by reference counting).
+// things half built. aer_free() unlinks one block early (used by reference counting). The list
+// belongs to the running session (aer->blocks): each program has its own.
 
 typedef struct aer_block {
     struct aer_block* prev;
     struct aer_block* next;
     size_t size;
 } aer_block_t;
-
-static aer_block_t* blocks = 0; // every allocation of the running program
 
 // out of memory is an AerLang error like any other, so callers never have to check for NULL
 void* aer_alloc (size_t size) {
@@ -82,12 +87,12 @@ void* aer_alloc (size_t size) {
     // put it at the front of the list (quicker than finding the end), and remember the size
     // for aer_realloc
     b->prev = 0;
-    b->next = blocks;
+    b->next = aer->blocks;
     b->size = size;
-    if (blocks) {
-        blocks->prev = b;
+    if (aer->blocks) {
+        aer->blocks->prev = b;
     }
-    blocks = b;
+    aer->blocks = b;
     // b + 1 is the first byte after the header: pointer arithmetic on an aer_block_t* moves in
     // steps of a whole header
     return b + 1;
@@ -105,7 +110,7 @@ void aer_free (void* ptr) {
     if (b->prev) {
         b->prev->next = b->next;
     }
-    else blocks = b->next;
+    else aer->blocks = b->next;
     if (b->next) {
         b->next->prev = b->prev;
     }
@@ -129,24 +134,22 @@ void* aer_realloc (void* ptr, size_t size) {
 // use an aer_alloc pointer after this, including interned names (see session_end)
 void aer_free_all (void) {
     // take the next pointer before freeing: the header holding it goes with the block
-    while (blocks) {
-        aer_block_t* next = blocks->next;
-        free(blocks);
-        blocks = next;
+    while (aer->blocks) {
+        aer_block_t* next = aer->blocks->next;
+        free(aer->blocks);
+        aer->blocks = next;
     }
 }
 
 // names are stored once, so comparing two names is just comparing pointers
-// a small hash table: hash the name (djb2: hash * 33 + c) to pick one of 128 buckets, each a
-// linked list of the names that landed there
-#define NAME_BUCKETS 128
+// a small hash table: hash the name (djb2: hash * 33 + c) to pick one of AER_NAME_BUCKETS (128)
+// buckets, each a linked list of the names that landed there. The table belongs to the running
+// session (aer->names)
 
 typedef struct name_entry {
     struct name_entry* next;
     char text[]; // the name itself, stored straight after the entry in the same block
 } name_entry_t;
-
-static name_entry_t* names[NAME_BUCKETS];
 
 // The one shared copy of this name (length characters, not '\0' terminated), made the first
 // time it is seen. Two names are the same exactly when aer_intern gives the same pointer
@@ -158,7 +161,7 @@ const char* aer_intern (const char* text, size_t length) {
     }
     // already known? The '\0' check makes sure the stored name is exactly this long, so "fo"
     // doesn't match a stored "foo"
-    name_entry_t** bucket = &names[hash % NAME_BUCKETS];
+    name_entry_t** bucket = &aer->names[hash % AER_NAME_BUCKETS];
     for (name_entry_t* e = *bucket; e; e = e->next) {
         if (strncmp(e->text, text, length) == 0 && e->text[length] == '\0') {
             return e->text;
@@ -215,26 +218,40 @@ void aer_error (int line, const char* format, ...) {
     longjmp(aer->error, 1);
 }
 
-// called for every node evaluated: stops deep recursion before it overflows the kernel stack
-// (which everything shares), and notices Ctrl+C so a stuck loop can always be stopped
+// called for every node evaluated: stops deep recursion before it overflows the stack (the
+// thread's own: sys/thread.h), and notices Ctrl+C (or STOP) so a stuck loop can always be stopped
 static void check_stack (int line) {
-    // the stack grows downwards from the top of the stack array, so the address of a local
-    // variable shows how far down it has got. Within STACK_RESERVE of the bottom is too close
+    // the stack grows downwards towards its bottom, so the address of a local variable shows
+    // how far down it has got. Within STACK_RESERVE of the bottom is too close
     char here;
-    if ((uintptr_t)&here < (uintptr_t)stack + STACK_RESERVE) {
+    if ((uintptr_t)&here < (uintptr_t)thread_stack_bottom() + STACK_RESERVE) {
         aer_error(line, "too much recursion");
     }
-    if (kb_take_break()) {
+    if (aer_should_stop()) {
         aer_stop(line);
     }
+}
+
+// should the running program stop? (see aer_internal.h)
+bool aer_should_stop (void) {
+    // Ctrl+C is the keyboard's, and so the program in front's: one in the background mustn't
+    // use it up. STOP <id> asks a background program's thread to stop instead (sys/jobs.c)
+    if (aer->background) {
+        return thread_stopping();
+    }
+    return kb_take_break();
 }
 
 // set when a program is stopped with Ctrl+C, so whoever ran it (the GO command running the
 // queue) can tell a deliberate stop from a program that simply finished or failed
 static bool stopped_by_user = false;
 
-// Ctrl+C was pressed: remember that, and abandon the program like any other error
+// Ctrl+C was pressed (or STOP typed, for a program in the background): remember that, and
+// abandon the program like any other error
 void aer_stop (int line) {
+    if (aer->background) {
+        aer_error(line, "stopped (STOP)");
+    }
     stopped_by_user = true;
     aer_error(line, "stopped (Ctrl+C)");
 }
@@ -961,6 +978,15 @@ static void assign (aer_node_t* target, value_t value) {
 
 static exec_t exec (aer_node_t* n);
 
+// The interpreter's safe point: once for every statement, and once every time round a loop (so
+// even "while x do end", with nothing inside, gets one). Ctrl+C and the recursion limit are
+// checked (check_stack), and if this thread's turn is up another thread can have one now
+// (sys/thread.h). Nothing is ever half done at this point
+static void safe_point (int line) {
+    check_stack(line);
+    thread_check();
+}
+
 // run statements in order until one of them breaks, continues or returns, and pass that on to
 // whoever can deal with it (a loop, or a function call)
 static exec_t exec_block (aer_node_t* block) {
@@ -989,7 +1015,7 @@ static void set_loop_variable (const char* name, value_t value) {
 // carry out one statement, and say what should happen next (EXEC_NEXT unless it was a break,
 // continue or return, or a block inside it ended with one)
 static exec_t exec (aer_node_t* n) {
-    check_stack(n->line);
+    safe_point(n->line);
     switch (n->type) {
         // let always makes the variable in the current scope (a local inside a function), even
         // if a global has the same name; both it and = take over eval's reference
@@ -1032,6 +1058,7 @@ static exec_t exec (aer_node_t* n) {
         // return carries on out through it; continue needs nothing, as the loop goes round anyway
         case N_WHILE:
             for (;;) {
+                safe_point(n->line);
                 value_t condition = eval(n->condition);
                 bool truth = aer_truthy(condition);
                 aer_release(condition);
@@ -1064,6 +1091,7 @@ static exec_t exec (aer_node_t* n) {
             }
             // counting up runs while i <= last, counting down (a negative step) while i >= last
             for (;;) {
+                safe_point(n->line);
                 bool finished;
                 if (by > 0) {
                     finished = i > last;
@@ -1097,6 +1125,7 @@ static exec_t exec (aer_node_t* n) {
             exec_t result = EXEC_NEXT;
             // the length is checked every time round, so the body may add to or remove from a list
             for (uint32_t i = 0; i < collection.as.obj->length; i++) {
+                safe_point(n->line);
                 set_loop_variable(n->name, index_get(collection, aer_int((int32_t)i), n->line));
                 result = exec_block(n->body);
                 if (result == EXEC_BREAK || result == EXEC_RETURN) {
@@ -1141,61 +1170,43 @@ static void define_functions (aer_node_t* program) {
 
 // ---- running programs -------------------------------------------------------------------------
 
-static aer_state_t state; // the running session's state; aer points here while code runs
-
-// ---- the shell's session, put away while a program runs ----------------------------------------
+// ---- sessions: the shell's, the program in front's, and the ones in the background -------------
 //
-// The terminal runs lines that aren't commands as AerLang, all in one session that lasts from
-// logging in to logging out (see "The shell" below). But only one session can be the running
-// one: `state`, `names` and `blocks` above. So when a program starts, the shell's session is
-// copied out of them into shell_copy, and copied back when the program ends. The program gets a
-// clean slate and the shell's variables are all still there afterwards.
+// Each session is an aer_state_t of its own, holding its variables, its names and everything it
+// has allocated, and `aer` points at the one running:
 //
-// (A program can't start another program, so one copy is all that's ever needed.)
+//     shell_session      the terminal's prompt, from logging in to logging out (see "The shell")
+//     front_session      a program run at the prompt, while it runs
+//     (one each)         programs run with BG, in the background (sys/jobs.c), each on its own
+//                        thread with its own `aer`
+//
+// When a program starts in front, the shell's session simply stops being the running one
+// (shell_put_away), and when it ends, `aer` points at the shell's again: its variables are all
+// still there. A program in the background never touches the shell's session at all.
+//
+// (A program can't start another program in front, so one front_session is all that's needed.)
 
-typedef struct {
-    aer_state_t state;
-    name_entry_t* names[NAME_BUCKETS];
-    aer_block_t* blocks;
-} session_copy_t;
-
+static aer_state_t shell_session;
+static aer_state_t front_session;
 static bool shell_started = false;    // someone is logged in, and the shell has a session
-static bool shell_put_away = false;   // a program is running: the shell's session is in shell_copy
-static session_copy_t shell_copy;
+static bool shell_put_away = false;   // a program is running in front: the shell's waits
 
-// Save the shell's session in shell_copy, so a program can have the running one. Only the list
-// heads are copied: the blocks themselves stay where they are in memory, untouched, because
-// the program's aer_free_all only frees the program's own list
-static void put_shell_away (void) {
-    shell_copy.state = state;
-    memcpy(shell_copy.names, names, sizeof(names));
-    shell_copy.blocks = blocks;
-    shell_put_away = true;
-}
-
-// Make the shell's session the running one again, once the program's has been freed
-static void bring_shell_back (void) {
-    state = shell_copy.state;
-    memcpy(names, shell_copy.names, sizeof(names));
-    blocks = shell_copy.blocks;
-    aer = &state;
-    shell_put_away = false;
-}
-
-// a clean slate for a program: no variables, no allocations, then the builtins, the constants
-// and args (the words typed after the program's name)
-static void session_begin (const char* name, const char* args) {
-    // the shell's session (if someone is logged in) is saved first, then everything is cleared:
-    // the state, the interned names and the block list all start empty
-    if (shell_started && !shell_put_away) {
-        put_shell_away();
+// A clean slate in `session`, which becomes the running one: no variables, no allocations, then
+// the builtins, the constants and args (the words typed after the program's name). background:
+// it is a program run with BG
+static void session_begin (aer_state_t* session, const char* name, const char* args, bool background) {
+    // a program in front takes over from the shell's session (if someone is logged in) until
+    // it ends. The shell's isn't the running one now, but nothing in it is touched
+    if (!background && shell_started) {
+        shell_put_away = true;
     }
-    memset(&state, 0, sizeof(state));
-    memset(names, 0, sizeof(names));
-    blocks = 0;
-    aer = &state;
+    memset(session, 0, sizeof(aer_state_t)); // no variables, names or allocations
+    aer = session;
     aer->name = name;
-    kb_take_break(); // forget a Ctrl+C pressed before the program started
+    aer->background = background;
+    if (!background) {
+        kb_take_break(); // forget a Ctrl+C pressed before the program started
+    }
     fpu_enable();    // decimal numbers need the FPU (lib/fpu.h): on before any code runs
 
     // the builtin functions are ordinary global variables, so a program could even replace one
@@ -1229,15 +1240,17 @@ static void session_begin (const char* name, const char* args) {
 }
 
 // leave graphics mode if the program used it, and free everything it allocated. Then the
-// shell's session (if it was put away for the program) is the running one again
+// shell's session (if a program in front took over from it) is the running one again
 static void session_end (void) {
     // the builtins tidy up first, while the session still exists. After aer_free_all every
     // pointer the session had (names, strings, the syntax tree) is gone, so aer is cleared too
+    bool background = aer->background;
     aer_builtins_finish();
     aer_free_all();
     aer = 0;
-    if (shell_put_away) {
-        bring_shell_back();
+    if (!background && shell_put_away) {
+        aer = &shell_session;
+        shell_put_away = false;
     }
 }
 
@@ -1250,12 +1263,26 @@ __attribute__((noinline)) static void parse_and_run (const char* source) {
     token_t* tokens = aer_lex(source, &count);
     aer_node_t* program = aer_parse(tokens, count);
 
+    // In the background, the keyboard, the screen and sound are the program in front's, so a
+    // program that uses any of them can't run there. The whole program has been read, so this
+    // is known before any of it runs
+    if (aer->background) {
+        const char* needs = aer_front_only(tokens, count);
+        if (needs != NULL) {
+            aer_error(0, "%s() is for the program in front (the keyboard, the screen or sound), so "
+                      "it can't run in the background: run it without BG", needs);
+        }
+    }
+
     // App mode: the whole program has been read, so every part of AerOS it can use is named in
     // it. Put the rest away before it starts (sys/appmode.h). Not for code typed at the prompt,
-    // which might use anything on its next line
+    // which might use anything on its next line, and not in the background, where the program
+    // in front may be using what would be put away
     if (!aer->shell) {
         aer->uses = aer_profile(tokens, count);
-        appmode_begin(aer->uses);
+        if (!aer->background) {
+            appmode_begin(aer->uses);
+        }
     }
     define_functions(program);
     exec_block(program);
@@ -1274,13 +1301,18 @@ static int run_program (const char* source) {
     return jumped;
 }
 
-// Run a program held in memory in a session of its own; -1 if it stopped with an error
-int aer_run_source (const char* source, const char* name, const char* args) {
-    session_begin(name, args);
+// run a program held in memory in `session`; -1 if it stopped with an error
+static int run_in_session (aer_state_t* session, const char* source, const char* name, const char* args, bool background) {
+    session_begin(session, name, args, background);
     int jumped = run_program(source);
     session_end();
     // exit() (2) counts as a normal ending, only an error (1) is a failure
     return jumped == 1 ? -1 : 0;
+}
+
+// Run a program held in memory in front, in a session of its own; -1 if it stopped with an error
+int aer_run_source (const char* source, const char* name, const char* args) {
+    return run_in_session(&front_session, source, name, args, false);
 }
 
 // Does the file name end in ".aer" (or the older ".ren"), in any mix of capitals?
@@ -1293,7 +1325,9 @@ bool aer_is_program_name (const char* name, size_t length) {
     return strncasecmp(extension, ".aer", 4) == 0 || strncasecmp(extension, ".ren", 4) == 0;
 }
 
-const char* const aer_app_folders[] = { "/bin/", "/bin/games/", NULL };
+// the folders an app is looked for in (see aerlang.h). /apps/, where installed packages go, comes
+// last, so a package can never take the place of a built-in app with the same name
+const char* const aer_app_folders[] = { "/bin/", "/bin/games/", "/apps/", NULL };
 
 // look for a program: as given, then with ".aer" added, in the current directory and then in
 // each of aer_app_folders. Its source code (free() it), or NULL. folder_out and name_out get
@@ -1333,8 +1367,9 @@ static char* find_program (const char* path, char* folder_out, size_t folder_siz
     return 0;
 }
 
-// Find a program file, run it, and give back its source's memory; -1 if not found or it failed
-int aer_run_file (const char* path, const char* args) {
+// Find a program file, run it in `session`, and give back its source's memory; -1 if not found
+// or it failed. background: run with BG, on a thread of its own (see aer_run_file_background)
+static int run_file (aer_state_t* session, const char* path, const char* args, bool background) {
     char folder[FS_PATH_MAX];
     char name[FS_NAME_MAX];
     char* source = find_program(path, folder, sizeof(folder), name, sizeof(name));
@@ -1342,13 +1377,36 @@ int aer_run_file (const char* path, const char* args) {
         explain_say(PROBLEM_NOT_FOUND, path, "Program not found: %s", path);
         return -1;
     }
-    // while it runs, it has to ask before it touches your files (sys/perm.h)
-    perm_program_started(folder, name, args);
-    int result = aer_run_source(source, name, args);
+    // while it runs, it has to ask before it touches your files (sys/perm.h). Without the
+    // memory for that, it doesn't run at all
+    if (!perm_program_started(folder, name, args)) {
+        free(source);
+        prtf("Not enough memory to run %s.\n", name);
+        return -1;
+    }
+    int result = run_in_session(session, source, name, args, background);
     perm_program_ended();
     // the source came from the file system's malloc, not aer_alloc, so it is freed here: the
     // session's aer_free_all doesn't know about it
     free(source);
+    return result;
+}
+
+// Find a program file and run it in front (see aerlang.h)
+int aer_run_file (const char* path, const char* args) {
+    return run_file(&front_session, path, args, false);
+}
+
+// Find a program file and run it in the background, on the thread calling this (see aerlang.h)
+int aer_run_file_background (const char* path, const char* args) {
+    // a session of its own, for as long as it runs (not aer_alloc'd: that needs a session)
+    aer_state_t* session = malloc(sizeof(aer_state_t));
+    if (session == NULL) {
+        prtf("Not enough memory to run %s.\n", path);
+        return -1;
+    }
+    int result = run_file(session, path, args, true);
+    free(session);
     return result;
 }
 
@@ -1374,7 +1432,7 @@ void aer_shell_start (void) {
     if (shell_started) {
         return;
     }
-    session_begin("prompt", 0);
+    session_begin(&shell_session, "prompt", 0, false);
     aer->repl = true;    // show the value of an expression
     aer->shell = true;   // cmd() works (see bi_system.c)
     shell_started = true;

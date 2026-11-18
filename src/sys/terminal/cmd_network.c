@@ -5,11 +5,12 @@
         FW                   the firewall's rules: which computers may talk to AerOS, on which port
         MSG                  send a sealed message to a computer the firewall allows
         LSN                  wait for sealed messages arriving on a port
+        GET                  fetch a web page (HTTP) from a computer a web rule allows
 
-    The firewall blocks everything until a rule allows it, and messages are sealed with a
-    password both ends know (sys/netseal.h). The network itself is sys/net.c, and the rules are
-    kept by sys/firewall.c. Each command is a row in the table in t_int.c, and commands.h says
-    how the files of the terminal fit together.
+    The firewall blocks everything until a rule allows it. Messages are sealed with a password
+    both ends know (sys/netseal.h); web pages come over plain TCP (sys/tcp.h, sys/http.h). The
+    network itself is sys/net.c, and the rules are kept by sys/firewall.c. Each command is a row
+    in the table in t_int.c, and commands.h says how the files of the terminal fit together.
 */
 
 #include "commands.h"
@@ -24,6 +25,8 @@
 #include "../net.h"
 #include "../firewall.h"
 #include "../netseal.h"
+#include "../http.h"
+#include "../f_sys.h"
 
 
 // =================================================================================================
@@ -125,18 +128,103 @@ static void list_rules (void) {
              command_name(cli_firewall));
         return;
     }
-    prtf("The firewall blocks everything, except sealed messages to and from:\n");
+    prtf("The firewall blocks everything, except:\n");
     for (int i = 1; i <= count; i++) {
         const fw_rule_t* rule = fw_rule(i);
         char address[16];
         net_format_address(rule->address, address);
-        prtf("  %2d. %-15s port %-5u %s\n", i, address, rule->port, rule->name);
+        // sealed: messages with the rule's password. web: fetching web pages (plain TCP).
+        // serve: others connecting to AerOS's own port (from anyone, for address 0)
+        if (rule->serve) {
+            prtf("  %2d. %-15s port %-5u %-7s connecting to AerOS\n", i, rule->address == 0 ? "anyone" : address,
+                 rule->port, "serve");
+        } else {
+            prtf("  %2d. %-15s port %-5u %-7s %s\n", i, address, rule->port, rule->web ? "web" : "sealed", rule->name);
+        }
     }
     prtf("%s DEL <number> removes one.\n", command_name(cli_firewall));
 }
 
+// The address for a new rule: an address like 10.0.2.2 is used as it is (name is left ""), and
+// anything else is taken to be a name and looked up now, the one time DNS is used (DNS can't be
+// sealed): name keeps it, so FW can show it. False, having said why, if it can't be found
+static bool rule_address (const char* host, uint32_t* address, char name[FW_NAME_MAX]) {
+    name[0] = '\0';
+    if (net_parse_address(host, address)) {
+        return true;
+    }
+    net_status_t status;
+    net_status(&status);
+    char dns[16];
+    net_format_address(status.dns, dns);
+    prtf("Asking the DNS server (%s) for %s. That question isn't sealed: DNS can't be.\n", dns, host);
+    ui_busy_begin("Looking it up");
+    int result = net_lookup(host, address);
+    ui_busy_end();
+    if (result != NET_OK) {
+        explain_say(explain_net_problem(result), host, "Can't find %s: %s", host, net_strerror(result));
+        return false;
+    }
+    char found[16];
+    net_format_address(*address, found);
+    prtf("%s is %s.\n", host, found);
+    scpy(name, host, FW_NAME_MAX);
+    return true;
+}
+
+// FW WEB <ADDRESS OR NAME> [PORT]: allow fetching web pages (plain TCP, with GET) from one
+// computer, on port 80 unless another is given. No password: web servers know nothing of seals
+static void allow_web (char* arguments) {
+    char* port_text;
+    char* host = split_first_word(arguments, &port_text);
+    int port = port_text[0] != '\0' ? atoi(port_text) : 80;
+    if (host[0] == '\0' || port < 1 || port > 65535) {
+        show_usage("e.g. FW WEB example.com, or FW WEB 10.0.2.2 8080");
+        return;
+    }
+    uint32_t address;
+    char name[FW_NAME_MAX];
+    if (!rule_address(host, &address, name)) {
+        return;
+    }
+    if (!fw_allow_web(address, (uint16_t)port, name)) {
+        prtf("The firewall already has %d rules, the most it can have.\n", FW_RULES_MAX);
+        return;
+    }
+    prtf("Allowed web pages from %s port %d: %s fetches them.\n", host, port, command_name(cli_get));
+    prtf("They aren't sealed, so anything fetched from it can be read on the way.\n");
+}
+
+// FW SERVE <PORT> [ADDRESS]: let other computers connect to AerOS's own port (plain TCP), for a
+// program serving web pages there (tcplisten): anyone, or only the address given
+static void allow_serving (char* arguments) {
+    char* address_text;
+    char* port_text = split_first_word(arguments, &address_text);
+    int port = atoi(port_text);
+    uint32_t address = 0;   // anyone
+    bool good = port >= 1 && port <= 65535;
+    if (good && address_text[0] != '\0') {
+        good = net_parse_address(address_text, &address) && address != 0;
+    }
+    if (!good) {
+        show_usage("e.g. FW SERVE 8080 (anyone may connect), or FW SERVE 8080 10.0.2.2");
+        return;
+    }
+    if (!fw_allow_serve(address, (uint16_t)port)) {
+        prtf("The firewall already has %d rules, the most it can have.\n", FW_RULES_MAX);
+        return;
+    }
+    if (address == 0) {
+        prtf("Allowed other computers to connect to AerOS's port %d: any that can reach it.\n", port);
+    } else {
+        prtf("Allowed %s to connect to AerOS's port %d.\n", address_text, port);
+    }
+    prtf("A program listening there (tcplisten) can now answer them. It isn't sealed, so what is\n"
+         "sent can be read on the way.\n");
+}
+
 // FW ALLOW <ADDRESS OR NAME> <PORT>: allow one computer on one port, with a password both ends
-// know. A name is looked up now, the one time DNS is used (DNS can't be sealed)
+// know (a name is looked up now, see rule_address)
 static void allow_computer (char* arguments) {
     char* port_text;
     char* host = split_first_word(arguments, &port_text);
@@ -145,28 +233,10 @@ static void allow_computer (char* arguments) {
         show_usage("e.g. FW ALLOW 10.0.2.2 5000, or FW ALLOW example.com 5000");
         return;
     }
-
-    // an address like 10.0.2.2 is used as it is, and the rule has no name. Anything else is
-    // taken to be a name, looked up, and kept with the rule so FW can show it
     uint32_t address;
-    char name[FW_NAME_MAX] = "";
-    if (!net_parse_address(host, &address)) {
-        net_status_t status;
-        net_status(&status);
-        char dns[16];
-        net_format_address(status.dns, dns);
-        prtf("Asking the DNS server (%s) for %s. That question isn't sealed: DNS can't be.\n", dns, host);
-        ui_busy_begin("Looking it up");
-        int result = net_lookup(host, &address);
-        ui_busy_end();
-        if (result != NET_OK) {
-            explain_say(explain_net_problem(result), host, "Can't find %s: %s", host, net_strerror(result));
-            return;
-        }
-        char found[16];
-        net_format_address(address, found);
-        prtf("%s is %s.\n", host, found);
-        scpy(name, host, sizeof(name));
+    char name[FW_NAME_MAX];
+    if (!rule_address(host, &address, name)) {
+        return;
     }
 
     // the password both ends will seal their messages with, asked for twice
@@ -201,7 +271,8 @@ static void allow_computer (char* arguments) {
     wipe(again, sizeof(again));
 }
 
-// FW [ALLOW <ADDRESS OR NAME> <PORT> | DEL <N>]: the firewall's rules (sys/firewall.h)
+// FW [ALLOW <ADDRESS OR NAME> <PORT> | WEB <ADDRESS OR NAME> [PORT] | SERVE <PORT> [ADDRESS] |
+// DEL <N>]: the firewall's rules (sys/firewall.h)
 void cli_firewall (char* arguments) {
     char* rest;
     char* word = split_first_word(arguments, &rest);
@@ -209,6 +280,10 @@ void cli_firewall (char* arguments) {
         list_rules();
     } else if (strcasecmp(word, "allow") == 0) {
         allow_computer(rest);
+    } else if (strcasecmp(word, "web") == 0) {
+        allow_web(rest);
+    } else if (strcasecmp(word, "serve") == 0) {
+        allow_serving(rest);
     } else if (strcasecmp(word, "del") == 0 && atoi(rest) > 0) {
         if (fw_remove(atoi(rest))) {
             prtf("Removed rule %d: that computer is blocked again.\n", atoi(rest));
@@ -216,7 +291,7 @@ void cli_firewall (char* arguments) {
             prtf("There is no rule %s (%s lists them).\n", rest, command_name(cli_firewall));
         }
     } else {
-        show_usage("FW, FW ALLOW 10.0.2.2 5000 or FW DEL 1");
+        show_usage("FW, FW ALLOW 10.0.2.2 5000, FW WEB example.com, FW SERVE 8080 or FW DEL 1");
     }
 }
 
@@ -282,4 +357,93 @@ void cli_listen (char* arguments) {
             break;
         }
     }
+}
+
+// does this look like text that can be shown on the screen? (no '\0's, and hardly any other
+// control characters besides line breaks and tabs)
+static bool looks_like_text (const char* bytes, size_t length) {
+    size_t odd = 0;
+    for (size_t i = 0; i < length; i++) {
+        unsigned char c = (unsigned char)bytes[i];
+        if (c == 0) {
+            return false;
+        }
+        if (c < 32 && c != '\n' && c != '\r' && c != '\t') {
+            odd++;
+        }
+    }
+    return odd * 100 <= length; // at most 1 in 100
+}
+
+// save a fetched page in a file (made, or written over if it is there). True if it was saved
+static bool save_page (const char* file, const http_response_t* page) {
+    char folder[FS_PATH_MAX];
+    char name[FS_NAME_MAX];
+    if (!fs_split_path(file, folder, sizeof(folder), name, sizeof(name))) {
+        explain_say_fs(FS_ERR_BAD_NAME, file, "Can't save in %s", file);
+        return false;
+    }
+    int result;
+    if (fs_file_exists(folder, name)) {
+        bool wipe_old = false;
+        result = fs_write_bytes(folder, name, page->body, (uint32_t)page->length, wipe_old);
+    } else {
+        result = fs_create_bytes(folder, name, page->body, (uint32_t)page->length);
+    }
+    if (result != FS_OK) {
+        explain_say_fs(result, file, "Can't save in %s", file);
+        return false;
+    }
+    return true;
+}
+
+// GET <URL> [FILE]: fetch a web page (sys/http.h) from a computer a web rule allows, and show it,
+// or save it in a file. The first line says how it went: "200 OK, 1256 bytes, text/html"
+void cli_get (char* arguments) {
+    char* file;
+    char* url = split_first_word(arguments, &file);
+    if (url[0] == '\0') {
+        show_usage("e.g. GET http://example.com/, or GET http://example.com/notes.txt notes.txt");
+        return;
+    }
+    http_response_t page;
+    ui_busy_begin("Fetching");
+    int result = http_get(url, &page);
+    ui_busy_end();
+    if (result == NET_ERR_BLOCKED) {
+        // and the exact command that would allow it (the port only when it isn't the usual 80)
+        char port[8] = "";
+        if (page.port != 80) {
+            sfmt(port, sizeof(port), " %u", page.port);
+        }
+        explain_say(PROBLEM_BLOCKED, page.host, "The firewall has no web rule for %s port %u", page.host, page.port);
+        prtf("%s WEB %s%s allows fetching from it.\n", command_name(cli_firewall), page.host, port);
+        return;
+    }
+    if (result != NET_OK) {
+        explain_say(explain_net_problem(result), page.host, "Can't fetch %s: %s", url, http_strerror(result));
+        http_free(&page);
+        return;
+    }
+
+    prtf("%d %s, %u bytes%s%s\n", page.status, page.reason, (unsigned int)page.length,
+         page.content_type[0] != '\0' ? ", " : "", page.content_type);
+    if (file[0] != '\0') {
+        if (save_page(file, &page)) {
+            prtf("Saved in %s.\n", file);
+        }
+    } else if (looks_like_text(page.body, page.length)) {
+        // the page as it is, but without the '\r's of its "\r\n" line ends
+        for (size_t i = 0; i < page.length; i++) {
+            if (page.body[i] != '\r') {
+                console_putchar(page.body[i]);
+            }
+        }
+        if (page.length > 0 && page.body[page.length - 1] != '\n') {
+            prtf("\n");
+        }
+    } else {
+        prtf("It isn't text: %s %s <file> saves it in a file instead.\n", command_name(cli_get), url);
+    }
+    http_free(&page);
 }

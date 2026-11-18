@@ -35,6 +35,12 @@ extern vga_framebuffer_t boot_framebuffer; // where it is and its pixel format, 
 extern uint32_t sys_mem_lower_kb; // KB of memory below 1MB
 extern uint32_t sys_mem_upper_kb; // KB of memory above 1MB
 
+// A copy of AerOS's own kernel file (main.elf) and its size, or NULL and 0. GRUB loads it as a
+// module ("module /boot/main.elf" in iso/boot/grub/grub.cfg) only so the installer can put it on
+// a disk (sys/install.h): AerOS has no CD drive driver, so it couldn't read it from the CD itself
+extern const void* boot_kernel_file;
+extern uint32_t boot_kernel_file_size;
+
 // read the multiboot information GRUB left for us (magic and info_addr come from eax / ebx in entry.asm)
 // fills in the globals above, does nothing if the magic number is wrong (not started by multiboot)
 void boot_parse_multiboot (uint32_t magic, uint32_t info_addr);

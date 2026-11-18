@@ -75,7 +75,7 @@ def test_show_a_refusal(t):
     aeros.cls()
     aeros.run('show msg 10.0.2.2 5000 hi')
     aeros.expect("Can't send to 10.0.2.2: the firewall blocks it",
-                 'net_send', 'not sending to 10.0.2.2 port 5000')
+                 'send_sealed', 'not sending to 10.0.2.2 port 5000')
     aeros.cls()
     aeros.run('show')
     aeros.expect('Usage: SHOW <COMMAND>')

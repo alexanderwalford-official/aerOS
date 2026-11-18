@@ -21,7 +21,8 @@
 #include <stddef.h>
 
 // the folders an app run by its name is looked for in, after the current folder, in order:
-// "/bin/" (apps), then "/bin/games/" (games). The list ends with NULL. Tab completion and
+// "/bin/" (apps), then "/bin/games/" (games from an older AerOS, which came with them: they are
+// packages now), then "/apps/" (installed packages). The list ends with NULL. Tab completion and
 // "Did you mean ...?" go through the same list
 extern const char* const aer_app_folders[];
 
@@ -30,11 +31,42 @@ extern const char* const aer_app_folders[];
 // returns 0 if it ran to the end, -1 if it wasn't found or stopped with an error
 int aer_run_file (const char* path, const char* args);
 
+// The same, in the background (BG, sys/jobs.c): called on a thread of its own, it runs there in
+// a session of its own, while the prompt carries on. It can't use the keyboard, the screen or
+// sound (a program that does is refused before it starts), can't ask before touching files (only
+// "always" answers count), and is stopped by STOP rather than Ctrl+C
+int aer_run_file_background (const char* path, const char* args);
+
+// Give each thread its own running session (thread_keep, sys/thread.h), so a program in the
+// background never sees the one in front's. kernel.c calls it once, at boot
+void aer_keep_per_thread (void);
+
 // run a program held in memory, name is only used in error messages
 int aer_run_source (const char* source, const char* name, const char* args);
 
 // the interactive AerLang prompt, lines are run as they are typed until "exit"
 void aer_repl (void);
+
+// Read a program (its source, without running it) and print what it can do: the built-ins it
+// names, grouped by what they let it do and what keeps each in check, then anything in its
+// text that looks like it is trying to fool you. name is what to call it ("game.aer").
+// Gives back how many of those suspicious things it found (0: nothing). See aer_scan.c
+int aer_scan (const char* source, const char* name);
+
+// What a scan finds, as lines of text (what SCAN prints, and what AerLang's scan() gives back)
+#define AER_SCAN_ABILITIES_MAX 16
+#define AER_SCAN_HINTS_MAX     4
+typedef struct {
+    int ability_count;
+    char abilities[AER_SCAN_ABILITIES_MAX][96];       // "delete files (delf)"
+    char kept_in_check[AER_SCAN_ABILITIES_MAX][80];   // "asks you first ...", or ""
+    int hint_count;
+    char hints[AER_SCAN_HINTS_MAX][100];              // "line 5: it asks for a password: ..."
+    int cmd_line;                                     // the line naming cmd(), 0 if none
+} aer_scan_result_t;
+
+// read a program and fill in *out, without printing anything
+void aer_scan_read (const char* source, aer_scan_result_t* out);
 
 // was the last program stopped with Ctrl+C? (asking clears it)
 bool aer_take_stopped (void);

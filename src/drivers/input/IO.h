@@ -128,6 +128,12 @@ char* GetLine(char* in, int size, tab_complete_fn complete);
 // no line is being read. The mouse pointer uses it to put the cursor where you click
 bool getline_line(int* start_cell, int* length);
 
+// While GetLine waits for a key and nothing has been typed on the line yet, it calls this (if it
+// isn't NULL), so its caller can use the time. The terminal sets it around its own GetLine, to
+// show what programs in the background have printed (sys/terminal/t_int.c). It returns true if it
+// printed anything (it then shows its prompt again), and the line starts where the cursor is now
+extern bool (*line_quiet_hook)(void);
+
 // Type a key in, as if it had been pressed: getk() gives back keys typed this way before any from
 // the keyboard. A paste types each character (sys/clipboard.c), and a click on the line being
 // typed types Home then Right (sys/terminal/pointer.c). Not from an interrupt handler. False if

@@ -72,14 +72,18 @@ def free_port():
 class AerOS:
     """One running copy of AerOS in QEMU."""
 
-    def __init__(self, workdir, kernel=None, iso=None, disk=None, memory=256, network=None, sound=None):
+    def __init__(self, workdir, kernel=None, iso=None, disk=None, memory=256, network=None, sound=None,
+                 words='fast', module=None, from_disk=False):
         """Start QEMU. Give either kernel (main.elf: VGA text mode, the screen can be read) or iso
-        (main.iso: GRUB sets up graphics, read text with serial()). disk is a disk image to
-        attach (see make_disk), network a QEMU -nic setting. sound gives AerOS an AC'97 sound
-        card: a file name records everything it plays to that WAV file, True plays nowhere."""
+        (main.iso: GRUB sets up graphics, read text with serial()), or from_disk to start from
+        the disk alone, with its own GRUB (as an installed AerOS does: graphics too). disk is a
+        disk image to attach (see make_disk), network a QEMU -nic setting. sound gives AerOS an
+        AC'97 sound card: a file name records everything it plays to that WAV file, True plays
+        nowhere. words is the kernel's command line ("fast demo" boots in demo mode), and module
+        a file handed to it as GRUB hands it a module (the installer's copy of main.elf)."""
         self.workdir = workdir
         self.serial_path = os.path.join(workdir, 'serial.log')
-        self.graphics = iso is not None
+        self.graphics = iso is not None or from_disk
         self.answered = 0   # questions answered so far (see answer())
         port = free_port()
         args = [os.environ.get('QEMU', 'qemu-system-i386'), '-display', 'none', '-m', str(memory),
@@ -89,7 +93,15 @@ class AerOS:
         # boot log's pause (boot_has_word in src/sys/boot.c). GRUB has its own command line, so
         # the ISO boots as it always does. (-boot d: from the CD, even with a disk attached,
         # which QEMU would otherwise try first and find nothing to boot on)
-        args += ['-cdrom', iso, '-boot', 'd'] if iso else ['-kernel', kernel, '-append', 'fast']
+        if from_disk:
+            args += ['-boot', 'c']
+        elif iso:
+            args += ['-cdrom', iso, '-boot', 'd']
+        else:
+            args += ['-kernel', kernel, '-append', words]
+            if module:
+                # QEMU's own multiboot loader hands -initrd files to the kernel as modules
+                args += ['-initrd', module]
         # KVM runs AerOS on the real processor instead of QEMU imitating one, which is much
         # faster. It is there on most Linux computers (AEROS_TEST_KVM=0 turns it off)
         if os.access('/dev/kvm', os.R_OK | os.W_OK) and os.environ.get('AEROS_TEST_KVM') != '0':
@@ -376,8 +388,8 @@ class AerOS:
 
     def first_login(self, name='tester', password='secret1'):
         """On a new disk AerOS asks for the first account: make one and wait for its prompt."""
-        # a new disk first gets every built-in file (a few MB, each write flushed), which takes a
-        # while when many tests are writing at once
+        # a new disk first gets every built-in file (a few MB), which takes a while when many
+        # tests are writing at once
         self.wait_for('Create the first account', 180)
         self.answer(name)
         self.answer(password)
@@ -411,6 +423,20 @@ def read_disk_file(disk, path):
     return result.stdout if result.returncode == 0 else None
 
 
+def wait_for_disk_file(disk, path, data, timeout=15):
+    """Wait, while QEMU is still running, until a file on the disk image holds exactly `data`.
+    True if it did within `timeout` seconds. For checking AerOS writes something by itself
+    (the disk cache's writer thread) without guessing how long that takes: with many tests
+    running at once, AerOS's clock can fall behind the real one. Reading the image while QEMU
+    has it open is fine for this: a read that catches a write half done just looks again."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if read_disk_file(disk, path) == data:
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def write_disk_file(disk, path, data):
     """Put a file on a disk image (with QEMU stopped), replacing one that is there."""
     source = disk + '.put'
@@ -427,16 +453,24 @@ def delete_disk_file(disk, path):
 
 def make_disk(path, size_mb=32, fat32=False, files=None):
     """Make an empty FAT disk labelled AEROS (the label AerOS looks for), with mtools.
-    files maps a path on the disk ('/bin/x.aer') to a file to copy there."""
+    files maps a path on the disk ('/bin/x.aer') to a file to copy there, or a folder
+    ('/apps/snake/', ending in /) to None, to make it empty. The folders they are in are made."""
     with open(path, 'wb') as f:
         f.truncate(size_mb * 1024 * 1024)
     sectors = size_mb * 2048
     fat = ['-F'] if fat32 else []
     subprocess.run(['mformat', '-i', path, '-T', str(sectors), '-h', '16', '-s', '63', '-v', 'AEROS']
                    + fat + ['::'], check=True, capture_output=True)
+    made = set()
     for target, source in (files or {}).items():
-        folder = os.path.dirname(target)
-        if folder not in ('', '/'):
-            subprocess.run(['mmd', '-D', 's', '-i', path, '::' + folder], capture_output=True)
-        subprocess.run(['mcopy', '-o', '-i', path, source, '::' + target], check=True, capture_output=True)
+        # every folder on the way, from the top ('/apps', then '/apps/viewer')
+        parts = target.strip('/').split('/')
+        folders = parts if target.endswith('/') else parts[:-1]
+        for depth in range(1, len(folders) + 1):
+            folder = '/' + '/'.join(folders[:depth])
+            if folder not in made:
+                subprocess.run(['mmd', '-D', 's', '-i', path, '::' + folder], capture_output=True)
+                made.add(folder)
+        if source is not None:
+            subprocess.run(['mcopy', '-o', '-i', path, source, '::' + target], check=True, capture_output=True)
     return path

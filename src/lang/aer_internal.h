@@ -153,8 +153,16 @@ typedef struct {
     int capacity;
 } aer_scope_t;
 
-// everything about the program that is running
+#define AER_NAME_BUCKETS 128  // the table of names, see aer_intern
+
+// Everything about one session: the shell's (the prompt's AerLang, see aer_interp.c), or a
+// program's. Each is a struct of its own, and `aer` points at the one running. Each thread has
+// its own `aer` (sys/thread.h), so a program running in the background has its own session,
+// apart from the shell and from the program in front
 typedef struct {
+    struct aer_block* blocks;   // everything it has allocated, freed together at the end (aer_alloc)
+    struct name_entry* names[AER_NAME_BUCKETS]; // its names, each stored once (aer_intern)
+    bool background;      // running in the background (BG, sys/jobs.c): no keyboard or screen
     jmp_buf error;        // aer_error jumps back here
     const char* name;     // the file name, for error messages
     const char* source;   // the code being run, so an error can be shown in it (see aer_error)
@@ -179,8 +187,14 @@ const char* aer_intern (const char* text, size_t length);
 // errors: print "error in <file> on line <n>: ..." and abandon the program
 __attribute__((noreturn, format(printf, 2, 3))) void aer_error (int line, const char* format, ...);
 
-// Ctrl+C was pressed: say so, remember it (aer_take_stopped) and abandon the program
+// Ctrl+C was pressed (or STOP, for a program in the background): say so, remember it
+// (aer_take_stopped) and abandon the program
 __attribute__((noreturn)) void aer_stop (int line);
+
+// Should the running program stop? For the program in front, has Ctrl+C been pressed (which
+// is then used up); for one in the background, has STOP been typed for it. Code that waits
+// (sleep, nrecv) checks it, and calls aer_stop if so
+bool aer_should_stop (void);
 
 // lexer and parser
 token_t* aer_lex (const char* source, int* count);
@@ -227,6 +241,9 @@ void aer_give_screen_back (void);      // leave graphics mode, if the code switc
 
 // which parts of AerOS (APP_ bits, sys/appmode.h) a program's tokens name (aer_builtins.c)
 uint32_t aer_profile (const token_t* tokens, int count);
+// the first built-in the program names that only the program in front can use (the keyboard,
+// the screen, sound), or NULL: a program run with BG mustn't use any
+const char* aer_front_only (const token_t* tokens, int count);
 
 // is this word (length characters) one of AerLang's keywords? (aer_lexer.c)
 bool aer_is_keyword (const char* word, size_t length);

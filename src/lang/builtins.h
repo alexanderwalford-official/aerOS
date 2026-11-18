@@ -19,7 +19,8 @@
         bi_sound.c       beep, play, sounds that mix (sload, splay, sstop, isply) and video
         bi_system.c      sleep, time, random, sysinfo, queue, cmd, appmode, the log (logadd, logclear,
                          setlogging, islogging) and exit
-        bi_network.c     nsend and nrecv
+        bi_network.c     nsend, nrecv and httpget
+        bi_trust.c       verify, packagekey and scan: deciding whether to trust something
         bi_database.c    dbopen, dbrun, dbquery and dbclose: databases (db/aerdb.h)
 
     How a built-in works: it gets its arguments as an array of values, which it must not release
@@ -107,6 +108,11 @@ value_t bi_write_at (int argc, value_t* argv, int line);
 value_t bi_truncate (int argc, value_t* argv, int line);
 value_t bi_file_exists (int argc, value_t* argv, int line);
 value_t bi_delete_file (int argc, value_t* argv, int line);
+value_t bi_sync (int argc, value_t* argv, int line);
+value_t bi_make_folder (int argc, value_t* argv, int line);
+value_t bi_disks (int argc, value_t* argv, int line);
+value_t bi_install (int argc, value_t* argv, int line);
+value_t bi_delete_folder (int argc, value_t* argv, int line);
 value_t bi_cwd (int argc, value_t* argv, int line);
 value_t bi_list_files (int argc, value_t* argv, int line);
 value_t bi_encrypt_file (int argc, value_t* argv, int line);
@@ -171,6 +177,19 @@ value_t bi_exit (int argc, value_t* argv, int line);
 // bi_network.c
 value_t bi_net_send (int argc, value_t* argv, int line);
 value_t bi_net_receive (int argc, value_t* argv, int line);
+value_t bi_http_get (int argc, value_t* argv, int line);
+value_t bi_tcp_listen (int argc, value_t* argv, int line);
+value_t bi_tcp_accept (int argc, value_t* argv, int line);
+value_t bi_tcp_connect (int argc, value_t* argv, int line);
+value_t bi_tcp_receive (int argc, value_t* argv, int line);
+value_t bi_tcp_send (int argc, value_t* argv, int line);
+value_t bi_tcp_close (int argc, value_t* argv, int line);
+value_t bi_tcp_unlisten (int argc, value_t* argv, int line);
+
+// bi_trust.c
+value_t bi_verify (int argc, value_t* argv, int line);
+value_t bi_package_key (int argc, value_t* argv, int line);
+value_t bi_scan (int argc, value_t* argv, int line);
 
 // bi_database.c
 value_t bi_dbopen (int argc, value_t* argv, int line);
@@ -178,6 +197,7 @@ value_t bi_dbrun (int argc, value_t* argv, int line);
 value_t bi_dbquery (int argc, value_t* argv, int line);
 value_t bi_dbclose (int argc, value_t* argv, int line);
 void database_finish (void);   // closes any databases a program left open, when it ends
+void network_finish (void);    // closes its TCP connections, and stops its listeners, likewise
 bool database_is_open (const char* folder, const char* name);   // has the program got it open?
 
 #endif /* BUILTINS_H */

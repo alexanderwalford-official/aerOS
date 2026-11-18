@@ -12,7 +12,7 @@
 
 // one built-in file: where it goes in AerOS, and where its bytes are inside the kernel
 typedef struct {
-    const char* dir;   // the folder it is copied to, e.g. "/bin/games/"
+    const char* dir;   // the folder it is copied to, e.g. "/bin/"
     const char* name;  // its name, e.g. "snake.aer"
     const char* start; // the first byte of the built-in copy
     const char* end;   // one past the last byte, so end - start is its size
@@ -27,12 +27,17 @@ extern const int builtin_file_count;
 
 // copy the built-in files to the disk, returns how many were copied or updated: missing files,
 // apps still exactly as an older AerOS installed them (see /sys/apps.lst), and the manual
-// whenever it differs. An app you have changed is left alone
+// whenever it differs. An app you have changed is left alone. Also deletes the files an older
+// AerOS installed that this one doesn't come with, if they are unchanged (apps_retired)
 int apps_install (void);
 
 // how many files the last apps_install() couldn't write (a full disk or a drive error). Each one
 // is simply tried again on the next boot
 int apps_failed (void);
+
+// how many files the last apps_install() deleted because AerOS doesn't come with them any more
+// (the games, say, which are packages now), and nobody had changed them. See apps.c
+int apps_retired (void);
 
 // the built-in copy of a file (e.g. "startup.wav") and its size, NULL if there is no such file
 const void* apps_builtin (const char* name, uint32_t* size);

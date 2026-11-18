@@ -44,6 +44,8 @@
 #include "../../sys/interrupts.h"
 #include "../../lib/crypto.h"
 #include "../../sys/clipboard.h"
+#include "../../sys/disk_cache.h"
+#include "../../sys/thread.h"
 
 // (the 8042 controller's ports and status bits are in IO.h, as the mouse driver uses them too)
 
@@ -391,6 +393,9 @@ bool kb_type(uint8_t key) {
     return true;
 }
 
+// (with GetLine, further down: what the terminal does while its line is empty)
+static void line_quiet(void);
+
 // take the oldest key out of the ring buffer, sleeping until one arrives if necessary
 // returns the key (1-255), or 0 if no key can ever arrive
 int getk(void) {
@@ -409,6 +414,11 @@ int getk(void) {
     // through it. That's harmless here: the 1000 Hz timer interrupt wakes us within a millisecond
     // and the loop sees the key then.
     while (!kb_haschar()) {
+        // nobody waits for the disk while AerOS waits for a key: any change the disk cache is
+        // still holding is written now (sys/disk_cache.h; nothing to do, and cheap, if none is)
+        disk_cache_sync();
+        // the terminal shows what programs in the background printed, at an empty prompt
+        line_quiet();
         // something to do while waiting, like moving the terminal's mouse pointer. It may type
         // keys in (a click, a paste): then those are the next keys
         if (kb_idle_hook != NULL) {
@@ -418,7 +428,9 @@ int getk(void) {
                 return typed[typed_next++];
             }
         }
-        cpu_idle(); // sleep until the next interrupt
+        // nothing to do until a key comes: another thread may have the time, or the processor
+        // rests until the next interrupt (sys/thread.h)
+        thread_idle();
     }
     uint8_t key = kb_buffer[kb_tail];
     // read the key before moving tail, once tail moves the IRQ handler is free to reuse the slot
@@ -498,6 +510,21 @@ bool getline_line(int* start_cell, int* length) {
     *start_cell = line_start;
     *length = line_length;
     return true;
+}
+
+// what GetLine's caller does while the line is empty (see IO.h)
+bool (*line_quiet_hook)(void) = NULL;
+
+// the cell the console cursor is in, counting from the top left
+static int cursor_cell(void);
+
+// While getk waits for a key: if GetLine is reading a line and nothing has been typed yet, its
+// caller can use the time (line_quiet_hook). If that printed something, the prompt was shown
+// again, and the line now starts where the cursor is
+static void line_quiet(void) {
+    if (line_editing && line_length == 0 && line_quiet_hook != NULL && line_quiet_hook()) {
+        line_start = cursor_cell();
+    }
 }
 
 // the cell the console cursor is in, counting from the top left

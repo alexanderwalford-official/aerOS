@@ -47,7 +47,7 @@ heading(10, "Progress bars: progress(x, y, width, done, total, colour)")
 heading(16, "Moving text")
 at(2, 23)
 color(DARK_GRAY, BLACK)
-write("Press any key to stop.   Change me: edit /bin/anim.aer")
+write("Press any key to stop.   Change me: edit /apps/anim.aer")
 
 while not haskey() do
     let t = time()

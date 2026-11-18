@@ -123,7 +123,7 @@ extern bool fs_log_unlocked;
 // READING A FILE A PIECE AT A TIME, for files too big to read whole (a video):
 //
 //     fs_file_t file;
-//     if (fs_open("/bin/sample.mpg", &file)) {
+//     if (fs_open("/apps/clip/sample.mpg", &file)) {
 //         int32_t got = fs_read_at(&file, 4096, buffer, 512);   // 512 bytes from byte 4096
 //     }
 //

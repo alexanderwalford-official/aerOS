@@ -1,0 +1,19 @@
+# server.conf - settings for the AerOS package server (tools/pkgserver/server.py)
+#
+# Copy to /etc/aerpkg/server.conf on the server and fill in the two keys. Nothing in here is
+# secret: the public key is built into every AerOS, and token_hash is only the token's hash.
+
+# where everything is kept (systemd makes /var/lib/aerpkg/, see aerpkg.service)
+database = /var/lib/aerpkg/packages.db
+
+# the public key AerOS checks packages with: the 64 hex digits in src/sys/package_key.h
+public_key =
+
+# what "python3 tools/aerpkg.py token ~/.aerpkg-token" printed on your computer
+token_hash =
+
+# the port nginx passes requests to (nginx.conf's proxy_pass)
+port = 8080
+
+# the landing page
+page = /opt/aerpkg/index.html

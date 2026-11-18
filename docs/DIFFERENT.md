@@ -212,7 +212,11 @@ first that decides:
 | 3 | reading in `/bin/`, `/docs/`, `/src/` or `/sys/`, in the program's own folder, or a file or folder named on its command line | allowed |
 | 4 | already answered while this program runs | that answer |
 | 5 | answered "always" before (in `/acc/perms`) | allowed |
-| 6 | anything else | ask |
+| 6 | anything else | ask; but a program running in the background (`BG`) can't ask, so: refused |
+
+A program in the background ([threads](THREADS.md#programs-in-the-background)) has its own
+running program for these rules and its own answers, as each thread has its own
+`perm_running`. Only the thread in front (main) has the keyboard, so only it can ask.
 
 There are two kinds, `PERM_READ` and `PERM_CHANGE` (make, change or delete), and being allowed
 to change includes reading. A permission is for one folder, not the folders inside it.
@@ -251,6 +255,34 @@ touch, so no program can give itself permission. `PERM` lists the logged in user
 What isn't covered: the terminal's own commands (they are you), and C code inside the kernel.
 A program is known by its path, so a different program saved under the same name in the same
 place inherits its "always" answers.
+
+### Before it runs: SCAN
+
+Permissions decide what a program may do as it runs. `SCAN` (`lang/aer_scan.c`) says what it
+*could* do, before it runs, by reading it:
+
+```
+scan game
+/home/alex/game.aer can:
+  delete files (delf)
+      asks you first (UNDO brings back files from your home folder)
+  ! line 5: it asks for a password: only AerOS itself should ask for yours
+```
+
+It can be exact rather than a guess because of how AerLang works: a program can only reach a
+built-in by writing its name (there is no way to make a name out of text and call it), and
+names are matched exactly. So the scan only has to find the program's words. It reads the file
+the way the lexer does, skipping comments and reading strings as text, without parsing it, so it
+works on a program with mistakes in it too. Each built-in that lets a program do something
+worth knowing belongs to one row of `abilities[]`: what it lets the program do, and what keeps
+that in check.
+
+Separately, it looks in the program's strings for tricks: text that imitates AerOS's own
+`[ ? ]` questions or the login screen, a password asked for with `input` or `inpw`, or programs
+written and queued (whose own code the scan can't see). Those are hints, not proof.
+
+This is why AerOS has no antivirus. An antivirus mostly recognises programs already known to be
+bad; here the question "what can this program do?" has an exact answer, so SCAN gives that.
 
 
 ## 4. Files remember their past

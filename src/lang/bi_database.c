@@ -31,15 +31,19 @@
 #include "../lib/aer_string.h"
 #include "../lib/primary_definitions.h"
 
-#define DATABASES_MAX 8   // databases one program can have open at once
+#define DATABASES_MAX 16  // databases open at once, between all the programs running
 
+// The open databases, and the program (its session, lang/aer_internal.h) each belongs to. With
+// programs running in the background (BG), several can have databases open at once: each may
+// only use its own, and only its own are closed when it ends
 static aerdb_t* open_databases[DATABASES_MAX];
+static aer_state_t* owners[DATABASES_MAX];
 
 // The database a program's number stands for (argument i). Stops the program with an error if
 // it isn't one that is open
 static aerdb_t* database_arg (value_t* argv, int i, int line, const char* fn) {
     int32_t number = int_arg(argv, i, line, fn);
-    if (number < 1 || number > DATABASES_MAX || open_databases[number - 1] == NULL) {
+    if (number < 1 || number > DATABASES_MAX || open_databases[number - 1] == NULL || owners[number - 1] != aer) {
         aer_error(line, "%s() needs a database from dbopen(), and %d isn't an open one", fn, (int)number);
     }
     return open_databases[number - 1];
@@ -126,6 +130,14 @@ value_t bi_dbopen (int argc, value_t* argv, int line) {
     if (!file_arg(argv, 0, line, "dbopen", needs, folder, name)) {
         return aer_nil();
     }
+    // Not one another program has open: each open copy keeps pages of its own in memory, so
+    // two programs changing the same file at once would undo each other's changes
+    for (int other = 0; other < DATABASES_MAX; other++) {
+        aerdb_t* db = open_databases[other];
+        if (db != NULL && owners[other] != aer && strcasecmp(db->folder, folder) == 0 && strcasecmp(db->name, name) == 0) {
+            aer_error(line, "dbopen(): %s%s is open in another program (THR lists what is running)", folder, name);
+        }
+    }
     // a free place for it
     int slot = 0;
     while (slot < DATABASES_MAX && open_databases[slot] != NULL) {
@@ -143,6 +155,7 @@ value_t bi_dbopen (int argc, value_t* argv, int line) {
     if (open_databases[slot] == NULL) {
         return aer_nil();
     }
+    owners[slot] = aer;
     return aer_int(slot + 1);
 }
 
@@ -198,10 +211,11 @@ value_t bi_dbclose (int argc, value_t* argv, int line) {
     return aer_nil();
 }
 
-// close every database a program left open (aer_builtins_finish calls this when it ends)
+// close every database the running program left open (aer_builtins_finish calls this when it
+// ends). Only its own: a program in the background may have some open too
 void database_finish (void) {
     for (int slot = 0; slot < DATABASES_MAX; slot++) {
-        if (open_databases[slot] != NULL) {
+        if (open_databases[slot] != NULL && owners[slot] == aer) {
             aerdb_close(open_databases[slot]);
             open_databases[slot] = NULL;
         }

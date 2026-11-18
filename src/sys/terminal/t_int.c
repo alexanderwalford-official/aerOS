@@ -79,6 +79,8 @@
 #include "../accounts/auth.h"
 #include "../explain.h"
 #include "../syslog.h"
+#include "../disk_cache.h"
+#include "../jobs.h"
 
 
 // true once the terminal has started. compile() (lib/aer_comp.c) checks it so it never starts
@@ -202,6 +204,27 @@ int flash_pointer (int times, int already_done) {
     return 0;
 }
 
+// While the prompt waits with nothing typed after it (line_quiet_hook, drivers/input/IO.h): if a
+// program in the background has printed something, rub the prompt out, show that in its place,
+// and the prompt again under it. True if it did (the line then starts where the cursor is now)
+static bool show_background_at_prompt (void) {
+    if (!jobs_output_waiting()) {
+        return false;
+    }
+    // nothing has been typed, so the cursor is just after the prompt, on the prompt's row:
+    // spaces over the prompt, then back to the start of the row
+    uint8_t x, y;
+    console_get_cursor(&x, &y);
+    console_set_cursor(0, y);
+    for (uint8_t i = 0; i < x; i++) {
+        console_putchar_raw(' ');
+    }
+    console_set_cursor(0, y);
+    jobs_show_output();
+    cli_prompt();
+    return true;
+}
+
 // start the terminal. ask_login = 1 shows the login screen first (it only appears when there
 // is a disk to keep accounts on), 0 skips it and runs as "guest".
 // This loop only ends if cli_active goes false, which nothing does yet: RBT and OFF
@@ -221,13 +244,21 @@ int cli_init (int ask_login) {
             // anything added to AerOS's log since the last prompt (by a command, or a
             // program's logadd) is written now, between commands (sys/syslog.h)
             syslog_flush();
+            // and every change the disk cache is still holding goes to the disk, so nothing
+            // is left waiting while AerOS waits for you (sys/disk_cache.h)
+            disk_cache_sync();
+            // what programs in the background have printed since the last prompt (sys/jobs.h)
+            jobs_show_output();
             cli_prompt();
             // wait for Enter. Tab fills in names (cli_complete), the up and down arrows bring
             // back earlier lines, Page Up and Page Down scroll back through the output.
             // With no keyboard at all this returns an empty line at once, so the prompt repeats.
-            // Meanwhile the mouse pointer shows, and follows the mouse (pointer.c)
+            // Meanwhile the mouse pointer shows, and follows the mouse (pointer.c), and what
+            // programs in the background print shows up while nothing has been typed yet
             pointer_begin();
+            line_quiet_hook = show_background_at_prompt;
             GetLine(cli_input, sizeof(cli_input), cli_complete);
+            line_quiet_hook = NULL;
             pointer_end();
             HandleInput(cli_input);
         }
@@ -260,6 +291,11 @@ int cli_rend_main (void) {
     } else if (boot_option == BOOT_OPT_DEMO) {
         colour(YELLOW, BLACK);
         prtf("[ ! ] You are in DEMO mode, no disks are loaded and files will not be written.\n");
+        // demo mode is where AerOS is installed from (sys/install.h): say so, once there is an
+        // installer to run and a copy of AerOS to install (started from the CD, GRUB gives one)
+        if (boot_kernel_file != NULL && fs_file_exists("/bin/", "install.aer")) {
+            prtf("      Type INSTALL to put AerOS on a disk, to start it without the CD.\n");
+        }
     } else {
         colour(RED, BLACK);
         prtf("[ ! ] You are in VFS mode, your files will not be written.\n");
@@ -319,9 +355,13 @@ static const command_t commands[] = {
     COMMAND("clk",  "",           "PRINTS THE SYSTEM TIME (CLOCK)",                              cli_clock),
     COMMAND("up",   "",           "PRINTS THE TIME SINCE BOOT (UPTIME)",                         cli_uptime),
     COMMAND("pm",   "",           "PRINTS THE PROCESS STACK (PROCESS MANAGER)",                  cli_pman),
+    COMMAND("thr",  "",           "LIST THE THREADS TAKING TURNS ON THE PROCESSOR",              cli_threads),
+    COMMAND("bg",   "[PROGRAM]",  "RUN A PROGRAM IN THE BACKGROUND, OR LIST THOSE THAT ARE",     cli_background),
+    COMMAND("stop", "<ID>",       "STOP A PROGRAM RUNNING IN THE BACKGROUND (BG LISTS THEM)",    cli_stop),
     COMMAND("que",  "[PROGRAM]",  "QUEUE A PROGRAM FOR GO, OR LIST THE QUEUE (QUE CLEAR)",       cli_queue),
     COMMAND("go",   "",           "RUN EVERYTHING IN THE QUEUE, IN ORDER (CTRL+C STOPS IT)",     cli_go),
     COMMAND("run",  "<CODE>",     "RUN CODE AS A PROCESS (e.g. run print_stack, run s:hi)",      cli_run),
+    COMMAND("scan", "<APP>",      "WHAT A PROGRAM CAN DO, BEFORE YOU RUN IT (e.g. SCAN SNAKE)",  cli_scan),
     COMMAND("rd",   "<FILE>",     "READ A FILE",                                                 cli_read_file),
     COMMAND("sql",  "<FILE> [SQL]", "RUN SQL ON A DATABASE (SQL SHOP.DB SELECT * FROM ITEMS)",     cli_sql),
     COMMAND("mkf",  "<FILE> [T]", "MAKE A FILE, WITH OPTIONAL TEXT",                             cli_make_file),
@@ -334,12 +374,14 @@ static const command_t commands[] = {
     COMMAND("cls",  "",           "CLEAR THE SCREEN",                                            cli_clear),
     COMMAND("mem",  "",           "MEMORY USAGE",                                                cli_memory),
     COMMAND("drv",  "",           "LIST IDE / ATA DRIVES",                                       cli_drives),
+    COMMAND("sync", "",           "WRITE WHAT THE DISK CACHE HOLDS TO THE DISK, AND SHOW IT",     cli_sync),
     COMMAND("bp",   "[HZ]",       "BEEP THE PC SPEAKER",                                         cli_beep),
     COMMAND("ply",  "<FILE>",     "PLAY A .WAV, .MP3 OR .MPG VIDEO (ESC TO STOP)",               cli_play),
     COMMAND("net",  "[IP ...]",   "THE NETWORK: CARD, ADDRESS, WHAT WAS SENT AND KEPT OUT",      cli_network),
-    COMMAND("fw",   "[ALLOW ...]","THE FIREWALL: FW ALLOW <ADDRESS OR NAME> <PORT>, FW DEL <N>", cli_firewall),
+    COMMAND("fw",   "[ALLOW ...]","THE FIREWALL: FW ALLOW <NAME> <PORT>, FW WEB, FW SERVE <PORT>, FW DEL", cli_firewall),
     COMMAND("msg",  "<TO> <PORT>","SEND A SEALED MESSAGE (e.g. MSG 10.0.2.2 5000 HELLO)",        cli_message),
     COMMAND("lsn",  "<PORT>",     "SHOW THE SEALED MESSAGES THAT ARRIVE ON A PORT (ESC STOPS)",  cli_listen),
+    COMMAND("get",  "<URL> [FILE]", "FETCH A WEB PAGE: SHOW IT, OR SAVE IT (FW WEB ALLOWS A SITE)", cli_get),
     COMMAND("rt",   "[STRESS]",   "RT MODE'S REAL-TIME TASKS (EXPERIMENTAL, FROM THE BOOT MENU)", cli_realtime),
     COMMAND("rbt",  "",           "RESTART THE COMPUTER (REBOOT)",                               cli_reboot),
     COMMAND("off",  "",           "TURN OFF THE COMPUTER (SHUT DOWN)",                           cli_shutdown),

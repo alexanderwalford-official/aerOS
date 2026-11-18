@@ -31,6 +31,7 @@
 #include "../lib/primary_definitions.h"
 #include "../lib/crypto.h"
 #include "rt.h"
+#include "thread.h"
 
 // CMOS index port and data port. Bit 7 of the byte written to 0x70 also switches off NMIs (non
 // maskable interrupts), every register number we write is below 0x80 so NMIs stay enabled
@@ -62,6 +63,8 @@ static void timer_handler(struct regs* r) {
     }
     // RT mode's real-time tasks (sys/rt.h), if it was picked at boot
     rt_tick();
+    // the running thread's time, and whether its turn is up (sys/thread.h)
+    thread_tick();
 }
 
 // program PIT channel 0 for PIT_HZ interrupts a second and hook IRQ0, see sys_clck.h
@@ -121,16 +124,19 @@ void sleep_ms(uint32_t ms) {
 
 // Some newer PCs let the firmware switch the old PIT chip off to save power, and then IRQ0 never
 // comes. Everything that waits on ticks would wait forever, so once interrupts are on we give the
-// timer about 50ms to tick. If it doesn't, clck_ready goes false and every wait becomes a busy wait.
+// timer about a second to tick. If it doesn't, clck_ready goes false and every wait becomes a
+// busy wait. A working timer ticks within a millisecond, and the loop stops at the first tick,
+// so this only takes long on a PC whose timer really is off. (It used to give 50ms, which an
+// emulator on a busy computer can take to start its timer: AerOS then wrongly went without one)
 bool clck_verify(void) {
     // with interrupts off no tick could ever arrive, so there is nothing to test
     if (!clck_ready || !interrupts_enabled()) {
         return false;
     }
     uint32_t start = ticks;
-    // 50000 port writes of roughly 1 microsecond each is about 50ms, leaving the loop as soon as
-    // the first tick arrives
-    for (int i = 0; i < 50000 && ticks == start; i++) {
+    // 1000000 port writes of roughly 1 microsecond each is about a second, leaving the loop as
+    // soon as the first tick arrives
+    for (int i = 0; i < 1000000 && ticks == start; i++) {
         io_wait();
     }
     // still no tick: the PIT is silent, so fall back to busy waiting from now on

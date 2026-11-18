@@ -5,6 +5,7 @@
         RUN                  run a line of AerLang code as a process of its own
         PM                   the process stack (the process manager, sys/p_man.c)
         QUE, GO              line programs up, then run them one after another
+        SCAN                 what a program can do, read before it runs (lang/aer_scan.c)
 
     Also run_program(), which t_int.c uses when the word typed isn't a command: "hello" runs
     the app /bin/hello.aer. Every program runs as a process: it is put on the process stack,
@@ -21,6 +22,7 @@
 #include "../p_man.h"
 #include "../explain.h"
 #include "../../lang/aerlang.h"
+#include "../jobs.h"
 
 
 // =================================================================================================
@@ -65,12 +67,11 @@ void cli_pman (char* arguments) {
     stack_print();
 }
 
-// is there a program file with this name, in the current folder or (for a plain name) in one
-// of the app folders, /bin/ and /bin/games/ (aer_app_folders, lang/aerlang.h)?
-static bool program_exists (const char* file) {
-    char folder[FS_PATH_MAX];
-    char name[FS_NAME_MAX];
-    if (!fs_split_path(file, folder, sizeof(folder), name, sizeof(name))) {
+// Find a program file: in the current folder, or (for a plain name) in one of the app folders,
+// /bin/ and /bin/games/ (aer_app_folders, lang/aerlang.h). Fills in the folder it is in and its
+// name, false if there is no such program
+static bool find_program (const char* file, char* folder, size_t folder_size, char* name, size_t name_size) {
+    if (!fs_split_path(file, folder, folder_size, name, name_size)) {
         return false;
     }
     // the current folder (or wherever a path points) comes first...
@@ -82,10 +83,18 @@ static bool program_exists (const char* file) {
     bool plain_name = strchr(file, '/') == NULL; // "hello", not "games/hello"
     for (int f = 0; plain_name && aer_app_folders[f] != NULL; f++) {
         if (fs_file_exists(aer_app_folders[f], name)) {
+            scpy(folder, aer_app_folders[f], folder_size);
             return true;
         }
     }
     return false;
+}
+
+// is there a program file with this name? (see find_program)
+static bool program_exists (const char* file) {
+    char folder[FS_PATH_MAX];
+    char name[FS_NAME_MAX];
+    return find_program(file, folder, sizeof(folder), name, sizeof(name));
 }
 
 // turn a program name and its arguments into the line its process runs:
@@ -115,6 +124,36 @@ bool run_program (const char* program, const char* arguments) {
     }
     run_as_process(line);
     return true;
+}
+
+// SCAN <PROGRAM>: read a program without running it, and say what it can do and anything that
+// looks like it is trying to fool you (lang/aer_scan.c). It is found the way running it would
+// find it: "scan snake" is snake.aer, here or in /bin/ or /bin/games/
+void cli_scan (char* arguments) {
+    if (arguments[0] == '\0') {
+        show_usage("e.g. scan snake, or scan /home/alex/game.aer");
+        return;
+    }
+    char file[FS_PATH_MAX];
+    scpy(file, arguments, sizeof(file));
+    if (!aer_is_program_name(file, slen(file))) {
+        scat(file, ".aer", sizeof(file));
+    }
+    char folder[FS_PATH_MAX];
+    char name[FS_NAME_MAX];
+    if (!find_program(file, folder, sizeof(folder), name, sizeof(name))) {
+        prtf("There is no program called %s here, or in the app folders.\n", file);
+        return;
+    }
+    char* source = fs_read_f(folder, name);
+    if (source == NULL) {
+        prtf("%s%s couldn't be read.\n", folder, name);
+        return;
+    }
+    char path[FS_PATH_MAX + FS_NAME_MAX];
+    sfmt(path, sizeof(path), "%s%s", folder, name);
+    aer_scan(source, path);
+    free(source);
 }
 
 
@@ -176,6 +215,48 @@ void cli_queue (char* arguments) {
     } else {
         prtf("Queued %s (%d in the queue, %s runs them).\n", line, queued, command_name(cli_go));
     }
+}
+
+// BG [PROGRAM]: run a program in the background, on a thread of its own, while the prompt
+// carries on (sys/jobs.h says what it may do there). What it prints is shown at the prompt.
+//     BG counter 10      run counter.aer with "10" in the background
+//     BG                 list what is running in the background
+void cli_background (char* arguments) {
+    if (arguments[0] == '\0') {
+        jobs_list();
+        return;
+    }
+    char* program_arguments;
+    char* program = split_first_word(arguments, &program_arguments);
+    // a typing mistake is caught here, rather than turning up later in its output
+    char line[P_INST_MAX];
+    if (!make_program_line(program, program_arguments, line, sizeof(line))) {
+        explain_say(PROBLEM_NOT_FOUND, program, "There is no program called %s.", program);
+        return;
+    }
+    int id = jobs_start(program, program_arguments);
+    if (id < 0) {
+        prtf("Couldn't start %s: %d programs are running in the background already, or there "
+             "isn't the memory.\n", program, JOBS_MAX);
+        return;
+    }
+    prtf("%s is running in the background, as thread %d. What it prints shows up here; "
+         "%s %d stops it.\n", program, id, command_name(cli_stop), id);
+}
+
+// STOP <ID>: stop a program running in the background (BG and THR show the numbers). It stops
+// at its next safe point, between two statements, with "stopped (STOP)"
+void cli_stop (char* arguments) {
+    if (arguments[0] == '\0' || !isdigit((unsigned char)arguments[0])) {
+        prtf("STOP <id>: the number BG shows for the program to stop.\n");
+        return;
+    }
+    int id = atoi(arguments);
+    if (!jobs_stop(id)) {
+        prtf("No program in the background is thread %d (BG lists them).\n", id);
+        return;
+    }
+    prtf("Asked thread %d to stop.\n", id);
 }
 
 // GO calls this before each queued program: a grey "[2/3] hello.aer" line

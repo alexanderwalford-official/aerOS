@@ -14,6 +14,8 @@ The other guides go deeper into one area each:
 * [SECURITY.md](SECURITY.md): user accounts, password hashing and file encryption
 * [AUDIO.md](AUDIO.md): the sound card driver, WAV / MP3 playback and the mixer
 * [VIDEO.md](VIDEO.md): playing MPEG-1 videos, and keeping picture and sound together
+* [PACKAGES.md](PACKAGES.md): installing extra apps from a package server: the format, signing and
+  publishing them, running the server, and what the pkg app checks
 * [LOGS.md](LOGS.md): AerOS's log, `/sys/logs.db`: what it records, how a boot's entries get
   there, how a crash is noticed, and why only AerOS can change it
 
@@ -75,16 +77,22 @@ src/
     interrupts.c          GDT, IDT, PIC remapping, exception and IRQ dispatch
     sys_clck.c            the PIT timer (1000 Hz) and the CMOS real time clock
     p_man.c               the process manager (a queue of one-line jobs)
+    thread.c              threads taking turns on the processor, at safe points (docs/THREADS.md)
+    jobs.c                programs running in the background: BG, STOP, and what they print
     f_sys.c               the file system front end: DISK mode or the in-memory VFS
     fat.c                 the FAT16 / FAT32 driver
+    disk_cache.c          recently used sectors kept in memory, changes written in batches
+                          (docs/DISK_CACHE.md)
     source.c              the read-only /src/ folder: AerOS's own source, built into it
     versions.c            old versions of the files in home folders (VERS, UNDO, notes.txt@2)
     perm.c                programs ask before they touch your files (PERM)
     clipboard.c           the clipboard: copied text, pasted at the prompt or read with clip()
     syslog.c              AerOS's log, /sys/logs.db: every boot, warning and shutdown (an AerDB database)
     net.c                 the network stack: ARP, IPv4, UDP, DNS lookups (NET, MSG, LSN)
-    firewall.c            the firewall's rules, everything blocked until FW ALLOW
-    netseal.c             sealed messages: the only thing ever sent over the network
+    tcp.c                 TCP connections out (for web pages), through web rules
+    http.c                fetching a web page over TCP (GET, httpget)
+    firewall.c            the firewall's rules, everything blocked until FW ALLOW or FW WEB
+    netseal.c             sealed messages: what UDP carries, never in the clear
     appmode.c             app mode: a program gets the memory of the parts of AerOS it doesn't use
     rt.c                  RT mode (boot option 6, experimental): real-time tasks from the timer
     explain.c             WHY and SRC: the last problem, its explanation, and reading the source
@@ -113,6 +121,7 @@ src/
     aer_stdio.c           prtf, sfmt                 aer_ctype.h   isdigit, toupper...
     aer_setjmp.c          setjmp / longjmp (AerLang errors) primary_definitions.c  seq, split, trim
     crypto.c              SHA-256, HMAC, PBKDF2, AES-256, random numbers
+    ed25519.c             SHA-512 and checking Ed25519 signatures (verify)
     busy.c                busy(): long loops call it so a spinner can turn (see sys/ui.h)
     mp3.c + minimp3/      MP3 decoding
     mpg.c + pl_mpeg/      MPEG-1 video and MP2 sound decoding (pl_mpeg, MIT)
@@ -132,14 +141,17 @@ src/
     aer_parser.c          tokens -> syntax tree
     aer_interp.c          walks the tree; memory, values, variables; the shell's session
     aer_builtins.c        the table of every function a program can call, and the constants
+    aer_scan.c            SCAN: what a program can do, found by reading it before it runs
+    bi_trust.c            verify, packagekey and scan: deciding whether to trust something
     builtins.h            how the built-ins are laid out, and how to add one
     bi_args.c             checking a built-in's arguments (and asking permission for files)
     bi_text.c, bi_lists.c, bi_files.c, bi_screen.c, bi_graphics.c, bi_sound.c, bi_system.c,
     bi_network.c          the built-ins themselves, by topic: print, rdf, gopen, play, mouse...
 
   disk/                 the files built into AerOS, laid out as they are in it: disk/bin/ is /bin/
-                        (apps, and games in bin/games/), disk/docs/ the manual DOC shows,
-                        disk/sys/ the startup sound. Copied there at every boot (sys/apps.c)
+                        (the apps AerOS can't do without: pkg, the DOC reader...), disk/docs/
+                        the manual DOC shows, disk/sys/ the startup sound. Copied there at
+                        every boot (sys/apps.c)
   iso/boot/grub/grub.cfg  GRUB's menu: loads main.elf, restores the saved screen resolution
 ```
 
@@ -407,47 +419,56 @@ A function that takes a file's path gets it with `file_arg(..., PERM_READ or PER
 (or `allowed_path`), which asks the person at the keyboard if the program needs permission,
 and fails the same way as a missing file if the answer is no.
 
-### Add a built-in app or file
+### Add an app: a package, or built in
 
-Everything in `src/disk/` is built into AerOS and copied to the same place in AerOS every time
-it starts, so it is there on every computer and every new disk. The folder is laid out just
-like AerOS's own:
+**Most apps are packages** (the games, the viewer, the web server): they live in the
+repository's `packages/` folder, not in AerOS, and `pkg install` gets them. To add one, put its
+program in `packages/` (`packages/chess.aer`), any files it comes with in a folder named after
+it (`packages/chess/board.bmp`), add a line for it to `packages/packages.txt`, and publish it
+(see [packages](PACKAGES.md#the-packages)). Its name must fit 8.3, as below. A test can put it
+on its disk with `t.package('chess')`, without the server.
+
+**Built in is for what AerOS can't do without** (`pkg` itself, the `DOC` reader, the manual,
+the startup sound): everything in `src/disk/` is built into AerOS and copied to the same place
+in AerOS every time it starts, so it is there on every computer and every new disk, even with
+no network. The folder is laid out just like AerOS's own:
 
 | In the repository | In AerOS |
 | --- | --- |
 | `src/disk/bin/hello.aer` | `/bin/hello.aer` |
-| `src/disk/bin/games/snake.aer` | `/bin/games/snake.aer` |
 | `src/disk/docs/index.md` | `/docs/index.md` |
 | `src/disk/sys/startup.wav` | `/sys/startup.wav` |
 
-Using `snake.aer` as the example:
+Using `hello.aer` as the example:
 
 1. **Name it.** On a FAT disk a name must fit 8.3: up to 8 letters or digits, a dot, up to 3
-   more (`snake.aer` is fine, `snakegame.aer` isn't). The name is also how it is run (`snake`),
-   so check it isn't already a command (`HLP` lists them): a command always wins.
-   **Pick its folder:** games go in `/bin/games/`, other apps in `/bin/`. Both are searched
-   when an app is run by its name (`aer_app_folders` in `lang/aerlang.h`, `/bin/` first), and
-   by Tab completion. To add another folder for apps, make it at boot (`make_base_folders` in
-   `sys/f_sys.c`) and add it to `aer_app_folders`. If an app moves to a new folder, the old
-   copy an earlier AerOS left in `/bin/` is deleted on the next boot, unless it was changed.
-2. **Put it in `src/disk/bin/games/`.** That is all: nothing else needs changing. The Makefile
-   picks up every file under `src/disk/`, wraps each in an object file with `ld -b binary`
-   (which gives two symbols for its first and last byte, `_binary_disk_bin_games_snake_aer_start`
-   and `_end`), and writes the table of them, `builtin_files[]`, into `obj/builtin_index.c`.
-   Files in `/docs/` are *refreshed* (replaced whenever they differ, so the manual matches the
-   running AerOS). Everything else is an app or system file: a copy someone has changed on their
-   disk is kept, and only an untouched one is replaced by a newer version (see the top of
-   `sys/apps.c`).
+   more (`hello.aer` is fine, `helloworld.aer` isn't). The name is also how it is run
+   (`hello`), so check it isn't already a command (`HLP` lists them): a command always wins.
+   Apps go in `/bin/`, which is searched first when an app is run by its name
+   (`aer_app_folders` in `lang/aerlang.h`), and by Tab completion.
+2. **Put it in `src/disk/bin/`.** That is all: nothing else needs changing. The Makefile picks
+   up every file under `src/disk/`, wraps each in an object file with `ld -b binary` (which
+   gives two symbols for its first and last byte, `_binary_disk_bin_hello_aer_start` and
+   `_end`), and writes the table of them, `builtin_files[]`, into `obj/builtin_index.c`. Files
+   in `/docs/` are *refreshed* (replaced whenever they differ, so the manual matches the
+   running AerOS). Everything else is an app or system file: a copy someone has changed on
+   their disk is kept, and only an untouched one is replaced by a newer version (see the top
+   of `sys/apps.c`).
 3. **Build and run it:** `make run` (in `src/`). The boot log's `APPS` line counts what was
-   added, and then `snake` runs it, Tab completes its name, and `read /bin/games/snake.aer`
-   shows it. On your own disk image it is added on the first boot after the build, because it
-   isn't there yet.
+   added, and then `hello` runs it, Tab completes its name, and `read /bin/hello.aer` shows it.
+   On your own disk image it is added on the first boot after the build, because it isn't
+   there yet.
 4. **Optional:** list it in the manual (the app table in `src/disk/docs/aerlang.md`) and in the
    README.
 
+**Taking a file out of `src/disk/`** (making it a package, say) needs nothing more either: on
+each disk an older AerOS put it on, the next boot deletes it if nobody has changed it, as
+`/sys/apps.lst` records exactly what AerOS put there ("Files AerOS no longer comes with" at the
+top of `sys/apps.c`).
+
 To try an app on your own disk without building it in, copy it there instead:
-`make disk-put FILE=disk/bin/games/snake.aer DIR=/bin/games`. It isn't then on new disks, or in
-the repository.
+`make disk-put FILE=../packages/snake.aer DIR=/apps`. It isn't then on new disks, or in the
+repository.
 
 ### Add a real-time task (RT mode)
 
