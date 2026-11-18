@@ -113,6 +113,20 @@ uint32_t boot_kernel_file_size = 0;
 // (0 and 0 with none): the heap is kept out of it, so it never hands their memory out
 static uint64_t modules_start = 0, modules_end = 0;
 
+// Outside demo mode nothing can use the copy of main.elf (only the installer does, and only
+// in demo mode: sys/install.h), so its memory joins the heap. Called once the boot options
+// have been chosen. (QEMU, or the computer, still had to hold it while GRUB loaded it: this
+// makes the room usable, it can't make that undone)
+static void give_back_kernel_file (void) {
+    if (boot_kernel_file == NULL || boot_option == BOOT_OPT_DEMO || modules_end <= modules_start) {
+        return;
+    }
+    heap_add_region((void*)(uintptr_t)modules_start, (size_t)(modules_end - modules_start));
+    boot_heap_extra_kb += (uint32_t)((modules_end - modules_start) / 1024);
+    boot_kernel_file = NULL;
+    boot_kernel_file_size = 0;
+}
+
 // Find the module GRUB loaded (the first one: grub.cfg only loads main.elf). It stays where GRUB
 // put it, usually just after the kernel, which is memory the heap would otherwise take: so only
 // its address is kept here, and boot_add_memory leaves its memory out of the heap
@@ -304,6 +318,8 @@ int init_boot (void) {
     console_clear();
 
     prtf("[E:b1f1] AerOS boot sequence started\n\n");
+    // the boot options are chosen by now: the installer's copy of AerOS is only kept for demo mode
+    give_back_kernel_file();
     syslog_add("boot", "aeros", "AerOS %s started", AEROS_VERSION);
 
     // each driver sets its *_ready flag at the end of its init function in kernel.c, so a [FAIL]

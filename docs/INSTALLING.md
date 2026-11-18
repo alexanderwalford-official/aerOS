@@ -60,8 +60,11 @@ with nothing else on it, and sets it up as it does any new disk: its folders, th
   system partition) and a GRUB made for UEFI, which isn't done yet.
 - **IDE disks only**, as everywhere in AerOS, and up to 128 GB is used: `ata.c` numbers sectors
   with 28 bits.
-- The copy of `main.elf` costs the CD boot its size in memory (about 2.6 MB), and GRUB a moment
-  to read it.
+- GRUB on the CD loads the copy of `main.elf` on every boot, as it can't know yet whether demo
+  mode will be picked, which takes it a moment. Outside demo mode nothing can use the copy, so
+  once the boot options are chosen its memory (about 2.6 MB) joins the heap
+  (`give_back_kernel_file` in `boot.c`). The computer, or QEMU, still had to find room for it
+  while GRUB loaded it.
 
 ## Testing it
 

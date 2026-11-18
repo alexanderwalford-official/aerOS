@@ -80,6 +80,13 @@ The FAT file system has no journal, so a crash in the middle of saving a file co
 leave it half saved. With the cache, "the middle" can be up to a second long instead of a few
 milliseconds. A program that must be sure, like a game saving progress, can call `sync()`.
 
+**Memory:** about 4 MB (8192 sectors, and a little to find them by), taken when the AEROS disk
+is mounted. A program that uses no file built-ins (`sleep`, say) gets it back while it runs:
+app mode (`src/sys/appmode.h`) writes everything waiting and frees it (`disk_cache_rest`), as it
+puts the network's buffers away. The next read or write of the disk makes the cache again,
+empty, so the first few reads after it are the drive's again. Not while programs run in the
+background (`BG`): one of them may be using the disk.
+
 ## How much faster
 
 `bench` (a package: `pkg install bench`, `packages/bench.aer`) does the same work every run. These are typical numbers in

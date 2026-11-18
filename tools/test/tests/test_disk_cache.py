@@ -110,3 +110,25 @@ def test_more_than_the_cache_holds(t):
     if read_disk_file(disk, '/home/tester/big.txt') != big_text().encode():
         aeros.fail('big.txt is wrong on the disk')
     t.check_disk(disk)
+
+
+def test_a_program_without_files_gets_the_memory(t):
+    # App mode (src/sys/appmode.h): a program that uses no file built-ins gets the cache's
+    # memory (about 4 MB) back while it runs. The cache starts again, empty, the next time the
+    # disk is used, and works as before
+    disk = t.disk(files={'/bin/quiet.aer': program(t, 'quiet.aer', 'print(appmode())\n')})
+    aeros = t.boot(disk=disk)
+    aeros.first_login()
+    aeros.cls()
+    aeros.run('quiet')
+    # appmode() is [what it uses, KB given back, KB free]: the network's ~82 KB and the cache's
+    given = [line for line in aeros.screen().split('\n') if line.startswith('[[], ')]
+    if not given or int(given[0].split(',')[1]) < 4000:
+        aeros.fail(f'a program without files got back {given} KB, not the disk cache')
+    # the disk is used again: the cache comes back, and a change still reaches the disk
+    aeros.run('mkf after.txt written after the cache rested')
+    if not wait_for_disk_file(disk, '/home/tester/after.txt', b'written after the cache rested'):
+        aeros.fail('a file written after the cache rested did not reach the disk')
+    aeros.cls()
+    aeros.run('sync')
+    aeros.expect('8192')

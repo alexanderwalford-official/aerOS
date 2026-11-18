@@ -5,6 +5,7 @@
 #include "appmode.h"
 #include "net.h"
 #include "jobs.h"
+#include "disk_cache.h"
 #include "../lib/aer_stdlib.h"
 #include "../drivers/serial/serial.h"
 #include "../lib/aer_stdio.h"
@@ -54,6 +55,9 @@ static size_t put_away (uint32_t uses) {
     // programs run in the background (BG, sys/jobs.h): one of them may be using it
     if (!(uses & APP_NETWORK) && jobs_running() == 0) {
         net_rest();
+    }
+    if (!(uses & APP_FILES) && jobs_running() == 0) {
+        disk_cache_rest();
     }
 
     // if the heap somehow grew instead, before - after would wrap round to a huge size_t, so

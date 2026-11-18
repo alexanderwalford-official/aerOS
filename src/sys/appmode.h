@@ -11,13 +11,16 @@
 
         part        what it holds while it isn't in use      when app mode puts it away
         network     the card's buffers, about 84 KB          the program uses no nsend / nrecv
+        disk cache  recently used sectors, about 4 MB        the program uses no rdf / wrf...
+                    (sys/disk_cache.h)                       (changes waiting are written first)
 
     Everything else is only in memory while it is being used already: the MP3 and video
     decoders, a sound's samples, the graphics back buffer. So there is nothing more to put away
     yet, but anything added to AerOS that keeps memory while idle belongs in the table above.
 
     Nothing is brought back when the program ends: a part that was put away starts again the
-    next time anything uses it (the network, the first time you type NET or MSG).
+    next time anything uses it (the network, the first time you type NET or MSG; the disk
+    cache, the next time the disk is read or written, empty).
 
     It happens by itself for every program (lang/aer_interp.c calls appmode_begin), however new:
     a file saved a second ago is read, and profiled, when it runs. A program can call appmode()
