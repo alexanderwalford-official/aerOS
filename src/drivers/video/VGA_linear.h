@@ -166,8 +166,9 @@ int big_text(uint8_t x, uint8_t y, enum color fg, enum color bg, const char* tex
 // works. Only on a framebuffer (every boot through GRUB): on the VGA text screen it is drawn
 // full size with big_text. Returns how many columns wide it is, and *rows (may be NULL) gets how
 // many rows tall, both rounded up to whole cells, so the cursor can be put below it.
-// Gotcha: it is drawn over the cells, not into them, so it vanishes if those cells are redrawn
-// (the screen scrolling, Page Up). Fine for a banner or a title screen
+// It is drawn over the cells, not into them, so the console remembers the last one: when the
+// screen scrolls it moves up with the text, and it comes back after Page Up. Writing over it, or
+// clearing the screen, lets it go
 int big_text_sized(uint8_t x, uint8_t y, enum color fg, enum color bg, const char* text, int percent, uint8_t* rows);
 
 // console: a scrolling terminal that keeps track of the cursor (and mirrors to the serial port)

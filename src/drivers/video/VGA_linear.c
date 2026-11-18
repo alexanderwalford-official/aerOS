@@ -58,6 +58,10 @@ enum color console_bg = BLACK;
 // this is our own bookkeeping, the hardware cursor is only moved to match it by console_update_cursor
 static uint8_t console_x = 0;
 static uint8_t console_y = 0;
+// true when the last character filled the line and the cursor went on to the next row by itself.
+// A '\n' straight after that only finishes the line it ended, rather than leaving a blank row
+// under a line exactly 80 characters long (see console_putchar_raw)
+static bool console_wrapped = false;
 
 // whether the cursor is currently switched on, so console_update_cursor only has to re-enable it
 // after clear() hid it instead of reprogramming it on every character
@@ -66,6 +70,20 @@ static unsigned int cursor_index = 0; // the cell the cursor is in
 
 // every cell on screen, the framebuffer is drawn from this
 static uint16_t cells[COLS * ROWS];
+
+// the last title big_text_sized drew in pixels over the cells, so it can move up with the text
+// when the screen scrolls (see "big_text_sized" below), and the cells it covers
+#define TITLE_TEXT_MAX 32
+static struct {
+    bool shown;              // false once it is gone (cleared, scrolled off, written over)
+    int row;                 // its top row: below 0 once its top has scrolled off the screen
+    uint8_t col;             // its left column
+    uint8_t cols, rows;      // how many cells it covers
+    enum color fg, bg;
+    int percent;             // its size, as big_text_sized was given it
+    char text[TITLE_TEXT_MAX];
+} title;
+static bool under_title[COLS * ROWS];
 
 // scrollback: the lines that scrolled off the top, in a ring of CONSOLE_SCROLLBACK lines.
 // scrollback_next is the slot the next line goes into, and once the ring is full each new line
@@ -113,6 +131,7 @@ static int selected_to = -1;
 #define SELECTION_COLOURS ((CYAN << 4) | BLACK)   // black text on cyan
 static uint16_t cell_as_shown(unsigned int index);
 static void cell_redraw(unsigned int index);
+static void draw_title(void);
 
 // the 16 colours as red, green, blue: the standard VGA colours, except that colour 6 (brown)
 // is the logo's orange, ORANGE. The palette can still be changed later with vga_set_palette()
@@ -155,6 +174,8 @@ static void fb_draw_cell(unsigned int index) {
     // the low 4 bits of that and background in the high 4
     // what the cell holds, in the colours it is shown in (selected text has its own)
     uint16_t entry = cell_as_shown(index);
+    // drawn over whatever title pixels were here (see big_text_sized)
+    under_title[index] = false;
     uint8_t ch = entry & 0xFF;
     uint8_t attr = entry >> 8;
     uint32_t fg = fb_colors[attr & 0x0F];
@@ -235,6 +256,10 @@ static void fb_redraw(int color_index, int ch) {
         if ((attr & 0x0F) == color_index || (attr >> 4) == color_index || (cells[i] & 0xFF) == ch) {
             fb_draw_cell(i);
         }
+    }
+    // a title over the cells, in its new colours
+    if (title.shown && view_back == 0) {
+        draw_title();
     }
 }
 
@@ -334,6 +359,9 @@ bool vga_change_framebuffer(const vga_framebuffer_t* info) {
     for (unsigned int i = 0; i < COLS * ROWS; i++) {
         fb_draw_cell(i);
     }
+    if (title.shown && view_back == 0) {
+        draw_title(); // at the new size
+    }
     return true;
 }
 
@@ -344,13 +372,15 @@ void vga_invalidate(void) {
     for (unsigned int i = 0; i < COLS * ROWS; i++) {
         cells[i] = 0xFFFF;
     }
+    title.shown = false; // something else has drawn over the screen, title and all
 }
 
 // change one cell, on screen and in cells[]
 static void cell_set(unsigned int index, uint16_t entry) {
     // already showing that: skip it. Drawing a cell on a framebuffer is hundreds of pixel writes,
     // so this is what keeps scrolling quick (most of a scrolled screen is blank lines)
-    if (cells[index] == entry) {
+    // (unless a title is drawn over it: then it is drawn again, to take the title's pixels away)
+    if (cells[index] == entry && !under_title[index]) {
         return;
     }
     cells[index] = entry;
@@ -808,6 +838,104 @@ static void fb_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t col
     }
 }
 
+// ---- big_text_sized: a title in real pixels, over the cells ------------------------------------
+//
+// big_text_sized draws straight onto the framebuffer, over cells it leaves blank. cell_set only
+// draws a cell again when what it holds changes, and when the screen scrolls a blank cell under
+// the title gets another blank one, which doesn't count. So on its own the title would be left
+// behind in pieces as text scrolled past it: the blank cells keeping its pixels, the cells text
+// moved into losing theirs. Instead the last title drawn is remembered (title), and the cells it
+// covers are marked (under_title, which cell_set always draws again). When the screen scrolls it
+// is drawn again a row higher, moving up with the text as a line of it would, until it has gone
+// off the top. If something was written over it in the meantime it is let go instead, as drawing
+// it again would cover that up.
+
+// draw the remembered title where it is now (title.row is below 0 once its top has scrolled off:
+// only the part still on the screen is drawn), and mark the cells it covers
+static void draw_title(void) {
+    uint32_t grid_left, grid_top, cell_w, cell_h;
+    // where column title.col of the top row is in pixels, and how big a cell is (vga_cell_area
+    // fails in text mode, where big_text_sized never remembers a title)
+    if (!vga_cell_area(title.col, 0, 1, 1, &grid_left, &grid_top, &cell_w, &cell_h)) {
+        return;
+    }
+    // one font pixel at full size is a cell wide and half a cell tall: this is title.percent of it
+    // (multiplied before dividing, so the percentage isn't lost to rounding)
+    uint32_t pixel_w = cell_w * (uint32_t)title.percent / 100;
+    uint32_t pixel_h = cell_h / 2 * (uint32_t)title.percent / 100;
+    pixel_w = pixel_w > 0 ? pixel_w : 1;
+    pixel_h = pixel_h > 0 ? pixel_h : 1;
+    // the title's top edge, which is above the grid once it has scrolled partly off (so signed)
+    int32_t top = (int32_t)grid_top + title.row * (int32_t)cell_h;
+
+    // `at` is the left edge of the next letter, in pixels
+    uint32_t at = grid_left;
+    for (const char* c = title.text; *c != '\0'; c++) {
+        const uint8_t* glyph = font8x16[(uint8_t)*c];
+        // the same 14 font rows big_text shows, but one font row at a time: with real pixels
+        // there is no need to pair them up into half blocks
+        for (uint32_t row = 0; row < BIG_TEXT_ROWS * 2; row++) {
+            // this font row's pixels, cut off at the top of the grid
+            int32_t y = top + (int32_t)(row * pixel_h);
+            int32_t y_end = y + (int32_t)pixel_h;
+            if (y_end <= (int32_t)grid_top) {
+                continue; // scrolled off the top
+            }
+            if (y < (int32_t)grid_top) {
+                y = (int32_t)grid_top;
+            }
+            uint8_t bits = glyph[BIG_TEXT_FIRST_FONT_ROW + row];
+            // each font pixel becomes a pixel_w x pixel_h rectangle, bit 7 being the leftmost
+            for (uint32_t col = 0; col < 8; col++) {
+                uint32_t colour = (bits & (0x80 >> col)) ? fb_colors[title.fg] : fb_colors[title.bg];
+                fb_rect(at + col * pixel_w, (uint32_t)y, pixel_w, (uint32_t)(y_end - y), colour);
+            }
+        }
+        at += 8 * pixel_w;
+    }
+
+    // the cells it covers (those still on the screen), so cell_set draws them again
+    for (int row = title.row; row < title.row + title.rows; row++) {
+        for (int col = title.col; col < title.col + title.cols && col < COLS; col++) {
+            if (row >= 0 && row < ROWS) {
+                under_title[row * COLS + col] = true;
+            }
+        }
+    }
+    // if the mouse pointer is over the title, put it back on top. Every pixel in the title's
+    // rectangle was just drawn, so what pointer_paint keeps as being under the pointer is right
+    if (pointer_shown) {
+        uint32_t visible_top = top > (int32_t)grid_top ? (uint32_t)top : grid_top;
+        pointer_paint(grid_left, visible_top, at, (uint32_t)(top + (int32_t)(BIG_TEXT_ROWS * 2 * pixel_h)));
+    }
+}
+
+// Is all of the title still there? Writing a cell draws it again, which takes its mark away
+// (fb_draw_cell), so a cell it covers without a mark has had something written over it
+static bool title_intact(void) {
+    for (int row = title.row; row < title.row + title.rows; row++) {
+        for (int col = title.col; col < title.col + title.cols && col < COLS; col++) {
+            if (row >= 0 && row < ROWS && !under_title[row * COLS + col]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// the screen has just scrolled up a row (console_scroll): move the title up with the text
+static void title_scrolled(void) {
+    if (!title.shown) {
+        return;
+    }
+    title.row--;
+    if (title.row + title.rows <= 0) {
+        title.shown = false; // all of it has gone off the top
+        return;
+    }
+    draw_title();
+}
+
 // big_text at `percent` of its size, drawn in real pixels (see VGA_linear.h)
 int big_text_sized(uint8_t x, uint8_t y, enum color fg, enum color bg, const char* text, int percent, uint8_t* rows) {
     uint32_t left, top, cell_w, cell_h;
@@ -825,35 +953,34 @@ int big_text_sized(uint8_t x, uint8_t y, enum color fg, enum color bg, const cha
     // it draws pixels straight over the cells, so make sure those are the live screen's cells
     LIVE_SCREEN();
 
-    // one font pixel at full size is a cell wide and half a cell tall: this is `percent` of it
-    // (multiplied before dividing, so the percentage isn't lost to rounding)
+    // remember it, so it can be drawn again as the screen scrolls (see above). A title longer
+    // than TITLE_TEXT_MAX - 1 letters is cut short
+    title.row = y;
+    title.col = x;
+    title.fg = fg;
+    title.bg = bg;
+    title.percent = percent;
+    unsigned int length = 0;
+    while (text[length] != '\0' && length < TITLE_TEXT_MAX - 1) {
+        title.text[length] = text[length];
+        length++;
+    }
+    title.text[length] = '\0';
+    // how many cells it covers, rounded up: adding cell_h - 1 (or cell_w - 1) before dividing
+    // turns any part of a cell into a whole one. (The font pixel sizes as in draw_title)
     uint32_t pixel_w = cell_w * (uint32_t)percent / 100;
     uint32_t pixel_h = cell_h / 2 * (uint32_t)percent / 100;
     pixel_w = pixel_w > 0 ? pixel_w : 1;
     pixel_h = pixel_h > 0 ? pixel_h : 1;
+    title.rows = (uint8_t)((BIG_TEXT_ROWS * 2 * pixel_h + cell_h - 1) / cell_h);
+    title.cols = (uint8_t)((length * 8 * pixel_w + cell_w - 1) / cell_w);
+    title.shown = true;
 
-    // `at` is the left edge of the next letter, in pixels
-    uint32_t at = left;
-    for (const char* c = text; *c != '\0'; c++) {
-        const uint8_t* glyph = font8x16[(uint8_t)*c];
-        // the same 14 font rows big_text shows, but one font row at a time: with real pixels
-        // there is no need to pair them up into half blocks
-        for (uint32_t row = 0; row < BIG_TEXT_ROWS * 2; row++) {
-            uint8_t bits = glyph[BIG_TEXT_FIRST_FONT_ROW + row];
-            // each font pixel becomes a pixel_w x pixel_h rectangle, bit 7 being the leftmost
-            for (uint32_t col = 0; col < 8; col++) {
-                uint32_t colour = (bits & (0x80 >> col)) ? fb_colors[fg] : fb_colors[bg];
-                fb_rect(at + col * pixel_w, top + row * pixel_h, pixel_w, pixel_h, colour);
-            }
-        }
-        at += 8 * pixel_w;
-    }
-    // how many cells it covers, rounded up: adding cell_h - 1 (or cell_w - 1) before dividing
-    // turns any part of a cell into a whole one
+    draw_title();
     if (rows != NULL) {
-        *rows = (uint8_t)((BIG_TEXT_ROWS * 2 * pixel_h + cell_h - 1) / cell_h);
+        *rows = title.rows;
     }
-    return (int)((at - left + cell_w - 1) / cell_w);
+    return title.cols;
 }
 
 // fill the whole screen with colour bg (spaces drawn in bg on bg) and hand the screen over to
@@ -861,6 +988,8 @@ int big_text_sized(uint8_t x, uint8_t y, enum color fg, enum color bg, const cha
 void clear(enum color bg) {
     LIVE_SCREEN();
     console_select_none(); // the text moves: a selection would be left over something else
+    title.shown = false;   // (vga_fill draws its cells again, which takes it away)
+    console_wrapped = false;
     // full screen layouts (splash, error screens) draw with puts, so hide the console cursor
     vga_disable_cursor();
     vga_fill(VGA_ENTRY(' ', bg, bg));
@@ -894,6 +1023,7 @@ void console_update_cursor(void) {
 void console_set_cursor(uint8_t x, uint8_t y) {
     console_x = (x < COLS) ? x : COLS - 1;
     console_y = (y < ROWS) ? y : ROWS - 1;
+    console_wrapped = false; // put somewhere on purpose: a '\n' now is a whole new line
     console_update_cursor();
 }
 
@@ -953,12 +1083,14 @@ void console_clear(void) {
     }
     LIVE_SCREEN();
     console_select_none(); // the text moves: a selection would be left over something else
+    title.shown = false;   // (vga_fill draws its cells again, which takes it away)
     vga_fill(VGA_ENTRY(' ', console_fg, console_bg));
     if (fb_mode) {
         fb_fill_border(console_bg);
     }
     console_x = 0;
     console_y = 0;
+    console_wrapped = false;
     console_update_cursor();
 }
 
@@ -967,6 +1099,10 @@ void console_clear(void) {
 // one row further down, which has not been overwritten yet, so the overlap is safe
 static void console_scroll(void) {
     console_select_none(); // the text moves: a selection would be left over something else
+    // a title written over since it was drawn is let go, rather than drawn over that again
+    if (title.shown && !title_intact()) {
+        title.shown = false;
+    }
     // keep the top line in the next slot of the ring, wrapping round to slot 0 at the end
     for (unsigned int x = 0; x < COLS; x++) {
         scrollback[scrollback_next][x] = cells[x];
@@ -983,6 +1119,8 @@ static void console_scroll(void) {
     for (unsigned int x = 0; x < COLS; x++) {
         cell_set((ROWS - 1) * COLS + x, VGA_ENTRY(' ', console_fg, console_bg));
     }
+    // a title drawn in pixels (which the cells above took away) goes up a row with the text
+    title_scrolled();
 }
 
 // the heart of the console: write c at the cursor, handle the control characters, wrap at the end
@@ -1000,11 +1138,18 @@ void console_putchar_raw(char c) {
         return;
     }
     LIVE_SCREEN();
+    // did the last character fill the line, taking the cursor to the next row by itself?
+    bool wrapped = console_wrapped;
+    console_wrapped = false;
     switch (c) {
-        // newline: back to column 0 of the next row (scrolling is handled below)
+        // newline: back to column 0 of the next row (scrolling is handled below). Straight after
+        // a line that filled the screen's width the cursor is there already: it only finishes
+        // that line, or every line of exactly 80 characters would have a blank row under it
         case '\n':
             console_x = 0;
-            console_y++;
+            if (!wrapped) {
+                console_y++;
+            }
             break;
         // carriage return: back to column 0 of the same row
         case '\r':
@@ -1039,6 +1184,7 @@ void console_putchar_raw(char c) {
     if (console_x >= COLS) {
         console_x = 0;
         console_y++;
+        console_wrapped = true;
     }
     // went past the bottom row: scroll everything up and stay on the last row
     if (console_y >= ROWS) {
@@ -1184,6 +1330,10 @@ void console_view_live(void) {
     console_select_none(); // the text moves: a selection would be left over something else
     for (unsigned int i = 0; i < COLS * ROWS; i++) {
         cell_set(i, live[i]);
+    }
+    // and a title drawn in pixels over it (the scrollback's cells took it away)
+    if (title.shown) {
+        draw_title();
     }
     // the cursor comes back only if it was showing when we started looking back
     if (live_cursor) {
