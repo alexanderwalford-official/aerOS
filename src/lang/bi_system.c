@@ -339,7 +339,8 @@ value_t bi_install (int argc, value_t* argv, int line) {
         return aer_bool(false);
     }
     char detail[96];
-    sfmt(detail, sizeof(detail), " %d (%s, %u MB) and install AerOS", disk->number, disk->model,
+    // (short, so with a program's name in front it still fits on one row of the screen)
+    sfmt(detail, sizeof(detail), " %d (%s, %u MB)", disk->number, disk->model,
          (unsigned int)disk->megabytes);
     char with[FS_NAME_MAX];
     if (!person_agrees(line, "install", "erase EVERYTHING on disk", detail, with, sizeof(with))) {

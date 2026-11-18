@@ -1,0 +1,76 @@
+# install.aer - put aerOS on a disk, so the computer starts it without the CD (docs/INSTALLING.md)
+# Run it in demo mode: X on the splash screen, then 3, then type install
+
+# Alexander Walford 2026
+
+
+func main()
+    print("aerOS install script")
+    print("Version 0.1\n")
+
+    print("[ ! ] Please decide which of these disks you would like to install aerOS on.")
+    color(ORANGE, RED)
+    print("[ ! ] This will erase all data on the selected disk.")
+    print("[ ! ] Please make sure you have backed up any important data before proceeding.")
+    color(BRIGHT, BLACK)
+    print("[ ! ] Disks need to be at least 64MB in size to install aerOS on them.\n")
+
+    # get the disks: each one is a list of [number, model, size in MB, what is on it]
+    let found_disks = disks()
+
+    # check that there are disks to install on
+    if len(found_disks) == 0 then
+        print("[ X ] No disks found. Please make sure you have a disk connected and try again.")
+        return
+    end
+
+    # print the disks, numbered from 1 in the order they were found
+    for i = 0 to len(found_disks) - 1 do
+        let disk = found_disks[i]
+        print(str(i + 1) + ". " + disk[1] + " (" + str(disk[2]) + " MB, has " + disk[3] + " on it)")
+    end
+
+    # ask which disk and convert it into a int: int() gives back nil if it isn't a whole number
+    let answer = int(input("Which disk would you like to install aerOS on? "))
+
+    # validate the answer
+
+    # check is not empty, and is a number (an empty answer isn't a number either)
+    if answer == nil then
+        print("[ X ] No disk selected. Exiting.")
+        return
+    end
+
+    # validate the answer is one of the disks listed
+    if answer < 1 or answer > len(found_disks) then
+        print("[ X ] Invalid disk selected. Exiting.")
+        return
+    end
+
+    # the disk picked. Its own number for install() is disk[0], which can differ from where it
+    # is in the list (the second disk found may be disk 3)
+    let disk = found_disks[answer - 1]
+
+    # warn if something is on it already
+    if disk[3] != "nothing" then
+        print("[ ! ] Disk " + disk[0] + " is not empty: everything on it will be lost.")
+    end
+
+    # confirm the user wants to install on this disk (lower() so "Y" counts as yes too)
+    let sure = input("Are you sure you want to install aerOS on disk " + disk[0] + "? (y/n) ")
+    if lower(sure) != "y" then
+        print("[ X ] Installation cancelled.")
+        return
+    end
+
+    # install it: AerOS asks its own yes / no question first, then shows each step
+    if install(disk[0]) then
+        print("[ ! ] aerOS is installed =)")
+        print("[ ! ] Remove the install media, then type rbt to restart \nin the terminal to boot into the installed system.")
+    else
+        print("[ X ] aerOS wasn't installed.")
+    end
+
+end
+
+main()
