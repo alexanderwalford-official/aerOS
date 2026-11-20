@@ -110,7 +110,7 @@ NAME = re.compile(r'^[a-z0-9_-]{1,8}$')
 # a package's file: an 8.3 name in lower case (it is written to AerOS's disk as it is)
 FILE_NAME = re.compile(r'^[a-z0-9_-]{1,8}\.[a-z0-9]{1,3}$')
 # the biggest file AerOS will fetch (HTTP_BODY_MAX in src/sys/http.h)
-FILE_MAX = 4 * 1024 * 1024
+FILE_MAX = 16 * 1024 * 1024
 HEADER = '# AerOS packages: name, version, signature of packages/<name>.aer, description'
 SERIAL = re.compile(r'^#serial ([0-9]{1,9})$')
 # AerOS's line in the index. It is kept with the packages' lines, under this name (which no
@@ -176,7 +176,7 @@ def package_files(program_path):
             if file.endswith('.aer'):
                 sys.exit(f'{path}: a package can\'t carry other programs, only its own')
             if os.path.getsize(path) > FILE_MAX:
-                sys.exit(f'{path}: bigger than AerOS can fetch (4 MB)')
+                sys.exit(f'{path}: bigger than AerOS can fetch (16 MB)')
             with open(path, 'rb') as f:
                 files[file] = f.read()
     return name, program, files
@@ -328,7 +328,7 @@ def publish_os(options):
                  f'built since AerOS could update itself?')
     build, version = stamps[0][0].decode(), stamps[0][1].decode()
     if len(kernel) > FILE_MAX:
-        sys.exit(f'{options.kernel}: bigger than AerOS can fetch (4 MB)')
+        sys.exit(f'{options.kernel}: bigger than AerOS can fetch (16 MB)')
 
     server = check_server(options.server)
     key = load_private(os.path.expanduser(options.key))

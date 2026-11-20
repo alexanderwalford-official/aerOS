@@ -34,7 +34,10 @@
 #include <stddef.h>
 #include "firewall.h"
 
-#define HTTP_BODY_MAX      (4 * 1024 * 1024)   // the biggest page AerOS will fetch
+// The biggest page AerOS will fetch: 16 MB, so AerOS itself (main.elf, about 3 MB and growing:
+// sys/update.h) has room to grow. The package server and tools/aerpkg.py use the same limit
+#define HTTP_BODY_MAX_MB   16
+#define HTTP_BODY_MAX      (HTTP_BODY_MAX_MB * 1024 * 1024)
 #define HTTP_REDIRECTS_MAX 5
 
 // what can go wrong besides the network's own NET_ERR_ codes (sys/net.h)

@@ -81,9 +81,10 @@ SERIAL = re.compile(r'^#serial ([0-9]{1,9})$')
 OS_LINE = re.compile(r'^#os ([0-9]{14}) ([0-9a-f]{128}) ([ -~]{1,32})$')
 # the biggest program AerOS will fetch (HTTP_BODY_MAX in src/sys/http.h), and so the biggest
 # index too
-FILE_MAX = 4 * 1024 * 1024
-# the biggest upload: a 4 MB program or file grows by a third in base64, plus the index
-UPLOAD_MAX = 8 * 1024 * 1024
+FILE_MAX = 16 * 1024 * 1024
+# the biggest upload: a 16 MB program or file grows by a third in base64 (to 21.3 MB), plus the
+# index and the rest of the JSON. nginx.conf's client_max_body_size must be at least as big
+UPLOAD_MAX = 24 * 1024 * 1024
 
 CONFIG = {}   # the config file's settings, read once at the start (read_config)
 

@@ -106,8 +106,10 @@ deserves a new name.
 
 ## Limits
 
-- **4 MB at most.** That is all `httpget` will fetch (`HTTP_BODY_MAX`), and `main.elf` is about
+- **16 MB at most.** That is all `httpget` will fetch (`HTTP_BODY_MAX`), and `main.elf` is about
   2.7 MB now. It has the built-in apps, the manual and the source in it, so it grows with them.
+  The server (`FILE_MAX`, `UPLOAD_MAX`), nginx (`client_max_body_size`) and `aerpkg.py` follow
+  the same limit.
 - **Only from an installed disk.** Started from the CD, AerOS is whatever is on the CD, so a
   newer CD is the update. `osupdatable()` says so.
 - A kernel that starts but crashes later, or one that can't reach the network, isn't caught by

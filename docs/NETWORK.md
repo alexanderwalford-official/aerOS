@@ -256,7 +256,9 @@ have allowed it (in the background, only with an "always").
 the answer apart: the status line, the headers (`Content-Type`, `Content-Length`,
 `Transfer-Encoding`, `Location`), and the body, put back together first if it was chunked.
 Redirects (301, 302, 303, 307, 308) to another `http://` address are followed up to 5 times.
-Pages are limited to 4 MB.
+Pages are limited to 16 MB (`HTTP_BODY_MAX`). The answer is read into a buffer that doubles as
+it fills, and the body is then moved to its start and the buffer shrunk to fit, so a big page
+never needs room for two copies of itself.
 
 There is no TLS, so `https://` is turned away with a clear message, and a page can be read or
 changed on the way. That is the right trade for things that are checked once they arrive (a

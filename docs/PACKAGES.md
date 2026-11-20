@@ -91,7 +91,7 @@ computer and in AerOS:
   program. `pkg update` writes the new version's files over the old ones, and leaves anything
   else in the folder alone.
 
-Any file AerOS can fetch will do (up to 4 MB, `HTTP_BODY_MAX` in `src/sys/http.h`): `wrf()`
+Any file AerOS can fetch will do (up to 16 MB, `HTTP_BODY_MAX` in `src/sys/http.h`): `wrf()`
 writes every byte of what `httpget()` gave, zeros and all.
 
 ## The packages
@@ -256,7 +256,9 @@ Then publish from your computer as above: the first publish starts a new index a
 database's `publishes` table keeps a line for every publish.
 
 To update the server, copy the new `server.py` to `/opt/aerpkg/` and
-`sudo systemctl restart aerpkg`. Back up `/var/lib/aerpkg/packages.db` now and then: it is
+`sudo systemctl restart aerpkg`. If `nginx.conf` changed too (its `client_max_body_size` must be
+at least `server.py`'s `UPLOAD_MAX`: 24 MB), copy it to `/etc/nginx/sites-available/packages`
+and `sudo nginx -t && sudo systemctl reload nginx`. Back up `/var/lib/aerpkg/packages.db` now and then: it is
 everything that is published (though it can always be published again from your computer).
 
 ## In AerOS
