@@ -1,0 +1,182 @@
+# aerOS update utility
+# very simmilar to pkg.aer, but simpler and only for the OS itself
+# Alexander Walford 2026
+
+let SERVER = "http://packages.intercon.network" # http://10.0.2.2:8000
+
+
+# ---- messages, each kind in its own colour ---------------------------------------------------
+
+func note(text)
+    # something worth knowing, in light cyan
+    color(LIGHT_CYAN, BLACK)
+    print("[ * ] " + text)
+    color(BRIGHT, BLACK)
+end
+
+func success(text)
+    # something that worked, in light green
+    color(LIGHT_GREEN, BLACK)
+    print("[ OK ] " + text)
+    color(BRIGHT, BLACK)
+end
+
+func warn(text)
+    # something to be careful about, in yellow
+    color(YELLOW, BLACK)
+    print("[ ! ] " + text)
+    color(BRIGHT, BLACK)
+end
+
+func danger(text)
+    # something that really matters, orange on red, the same as install.aer's warnings
+    color(ORANGE, RED)
+    print("[ ! ] " + text)
+    color(BRIGHT, BLACK)
+end
+
+func fail(text)
+    # something that went wrong, in light red, and the end of the program
+    color(LIGHT_RED, BLACK)
+    print("[ X ] " + text)
+    color(BRIGHT, BLACK)
+    exit()
+end
+
+
+# ---- the screen ------------------------------------------------------------------------------
+
+func title()
+    # a clear screen with "UPDATE" in big orange letters across the top, like the splash
+    # screen's "aerOS". Each big letter is 8 columns wide and 7 rows tall
+    cls()
+    let word = "UPDATE"
+    big((80 - len(word) * 8) / 2, 1, word, ORANGE)
+    # the cursor goes back under the big letters, for the rest to print from there
+    at(0, 9)
+    color(DARK_GRAY, BLACK)
+    print("                        aerOS update utility")
+    print("")
+    color(BRIGHT, BLACK)
+end
+
+func when(build)
+    # a build number as a date and time people can read: "20261204183000" is
+    # "2026-12-04 18:30" (sub(text, start, length) cuts a piece out of the text)
+    return sub(build, 0, 4) + "-" + sub(build, 4, 2) + "-" + sub(build, 6, 2) + " " + sub(build, 8, 2) + ":" + sub(build, 10, 2)
+end
+
+
+# ---- the index -------------------------------------------------------------------------------
+
+func fetch_index()
+    # get the index of packages from the server, check it, and return it as a string
+    if packagekey() == "" then
+        fail("aerOS has no package key, so updates can't be checked.")
+    end
+
+    # the text of the index, and its signature, from the server
+    let index = httpget(SERVER + "/index.txt")
+    let signature = httpget(SERVER + "/index.sig")
+
+    # if either is nil: the server can't be reached
+    if index == nil or signature == nil then
+        warn("Can't reach the update server.")
+        fail("fw web packages.intercon.network 80 allows it.")
+    end
+
+    # if the signature doesn't check out: the index can't be trusted
+    if verify(index, signature, packagekey()) == false then
+        danger("The update list from the server isn't signed by aerOS's makers.")
+        fail("It won't be used: nothing was changed.")
+    end
+
+    return index
+end
+
+func find_os(index)
+    # aerOS's line in the index, "#os <build> <signature> <version>", as
+    # [build, signature, version], or nil if no aerOS has been published yet
+    for line in split(index, chr(10)) do
+        if sub(line, 0, 4) == "#os " then
+            let parts = split(line, " ")
+            # parts[0] is "#os", parts[1] the build, parts[2] the signature, and the
+            # version is every word from parts[3] on ("0.02 ALPHA" has a space in it)
+            if len(parts) >= 4 then
+                let version = parts[3]
+                for i = 4 to len(parts) - 1 do
+                    version = version + " " + parts[i]
+                end
+                return [parts[1], parts[2], version]
+            end
+        end
+    end
+    return nil
+end
+
+
+# ---- updating --------------------------------------------------------------------------------
+
+func main()
+    title()
+    note("Checking for updates...")
+
+    # check that aerOS can be updated here (if not, osupdatable() says why itself)
+    if osupdatable() == false then
+        fail("aerOS can't be updated here.")
+    end
+
+    # fetch the update list, and find aerOS's line in it
+    let index = fetch_index()
+    let newest = find_os(index)
+    if newest == nil then
+        success("No aerOS update has been published yet: you have the newest.")
+        exit()
+    end
+
+    # newest[0] is the build, newest[1] the signature, newest[2] the version
+    if newest[0] == osbuild() then
+        success("aerOS is up to date: " + osversion() + ", build " + osbuild())
+        exit()
+    end
+
+    # the two side by side: what you have, and what there is
+    print("")
+    print("    Installed:  aerOS " + osversion() + "  (build " + osbuild() + ", " + when(osbuild()) + ")")
+    color(LIGHT_GREEN, BLACK)
+    print("    Available:  aerOS " + newest[2] + "  (build " + newest[0] + ", " + when(newest[0]) + ")")
+    color(BRIGHT, BLACK)
+    print("")
+
+    # what to know before saying yes
+    danger("Don't turn the computer off while the update is being written.")
+    note("If the new aerOS doesn't start, the next restart goes back to this one.")
+    print("")
+
+    # ask before doing anything (lower() so "Y" counts as yes too)
+    let sure = input("Update aerOS to build " + newest[0] + "? (y/n) ")
+    if lower(sure) != "y" then
+        fail("Update cancelled: nothing was changed.")
+    end
+
+    # download the new aerOS (about 3 MB, so it takes a moment)
+    note("Downloading aerOS " + newest[2] + "...")
+    let kernel = httpget(SERVER + "/os/main.elf")
+    if kernel == nil then
+        warn("Can't download the update.")
+        fail("fw web packages.intercon.network 80 allows it.")
+    end
+    success("Downloaded " + str(len(kernel) / 1024) + " KB.")
+
+    # osupdate checks it is signed and newer, asks once more with your password, then
+    # puts it on the disk. If it gives back false, it has already said why
+    if osupdate(kernel, newest[1]) == false then
+        fail("aerOS wasn't updated.")
+    end
+
+    print("")
+    success("aerOS " + newest[2] + " (build " + newest[0] + ") is ready.")
+    warn("Type rbt to restart into it.")
+end
+
+main()

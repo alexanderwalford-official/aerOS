@@ -72,6 +72,21 @@ def update_setting(disk):
     return match.group(1).decode() if match else ''
 
 
+def put_update_app(t, disk, port):
+    """The update app (src/disk/bin/update.aer) on the installed disk as /bin/updt.aer, a copy
+    that fetches from this computer's test server instead of the real one."""
+    with open(t.repo('src', 'disk', 'bin', 'update.aer'), 'rb') as f:
+        app = f.read()
+    real = re.search(rb'let SERVER = "[^"]*"', app)
+    must(real is not None, 'update.aer should set SERVER in one line: let SERVER = "..."')
+    app = app.replace(real.group(0), f'let SERVER = "http://10.0.2.2:{port}"'.encode())
+    path = t.path('updt.aer')
+    with open(path, 'wb') as f:
+        f.write(app)
+    done = subprocess.run(['mcopy', '-o', '-i', disk + '@@1M', path, '::/bin/updt.aer'], capture_output=True)
+    must(done.returncode == 0, f'could not put updt.aer on the disk: {done.stderr!r}')
+
+
 def start_from_disk(t, disk, network=False):
     """Start AerOS from the installed disk alone, as a PC would, and log in."""
     aeros = t.boot(disk=disk, from_disk=True, network='user,model=e1000' if network else None)
@@ -130,6 +145,7 @@ def test_update_and_go_back(t):
         aeros = t.boot(disk=disk, from_disk=True)
         aeros.first_login()
         aeros.quit()
+        put_update_app(t, disk, server.port)
 
         # ---- a good update -----------------------------------------------------------------
         server.aerpkg('publish-os', second)
@@ -155,13 +171,27 @@ def test_update_and_go_back(t):
         # a wrong signature: refused before anything is asked
         aeros.run('print(osupdate(k, s2 + s))', timeout=120)
         aeros.expect("isn't signed by AerOS's makers")
-        # the right one: AerOS asks, then for the password
-        aeros.ask('print(osupdate(k, s + s2))')
-        aeros.wait_for('AerOS to build ' + SECOND, 120)
+
+        # the update app: it shows both, and N changes nothing
         before = aeros.prompts()
+        aeros.ask('updt')
+        aeros.wait_for(f'Update aerOS to build {SECOND}? (y/n)', 60)
+        aeros.expect(f'Installed:  aerOS 0.01 ALPHA  (build {FIRST}, 2020-01-01 00:00)',
+                     f'Available:  aerOS 0.01 ALPHA  (build {SECOND}, 2030-01-01 00:00)',
+                     "[ ! ] Don't turn the computer off while the update is being written.")        aeros.type('n\n')
+        aeros.wait_prompt(before, 60, what='updt (no)')
+        aeros.expect('[ X ] Update cancelled: nothing was changed.')
+        # Y: it downloads it, AerOS asks too (then for the password), and it is put on the disk
+        before = aeros.prompts()
+        aeros.ask('updt')
+        aeros.wait_for(f'Update aerOS to build {SECOND}? (y/n)', 60)
+        aeros.type('y\n')
+        aeros.wait_for('wants to update AerOS to build ' + SECOND, 120)
         aeros.key('y')
         aeros.answer('secret1')
-        aeros.wait_prompt(before, 120, what='osupdate')
+        aeros.wait_prompt(before, 120, what='updt (yes)')
+        aeros.expect('[ OK ] Downloaded ', f'[ OK ] aerOS 0.01 ALPHA (build {SECOND}) is ready.',
+                     '[ ! ] Type rbt to restart into it.')
         aeros.quit()
 
         must(on_partition(disk, '/boot/main.elf') == read(second), '/boot/main.elf should be the update')
@@ -174,6 +204,11 @@ def test_update_and_go_back(t):
         aeros.expect_printed(f'Updated: this is AerOS 0.01 ALPHA, build {SECOND}')
         aeros.run('print("build " + osbuild())')
         aeros.expect(f'build {SECOND}')
+
+        # the app says so, now that it has the newest
+        aeros.run(f'fw web 10.0.2.2 {server.port}')
+        aeros.run('updt', timeout=60)
+        aeros.expect(f'[ OK ] aerOS is up to date: 0.01 ALPHA, build {SECOND}')
 
         # the same one again is refused: it isn't newer than the one on the disk
         aeros.run(f'fw web 10.0.2.2 {server.port}')
