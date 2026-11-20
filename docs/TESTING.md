@@ -62,6 +62,7 @@ are skipped rather than failed.
 | `test_games.py` | Maze 3D, Snake (and its high scores) and `move.aer`, booted from the ISO in graphics mode. They are packages: `t.package('snake')` puts one on the test's disk the way `pkg install` would |
 | `test_database.py` | AerDB from AerLang (`files/aerdb.aer`: every statement, many pages, reopening, COMPACT), the SQL command, and SHOW on a query |
 | `test_scan.py` | SCAN on Snake, on a program full of tricks (`files/phish.aer`, only ever scanned) and on one that only mentions a built-in in a comment and a string (`files/clean.aer`) |
+| `test_update.py` | updating an installed AerOS: `publish-os` on a test server, then in QEMU a disk installed with one build updated to the next over the network (a program refused, a wrong signature and the same build again refused), and a third that never starts, which GRUB goes back from. `t.boot(kernel=)` starts a changed copy of the kernel ([updating](UPDATING.md)) |
 | `test_startup.py` | `startup.txt`: a new account's example (all comments), the lines of a real one shown and run at each login, `rbt` skipped, and a program refused (without being asked) when it tries to change it |
 | `test_logs.py` | AerOS's log: boots, the boot log's entries, OFF, noticing a boot that didn't end properly, reading it from a program (`files/logs.aer`), that only AerOS can change it, and clearing it or turning it off (the question and password) |
 | `test_network.py` | the firewall and sealed messages, against `tools/aernet.py` |

@@ -35,6 +35,7 @@ AerOS fetches over plain HTTP (`src/sys/http.h`), which is all it can do.
 | `/index.sig` | the signature of `index.txt` itself: 128 hex digits, no line break |
 | `/packages/<name>.aer` | each package's program |
 | `/packages/<name>/<file>` | the files a package comes with |
+| `/os/main.elf` | the newest AerOS, for installed disks to [update](UPDATING.md) to |
 
 The index looks like this:
 
@@ -50,11 +51,12 @@ viewer 1.0 41d0e2a7...90c1 A picture viewer (BMP), with two pictures to try it o
 #file viewer colours.bmp 03aa5c8d...e771
       ^      ^         ^
       the package, the file, and the signature of packages/viewer/aeros.bmp
+#os 20261204183000 5c0a9e71...d2b8 0.02 ALPHA
 ```
 
 Lines starting with `#` are comments, except two kinds that `pkg` reads: `#serial` (below) and
 `#file`, one for each file a package comes with. (They start with `#` so an older `pkg`, which
-doesn't know about them, skips them.) A name is 1 to 8 of `a-z 0-9 _ -`, as it becomes
+doesn't know about them, skips them.) `#os` is AerOS itself, for [updating](UPDATING.md). A name is 1 to 8 of `a-z 0-9 _ -`, as it becomes
 `/apps/<name>.aer` on AerOS's disk. The whole index is plain ASCII.
 
 **The serial.** Every publish gives the index the next number on its `#serial` line. That line
@@ -163,6 +165,12 @@ To take one off:
 
 ```
 python3 tools/aerpkg.py unpublish chess
+```
+
+To publish a new AerOS, for installed disks to [update](UPDATING.md) to:
+
+```
+python3 tools/aerpkg.py publish-os src/main.elf
 ```
 
 Each one fetches the index the server has now, checks it is signed by your key, changes that

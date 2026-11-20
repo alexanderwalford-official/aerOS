@@ -30,6 +30,7 @@ AerOS is written to be read. Every source file starts with an explanation of wha
 - [The disk cache](docs/DISK_CACHE.md): recently used parts of the disk kept in memory, changes written in batches, and what that costs if the power goes
 - [The log](docs/LOGS.md): every boot, warning and shutdown kept in a database, how a crash is noticed, and why only AerOS can write to it
 - [Installing AerOS](docs/INSTALLING.md): putting AerOS on a disk from demo mode, so a PC starts it without the CD: GRUB, a FAT32 volume and the kernel, all written by AerOS itself
+- [Updating AerOS](docs/UPDATING.md): a newer AerOS from the package server, signed and checked by AerOS itself, and GRUB going back to the one before if it doesn't start
 - [Packages](docs/PACKAGES.md): extra apps (the games, a picture viewer, a web server...) from a package server, with any pictures or video they come with, all signed by their maker and checked before they are installed. They are in `packages/`
 - [Testing](docs/TESTING.md): `make test` boots AerOS in QEMU and checks it works, and how to write a test
 

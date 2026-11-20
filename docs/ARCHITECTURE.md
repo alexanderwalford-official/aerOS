@@ -74,6 +74,9 @@ src/
 
   sys/                  the operating system proper
     boot.c                reads GRUB's multiboot info, prints the boot log
+    update.c              updating AerOS on an installed disk, and going back if it doesn't
+                          start (docs/UPDATING.md)
+    grubenv.c             /grubenv: the settings AerOS leaves for GRUB (RES, updates)
     interrupts.c          GDT, IDT, PIC remapping, exception and IRQ dispatch
     sys_clck.c            the PIT timer (1000 Hz) and the CMOS real time clock
     p_man.c               the process manager (a queue of one-line jobs)

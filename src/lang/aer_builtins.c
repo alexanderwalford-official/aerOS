@@ -84,6 +84,10 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("deld", bi_delete_folder, 1, 1),
     BUILTIN("disks", bi_disks, 0, 0),
     BUILTIN("install", bi_install, 1, 1),
+    BUILTIN("osbuild", bi_osbuild, 0, 0),
+    BUILTIN("osversion", bi_osversion, 0, 0),
+    BUILTIN("osupdatable", bi_osupdatable, 0, 0),
+    BUILTIN("osupdate", bi_osupdate, 2, 2),
     BUILTIN("sync", bi_sync, 0, 0),
     BUILTIN("enc", bi_encrypt_file, 2, 2),
     BUILTIN("dec", bi_decrypt_file, 2, 2),
@@ -171,7 +175,8 @@ static const struct {
     { APP_VIDEO,    { "video", NULL } },
     { APP_FILES,    { "rdf", "rdb", "wrf", "apf", "isf", "delf", "la", "cwd", "enc", "dec",
                       "isenc", "rdenc", "rdat", "wrat", "trunc", "dbopen", "dbrun", "dbquery",
-                      "dbclose", "sync", "mkd", "deld", "disks", "install", NULL } },
+                      "dbclose", "sync", "mkd", "deld", "disks", "install", "osupdatable",
+                      "osupdate", NULL } },
     { APP_NETWORK,  { "nsend", "nrecv", "httpget", "tcplisten", "tcpaccept", "tcpconnect",
                       "tcprecv", "tcpsend", "tcpclose", "tcpunlisten", NULL } },
 };
@@ -210,7 +215,7 @@ uint32_t aer_profile (const token_t* tokens, int count) {
 static const char* const front_only[] = {
     "input", "inpw", "key", "haskey", "keydown", "mouse", "mousemove", "mousedown",
     "cls", "color", "at", "progress", "spinner", "frame", "big", "clip", "setclip",
-    "logclear", "setlogging", "cmd", "queue", "install", NULL
+    "logclear", "setlogging", "cmd", "queue", "install", "osupdate", NULL
 };
 
 // the first built-in a program's tokens name that only the program in front can use (see

@@ -21,7 +21,8 @@ erase a disk on its own. It is refused outside demo mode, and from a program run
 background. The installer app, `/bin/install.aer`, is the friendly way in: it lists the disks,
 lets you pick one, and calls `install()`.
 
-The code is `src/sys/install.c`. Its header, `src/sys/install.h`, has the whole story.
+The code is `src/sys/install.c`. Its header, `src/sys/install.h`, has the whole story. Once
+installed, AerOS can [update itself](UPDATING.md) from the package server.
 
 ## What goes on the disk
 

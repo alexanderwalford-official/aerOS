@@ -33,6 +33,7 @@ If you say no, the program carries on as if the file wasn't there: `rdf()` gives
 | change files in a folder it has just made (`mkd`) | no, while it runs: nothing of yours is in it yet |
 | touch `/acc/`, where the accounts are kept | never allowed, whatever you answer |
 | change a `startup.txt` in a home folder | never allowed: its lines run as you at the next login |
+| change `/boot/` or `/grubenv` | never allowed: they start AerOS (only `osupdate()` updates it) |
 
 A permission covers one folder (not the folders inside it), so a program that reads ten
 pictures from the same folder asks once. Being allowed to change files includes reading them.

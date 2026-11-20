@@ -47,10 +47,11 @@ class Test:
         self.files = os.path.join(HERE, 'files')   # files the tests copy onto disks
         self.machines = []
 
-    def boot(self, graphics=False, disk=None, **options):
+    def boot(self, graphics=False, disk=None, kernel=None, **options):
         """Start AerOS: the kernel in text mode, or the ISO (graphics=True) for graphics tests.
-        disk is an image from t.disk(). Other options go to AerOS() (memory, network)."""
-        machine = AerOS(self.workdir, kernel=None if graphics else self.kernel,
+        disk is an image from t.disk(), and kernel another main.elf to start instead of the
+        one built (a copy the test changed). Other options go to AerOS() (memory, network)."""
+        machine = AerOS(self.workdir, kernel=None if graphics else (kernel or self.kernel),
                         iso=self.iso if graphics else None, disk=disk, **options)
         self.machines.append(machine)
         return machine

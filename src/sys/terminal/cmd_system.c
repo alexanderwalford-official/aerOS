@@ -37,6 +37,7 @@
 #include "../rt.h"
 #include "../disk_cache.h"
 #include "../thread.h"
+#include "../grubenv.h"
 
 
 // =================================================================================================
@@ -231,31 +232,13 @@ void cli_shutdown (char* arguments) {
 
 // ---- RES ----------------------------------------------------------------------------------------
 
-// Save the resolution for next time. GRUB reads it before AerOS starts (grub.cfg uses load_env)
-// and asks the graphics card for that mode, which works on any PC.
-// The file is a "GRUB environment block" in the disk's top folder, and GRUB is fussy about it:
-// exactly 1024 bytes, a fixed first line, then "name=value" lines, padded out with '#'
+// Save the resolution for next time, as aeros_mode in /grubenv (sys/grubenv.h). GRUB reads it
+// before AerOS starts (grub.cfg uses load_env) and asks the graphics card for that mode, which
+// works on any PC. "x32" asks for 32 bits per pixel
 static bool save_resolution (uint32_t width, uint32_t height) {
-    if (fs_mode != FS_MODE_DISK) {
-        return false; // nowhere to save it
-    }
-
-    // 1024 bytes for GRUB, plus one for the '\0' the file functions need to find the end.
-    // "x32" asks for 32 bits per pixel. sfmt returns how much it wrote, and the '#'s fill
-    // everything from there up to byte 1024
-    char block[1025];
-    int used = sfmt(block, sizeof(block), "# GRUB Environment Block\naeros_mode=%ux%ux32\n", width, height);
-    memset(block + used, '#', (size_t)(1024 - used));
-    block[1024] = '\0';
-
-    // replace the whole file (append is false) if it is there already, or make it
-    int result;
-    if (fs_file_exists("/", "grubenv")) {
-        result = fs_write_f("/", "grubenv", block, false);
-    } else {
-        result = fs_create_f("/", "grubenv", block);
-    }
-    return result >= 0;
+    char mode[32];
+    sfmt(mode, sizeof(mode), "%ux%ux32", width, height);
+    return grubenv_set("aeros_mode", mode);
 }
 
 // read "1280x720" into width and height, false if it isn't a size AerOS can use

@@ -44,6 +44,8 @@
 #include "rt.h"
 #include "thread.h"
 #include "syslog.h"
+#include "grubenv.h"
+#include "update.h"
 #include "../lib/primary_definitions.h"
 #include <stdarg.h>
 
@@ -260,6 +262,16 @@ void boot_parse_multiboot (uint32_t magic, uint32_t info_addr) {
         boot_has_word((const char*)(uintptr_t)info->cmdline, "demo")) {
         boot_option = BOOT_OPT_DEMO;
     }
+    // ...and the disk's GRUB menu says "trial" when it starts a new AerOS for the first time, or
+    // "fallback" when it starts the one from before instead, as the new one didn't start
+    // (sys/update.h, src/install/grub.cfg)
+    if ((info->flags & MULTIBOOT_INFO_CMDLINE) && info->cmdline != 0) {
+        if (boot_has_word((const char*)(uintptr_t)info->cmdline, "trial")) {
+            update_start = UPDATE_START_TRIAL;
+        } else if (boot_has_word((const char*)(uintptr_t)info->cmdline, "fallback")) {
+            update_start = UPDATE_START_FALLBACK;
+        }
+    }
     // the copy of main.elf GRUB loaded for the installer, before the heap is given any memory
     if (info->flags & MULTIBOOT_INFO_MODULES) {
         boot_find_modules(info);
@@ -316,26 +328,18 @@ static void boot_report (const char* tag, const char* source, const char* format
 // Graphics Adapter, which VirtualBox has too, can do any size, so it is asked for the saved one
 static void restore_resolution (void) {
     vga_framebuffer_t screen;
-    if (fs_mode != FS_MODE_DISK || !bga_available() || !vga_framebuffer_info(&screen) ||
-        !fs_file_exists("/", "grubenv")) {
+    char mode[32];
+    if (!bga_available() || !vga_framebuffer_info(&screen) || !grubenv_get("aeros_mode", mode, sizeof(mode))) {
         return;
     }
-    char* block = fs_read_f("/", "grubenv");
-    if (block == NULL) {
-        return;
-    }
-    // the line RES writes is "aeros_mode=1920x1080x32": the number after the = is the width,
-    // and the one after the first x the height
+    // RES saves it as "1920x1080x32": the number before the first x is the width, and the one
+    // after it the height
     unsigned long width = 0, height = 0;
-    char* found = strstr(block, "aeros_mode=");
-    if (found != NULL) {
-        char* end;
-        width = strtoul(found + slen("aeros_mode="), &end, 10);
-        if (*end == 'x') {
-            height = strtoul(end + 1, NULL, 10);
-        }
+    char* end;
+    width = strtoul(mode, &end, 10);
+    if (*end == 'x') {
+        height = strtoul(end + 1, NULL, 10);
     }
-    free(block);
 
     // nothing to do if it is already that size (GRUB managed it), or the line made no sense
     if (width == 0 || height == 0 || (width == screen.width && height == screen.height)) {
@@ -447,6 +451,14 @@ int init_boot (void) {
     }
     // the resolution saved with RES is on the disk, so this has to wait for the file system
     restore_resolution();
+    // the first start after an update: it worked, or (if this is the AerOS from before) it didn't
+    char said[128];
+    int update = update_after_boot(said, sizeof(said));
+    if (update == UPDATE_WORKED) {
+        boot_report("[ OK ]", "update", "%s", said);
+    } else if (update == UPDATE_WENT_BACK) {
+        boot_report("[WARN]", "update", "%s", said);
+    }
 
     // the apps that come with AerOS, copied into /bin/ unless they are already there
     int installed = apps_install();
