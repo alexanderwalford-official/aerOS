@@ -62,6 +62,24 @@ See [Accounts and encryption](security.md).
 | `pw` | change your password |
 | `out` | log out, back to the login screen |
 
+### Your startup commands
+
+`startup.txt` in your home folder runs each time you log in, a line at a time, as if you had
+typed each line at the prompt: commands, apps and AerLang all work. `edt startup.txt` changes it.
+A new account starts with an example in it, all of it `#` comments, so nothing runs until you
+take a `#` off:
+
+```
+# startup.txt
+fw web packages.intercon.network 80
+bg webserve 8080 /docs/
+desktop
+```
+
+Ctrl+C stops it if something goes wrong. It can't restart, shut down or log out (`rbt`, `off`
+and `out` lines are skipped: they would happen again at every login), and no program can
+change it, however you have [answered](perms.md): only you, at the prompt.
+
 ## Programs
 
 | Command | Does |

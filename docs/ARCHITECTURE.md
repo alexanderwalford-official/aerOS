@@ -86,6 +86,7 @@ src/
     source.c              the read-only /src/ folder: AerOS's own source, built into it
     versions.c            old versions of the files in home folders (VERS, UNDO, notes.txt@2)
     perm.c                programs ask before they touch your files (PERM)
+    startup.c             each user's startup.txt: their own commands, run after logging in
     clipboard.c           the clipboard: copied text, pasted at the prompt or read with clip()
     syslog.c              AerOS's log, /sys/logs.db: every boot, warning and shutdown (an AerDB database)
     net.c                 the network stack: ARP, IPv4, UDP, DNS lookups (NET, MSG, LSN)

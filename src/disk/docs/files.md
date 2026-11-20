@@ -11,6 +11,7 @@
 | `/docs/` | this manual |
 | `/home/<name>/` | each user's own folder, where the prompt starts |
 | `/home/<name>/versions/` | the [old versions](versions.md) of the files in it |
+| `/home/<name>/startup.txt` | commands that run each time you log in ([more](commands.md)) |
 | `/src/` | AerOS's own source code, read only ([more](why.md)) |
 | `/sys/` | system files, like `startup.wav`, `apps.lst` and [the log](logs.md), `logs.db` |
 | `/sys/cache/`, `/sys/tmp/` | room for the system to work in |

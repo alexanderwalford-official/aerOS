@@ -32,6 +32,7 @@ If you say no, the program carries on as if the file wasn't there: `rdf()` gives
 | change or delete any file | yes |
 | change files in a folder it has just made (`mkd`) | no, while it runs: nothing of yours is in it yet |
 | touch `/acc/`, where the accounts are kept | never allowed, whatever you answer |
+| change a `startup.txt` in a home folder | never allowed: its lines run as you at the next login |
 
 A permission covers one folder (not the folders inside it), so a program that reads ten
 pictures from the same folder asks once. Being allowed to change files includes reading them.

@@ -28,6 +28,8 @@
         ...in a folder the program made (mkd)        never asks while it runs: nothing of
                                                        yours can be in it yet
         anything in /acc/ (the accounts)             never allowed, whatever the answer
+        changing a startup.txt in a home folder      never allowed: its lines run at login as
+                                                       if you typed them (sys/startup.h)
 
     A permission is for one folder (not the folders inside it), so a program that reads ten
     pictures from the same folder asks once. Being allowed to change files there includes
