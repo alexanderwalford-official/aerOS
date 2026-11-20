@@ -52,11 +52,12 @@ func title()
     cls()
     let word = "UPDATE"
     big((80 - len(word) * 8) / 2, 1, word, ORANGE)
-    # the cursor goes back under the big letters, for the rest to print from there
-    at(0, 9)
+    # the cursor goes back under the big letters (rows 1 to 7), for the rest to print from
+    # there. The screen is 25 rows: saying yes fills it to the last row, so there are no
+    # blank lines to spare (one more and the screen scrolls, cutting the letters in half)
+    at(0, 8)
     color(DARK_GRAY, BLACK)
     print("                        aerOS update utility")
-    print("")
     color(BRIGHT, BLACK)
 end
 
@@ -151,7 +152,6 @@ func main()
     # what to know before saying yes
     danger("Don't turn the computer off while the update is being written.")
     note("If the new aerOS doesn't start, the next restart goes back to this one.")
-    print("")
 
     # ask before doing anything (lower() so "Y" counts as yes too)
     let sure = input("Update aerOS to build " + newest[0] + "? (y/n) ")
@@ -174,7 +174,6 @@ func main()
         fail("aerOS wasn't updated.")
     end
 
-    print("")
     success("aerOS " + newest[2] + " (build " + newest[0] + ") is ready.")
     warn("Type rbt to restart into it.")
 end

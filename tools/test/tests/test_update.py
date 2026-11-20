@@ -178,7 +178,8 @@ def test_update_and_go_back(t):
         aeros.wait_for(f'Update aerOS to build {SECOND}? (y/n)', 60)
         aeros.expect(f'Installed:  aerOS 0.01 ALPHA  (build {FIRST}, 2020-01-01 00:00)',
                      f'Available:  aerOS 0.01 ALPHA  (build {SECOND}, 2030-01-01 00:00)',
-                     "[ ! ] Don't turn the computer off while the update is being written.")        aeros.type('n\n')
+                     "[ ! ] Don't turn the computer off while the update is being written.")
+        aeros.type('n\n')
         aeros.wait_prompt(before, 60, what='updt (no)')
         aeros.expect('[ X ] Update cancelled: nothing was changed.')
         # Y: it downloads it, AerOS asks too (then for the password), and it is put on the disk
