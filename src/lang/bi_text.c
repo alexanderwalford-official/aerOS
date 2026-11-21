@@ -159,10 +159,20 @@ value_t bi_int (int argc, value_t* argv, int line) {
         case V_STR: {
             char* end;
             const char* text = argv[0].as.obj->data.chars;
-            // base 0 lets strtol work out the base from the text: "0x1F" is hex, and (beware)
-            // a leading 0 means octal, so "010" is 8. end is left on the first character it
-            // couldn't use
-            long value = strtol(text, &end, 0);
+            // The text is read the way a number in a program is (lang/aer_lexer.c): "0x1F" is
+            // hex, and anything else is decimal, leading 0s and all, so "08" (from a clock, say)
+            // is 8 and "010" is 10. (C's own rule, strtol's base 0, would read a leading 0 as
+            // octal: "010" as 8, and "08" as no number at all.) So look past any spaces and sign
+            // for the 0x first. strtol leaves end on the first character it couldn't use
+            const char* digits = text;
+            while (isspace((unsigned char)*digits)) {
+                digits++;
+            }
+            if (*digits == '-' || *digits == '+') {
+                digits++;
+            }
+            int base = (digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X')) ? 16 : 10;
+            long value = strtol(text, &end, base);
             // stopped at a decimal point or an exponent: the text is really a decimal, "2.5" or "1e3"
             if (*end == '.' || *end == 'e' || *end == 'E') {
                 // a decimal: read it as one, then cut it down

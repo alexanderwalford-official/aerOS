@@ -62,6 +62,25 @@ See [Accounts and encryption](security.md).
 | `pw` | change your password |
 | `out` | log out, back to the login screen |
 
+### Your startup commands
+
+`startup.txt` in your home folder runs each time you log in, a line at a time, as if you had
+typed each line at the prompt: commands, apps and AerLang all work. `edt startup.txt` changes it.
+A new account starts with an example in it, all of it `#` comments, so nothing runs until you
+take a `#` off:
+
+```
+# startup.txt
+fw web packages.intercon.network 80
+update check
+bg webserve 8080 /docs/
+desktop
+```
+
+Ctrl+C stops it if something goes wrong. It can't restart, shut down or log out (`rbt`, `off`
+and `out` lines are skipped: they would happen again at every login), and no program can
+change it, however you have [answered](perms.md): only you, at the prompt.
+
 ## Programs
 
 | Command | Does |
@@ -112,11 +131,28 @@ The first time, let AerOS reach the server: `fw web packages.intercon.network 80
 | `webserve` | a web server: show a folder to web browsers ([network](network.md)) |
 | `bench` | how fast the disk is |
 | `anim` | the animations AerLang can draw |
+| `desktop` | a desktop with windows: a clock, files, notes, a calculator and more (from the CD, for its graphics screen) |
 
 A package is its program, `/apps/<name>.aer`, and a folder of its own, `/apps/<name>/`, for the
 files it comes with (the viewer's pictures) and what it keeps there (Snake's high scores). It
 may read its own folder without asking.
 | `pm` | show the process stack |
+
+## Updating aerOS
+
+On a disk aerOS was installed on (`install`), `update` gets a newer aerOS from the same server
+as the packages. It shows the one you have and the newer one, asks, downloads it, and asks
+once more, with your password, before it changes anything. `rbt` then starts the new one, and
+if it doesn't start, the next restart goes back to the one before by itself.
+
+| Command | Does |
+| --- | --- |
+| `update` | check, show, ask and update |
+| `update check` | say in one line if there is a newer aerOS, and nothing if there isn't |
+
+`update check` stays quiet when it can't tell (no network, or not installed), so it is made
+for your startup commands (above): put it in `startup.txt` to hear about
+updates each time you log in.
 
 ## Sound and screen
 

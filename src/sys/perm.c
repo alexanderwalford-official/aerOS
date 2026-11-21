@@ -4,7 +4,9 @@
     perm_allows() goes through the rules in order, and stops at the first that decides:
 
         1. no program running (the terminal, code at the prompt)     allowed
-        2. /acc/ (the accounts), or changing AerOS's log             refused
+        2. /acc/ (the accounts), or changing AerOS's log, anyone's
+           startup.txt (sys/startup.h), or /boot/ and /grubenv
+           (what starts AerOS, sys/update.h)                         refused
         3. reading the system's files, the program's own (its folder,
            and the folder named after it next to it), or a file
            named after it on the command line                        allowed
@@ -33,6 +35,9 @@
 #include "trace.h"
 #include "syslog.h"
 #include "thread.h"
+#include "startup.h"
+#include "update.h"
+#include "grubenv.h"
 #include "../lib/aer_stdlib.h"
 
 #define PERM_FILE_FOLDER "/acc/"
@@ -457,6 +462,22 @@ bool perm_allows (const char* folder, const char* name, perm_kind_t kind) {
         return false;
     }
     // ...and AerOS's log can be read (rule 3) but never changed, so there's nothing to ask
+    // ...nor someone's startup.txt: its lines run as if typed at the prompt, where nothing asks,
+    // so a program that could write one could do anything at the next login (sys/startup.h)
+    if (kind == PERM_CHANGE && startup_is_the_file(folder, name)) {
+        TRACE("%s may not change %s%s: its lines run at the next login with the prompt's rights, "
+              "so only you change it, at the prompt", perm_running->name, folder, name);
+        return false;
+    }
+    // ...nor AerOS itself, in /boot/ on an installed disk, or GRUB's settings: only the update
+    // built-in changes those, and only with a signed, newer AerOS (sys/update.h)
+    bool is_boot = strncasecmp(folder, UPDATE_FOLDER, slen(UPDATE_FOLDER)) == 0 ||
+                   (strcasecmp(folder, GRUBENV_FOLDER) == 0 && strcasecmp(name, GRUBENV_FILE) == 0);
+    if (kind == PERM_CHANGE && is_boot) {
+        TRACE("%s may not change %s%s: it is what starts AerOS (osupdate() updates it)",
+              perm_running->name, folder, name);
+        return false;
+    }
     bool is_log = strcasecmp(folder, SYSLOG_FOLDER) == 0 && strcasecmp(name, SYSLOG_FILE) == 0;
     if (kind == PERM_CHANGE && is_log) {
         TRACE("%s may not change %s%s: only AerOS adds to its log (dbopen(path, \"read\") reads it)",

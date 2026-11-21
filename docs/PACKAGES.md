@@ -35,6 +35,7 @@ AerOS fetches over plain HTTP (`src/sys/http.h`), which is all it can do.
 | `/index.sig` | the signature of `index.txt` itself: 128 hex digits, no line break |
 | `/packages/<name>.aer` | each package's program |
 | `/packages/<name>/<file>` | the files a package comes with |
+| `/os/main.elf` | the newest AerOS, for installed disks to [update](UPDATING.md) to |
 
 The index looks like this:
 
@@ -50,11 +51,12 @@ viewer 1.0 41d0e2a7...90c1 A picture viewer (BMP), with two pictures to try it o
 #file viewer colours.bmp 03aa5c8d...e771
       ^      ^         ^
       the package, the file, and the signature of packages/viewer/aeros.bmp
+#os 20261204183000 5c0a9e71...d2b8 0.02 ALPHA
 ```
 
 Lines starting with `#` are comments, except two kinds that `pkg` reads: `#serial` (below) and
 `#file`, one for each file a package comes with. (They start with `#` so an older `pkg`, which
-doesn't know about them, skips them.) A name is 1 to 8 of `a-z 0-9 _ -`, as it becomes
+doesn't know about them, skips them.) `#os` is AerOS itself, for [updating](UPDATING.md). A name is 1 to 8 of `a-z 0-9 _ -`, as it becomes
 `/apps/<name>.aer` on AerOS's disk. The whole index is plain ASCII.
 
 **The serial.** Every publish gives the index the next number on its `#serial` line. That line
@@ -89,13 +91,14 @@ computer and in AerOS:
   program. `pkg update` writes the new version's files over the old ones, and leaves anything
   else in the folder alone.
 
-Any file AerOS can fetch will do (up to 4 MB, `HTTP_BODY_MAX` in `src/sys/http.h`): `wrf()`
+Any file AerOS can fetch will do (up to 16 MB, `HTTP_BODY_MAX` in `src/sys/http.h`): `wrf()`
 writes every byte of what `httpget()` gave, zeros and all.
 
 ## The packages
 
-The repository's `packages/` folder holds the packages that used to be built in, ready to
-publish, with `packages/packages.txt` listing each one's version and description:
+The repository's `packages/` folder holds the packages that used to be built in, and newer ones
+like the desktop, ready to publish, with `packages/packages.txt` listing each one's version and
+description:
 
 | Package | What it is | Comes with |
 | --- | --- | --- |
@@ -108,6 +111,7 @@ publish, with `packages/packages.txt` listing each one's version and description
 | `webserve` | a small web server, in AerLang (see [the network](NETWORK.md)) | |
 | `bench` | how fast AerOS reads and writes its disk | |
 | `anim` | spinners, progress bars and moving text | |
+| `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, System and About, by mouse or keyboard | |
 
 The tests don't need the server for them: `t.package('snake')` puts one on a test's disk the
 way `pkg install` would (`tools/test/run.py`).
@@ -161,6 +165,12 @@ To take one off:
 
 ```
 python3 tools/aerpkg.py unpublish chess
+```
+
+To publish a new AerOS, for installed disks to [update](UPDATING.md) to:
+
+```
+python3 tools/aerpkg.py publish-os src/main.elf
 ```
 
 Each one fetches the index the server has now, checks it is signed by your key, changes that
@@ -246,7 +256,9 @@ Then publish from your computer as above: the first publish starts a new index a
 database's `publishes` table keeps a line for every publish.
 
 To update the server, copy the new `server.py` to `/opt/aerpkg/` and
-`sudo systemctl restart aerpkg`. Back up `/var/lib/aerpkg/packages.db` now and then: it is
+`sudo systemctl restart aerpkg`. If `nginx.conf` changed too (its `client_max_body_size` must be
+at least `server.py`'s `UPLOAD_MAX`: 24 MB), copy it to `/etc/nginx/sites-available/packages`
+and `sudo nginx -t && sudo systemctl reload nginx`. Back up `/var/lib/aerpkg/packages.db` now and then: it is
 everything that is published (though it can always be published again from your computer).
 
 ## In AerOS

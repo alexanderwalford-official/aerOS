@@ -28,6 +28,8 @@
 
 #include "boot.h"
 #include "../drivers/video/VGA_linear.h"
+#include "../drivers/video/bga.h"
+#include "../drivers/pci/pci.h"
 #include "../drivers/input/IO.h"
 #include "../lib/aer_stdlib.h"
 #include "../lib/aer_stdio.h"
@@ -42,6 +44,8 @@
 #include "rt.h"
 #include "thread.h"
 #include "syslog.h"
+#include "grubenv.h"
+#include "update.h"
 #include "../lib/primary_definitions.h"
 #include <stdarg.h>
 
@@ -112,6 +116,20 @@ uint32_t boot_kernel_file_size = 0;
 // the memory the modules are in, from the first byte of the lowest to the end of the highest
 // (0 and 0 with none): the heap is kept out of it, so it never hands their memory out
 static uint64_t modules_start = 0, modules_end = 0;
+
+// Outside demo mode nothing can use the copy of main.elf (only the installer does, and only
+// in demo mode: sys/install.h), so its memory joins the heap. Called once the boot options
+// have been chosen. (QEMU, or the computer, still had to hold it while GRUB loaded it: this
+// makes the room usable, it can't make that undone)
+static void give_back_kernel_file (void) {
+    if (boot_kernel_file == NULL || boot_option == BOOT_OPT_DEMO || modules_end <= modules_start) {
+        return;
+    }
+    heap_add_region((void*)(uintptr_t)modules_start, (size_t)(modules_end - modules_start));
+    boot_heap_extra_kb += (uint32_t)((modules_end - modules_start) / 1024);
+    boot_kernel_file = NULL;
+    boot_kernel_file_size = 0;
+}
 
 // Find the module GRUB loaded (the first one: grub.cfg only loads main.elf). It stays where GRUB
 // put it, usually just after the kernel, which is memory the heap would otherwise take: so only
@@ -244,6 +262,16 @@ void boot_parse_multiboot (uint32_t magic, uint32_t info_addr) {
         boot_has_word((const char*)(uintptr_t)info->cmdline, "demo")) {
         boot_option = BOOT_OPT_DEMO;
     }
+    // ...and the disk's GRUB menu says "trial" when it starts a new AerOS for the first time, or
+    // "fallback" when it starts the one from before instead, as the new one didn't start
+    // (sys/update.h, src/install/grub.cfg)
+    if ((info->flags & MULTIBOOT_INFO_CMDLINE) && info->cmdline != 0) {
+        if (boot_has_word((const char*)(uintptr_t)info->cmdline, "trial")) {
+            update_start = UPDATE_START_TRIAL;
+        } else if (boot_has_word((const char*)(uintptr_t)info->cmdline, "fallback")) {
+            update_start = UPDATE_START_FALLBACK;
+        }
+    }
     // the copy of main.elf GRUB loaded for the installer, before the heap is given any memory
     if (info->flags & MULTIBOOT_INFO_MODULES) {
         boot_find_modules(info);
@@ -294,6 +322,58 @@ static void boot_report (const char* tag, const char* source, const char* format
     syslog_add(kind, source, "%s", message);
 }
 
+// Put the resolution chosen with RES (saved as /grubenv, see cli_resolution) back, if GRUB
+// couldn't. GRUB sets modes through the firmware (VBE), which only knows a fixed list of sizes:
+// VirtualBox's has no 1920x1080, for one, so GRUB falls back to 1024x768 (grub.cfg). The Bochs
+// Graphics Adapter, which VirtualBox has too, can do any size, so it is asked for the saved one
+static void restore_resolution (void) {
+    vga_framebuffer_t screen;
+    char mode[32];
+    if (!bga_available() || !vga_framebuffer_info(&screen) || !grubenv_get("aeros_mode", mode, sizeof(mode))) {
+        return;
+    }
+    // RES saves it as "1920x1080x32": the number before the first x is the width, and the one
+    // after it the height
+    unsigned long width = 0, height = 0;
+    char* end;
+    width = strtoul(mode, &end, 10);
+    if (*end == 'x') {
+        height = strtoul(end + 1, NULL, 10);
+    }
+
+    // nothing to do if it is already that size (GRUB managed it), or the line made no sense
+    if (width == 0 || height == 0 || (width == screen.width && height == screen.height)) {
+        return;
+    }
+    // the card may round the size (QEMU's makes the width a multiple of 8), so the line says
+    // what it really is now
+    vga_framebuffer_t now;
+    if (bga_set_mode((uint32_t)width, (uint32_t)height) && vga_framebuffer_info(&now)) {
+        boot_report("[ OK ]", "screen", "Screen: %ux%u, the size saved with RES (the firmware started at %ux%u)",
+                    now.width, now.height, screen.width, screen.height);
+    } else {
+        boot_report("[WARN]", "screen", "Screen: couldn't change to the %lux%lu saved with RES, staying at %ux%u",
+                    width, height, screen.width, screen.height);
+    }
+}
+
+// The boot log line when there is no network card AerOS can use. If there is a network card
+// AerOS has no driver for, it says which, and for VirtualBox's usual one (an AMD PCnet) what to
+// change instead
+static void report_no_network (void) {
+    pci_device_t card;
+    // PCI class 2, subclass 0: an Ethernet card
+    if (!pci_find_class(0x02, 0x00, &card)) {
+        boot_report("[INFO]", "network", "No network card found (AerOS supports the Intel e1000)");
+    } else if (card.vendor == 0x1022 && card.device == 0x2000) {
+        // 0x1022 is AMD, and 0x2000 its PCnet cards (VirtualBox's PCnet-PCI II and PCnet-FAST III)
+        boot_report("[INFO]", "network", "AMD PCnet network card: no driver. In VirtualBox, pick Intel PRO/1000 MT Desktop");
+    } else {
+        boot_report("[INFO]", "network", "Network card %04x:%04x has no driver (AerOS supports the Intel e1000)",
+                    card.vendor, card.device);
+    }
+}
+
 // the boot log
 // shows whether each part of kernel.c's hardware setup worked, starts the file system and waits
 // BOOT_LOG_DELAY ms so it can be read (skipped on fast boot). Each line also goes in AerOS's
@@ -304,6 +384,8 @@ int init_boot (void) {
     console_clear();
 
     prtf("[E:b1f1] AerOS boot sequence started\n\n");
+    // the boot options are chosen by now: the installer's copy of AerOS is only kept for demo mode
+    give_back_kernel_file();
     syslog_add("boot", "aeros", "AerOS %s started", AEROS_VERSION);
 
     // each driver sets its *_ready flag at the end of its init function in kernel.c, so a [FAIL]
@@ -346,7 +428,7 @@ int init_boot (void) {
     if (net_init()) {
         boot_report("[ OK ]", "network", "Network: %s, firewall on", net_card_name());
     } else {
-        boot_report("[INFO]", "network", "No network card found (AerOS supports the Intel e1000)");
+        report_no_network();
     }
     prtf("\n");
     // RT mode (picked in the boot options): the real-time tasks start ticking from here
@@ -366,6 +448,16 @@ int init_boot (void) {
         syslog_add("boot", "disk", "demo mode: the disks aren't used, files are kept in memory");
     } else {
         syslog_add("boot", "disk", "no AEROS disk found: files only last until the computer is turned off");
+    }
+    // the resolution saved with RES is on the disk, so this has to wait for the file system
+    restore_resolution();
+    // the first start after an update: it worked, or (if this is the AerOS from before) it didn't
+    char said[128];
+    int update = update_after_boot(said, sizeof(said));
+    if (update == UPDATE_WORKED) {
+        boot_report("[ OK ]", "update", "%s", said);
+    } else if (update == UPDATE_WENT_BACK) {
+        boot_report("[WARN]", "update", "%s", said);
     }
 
     // the apps that come with AerOS, copied into /bin/ unless they are already there

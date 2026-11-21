@@ -81,6 +81,7 @@
 #include "../syslog.h"
 #include "../disk_cache.h"
 #include "../jobs.h"
+#include "../startup.h"
 
 
 // true once the terminal has started. compile() (lib/aer_comp.c) checks it so it never starts
@@ -239,6 +240,8 @@ int cli_init (int ask_login) {
         cli_logged_in = true;
         aer_shell_start(); // the prompt's own AerLang variables, kept until logging out
         cli_rend_main();
+        // the user's own commands for each login, if they have a startup.txt (sys/startup.h)
+        startup_run();
 
         while (cli_active && cli_logged_in) {
             // anything added to AerOS's log since the last prompt (by a command, or a

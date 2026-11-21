@@ -55,6 +55,45 @@ computer QEMU runs on is `10.0.2.2`, and passes UDP port 5001 there on to AerOS'
 the script), then `MSG 10.0.2.2 5000 hello` reaches `listen 5000`, and `send 127.0.0.1 5001`
 reaches `LSN 5000`.
 
+## Network cards
+
+AerOS has one network driver, for the Intel PRO/1000 ("e1000") family. It looks for these on
+the PCI bus as it starts (`is_e1000` in `drivers/net/e1000.c`); for what AerOS does with them
+they all work the same way:
+
+| PCI id | Card | Where | Tried |
+| --- | --- | --- | --- |
+| 8086:100E | 82540EM | QEMU's `e1000` (`make run`), VirtualBox's **Intel PRO/1000 MT Desktop** | QEMU, VirtualBox |
+| 8086:100F | 82545EM | QEMU's `e1000-82545em`, VirtualBox's **Intel PRO/1000 MT Server** | QEMU, VirtualBox |
+| 8086:1004 | 82543GC | VirtualBox's **Intel PRO/1000 T Server** | VirtualBox |
+
+`NET` names the card it found (`Intel e1000 100f (PCI 00:11.0), link up`), and so does the
+boot log. If there is a network card AerOS has no driver for, the boot log says which instead:
+
+```
+[INFO] AMD PCnet network card: no driver. In VirtualBox, pick Intel PRO/1000 MT Desktop
+[INFO] Network card 10ec:8139 has no driver (AerOS supports the Intel e1000)
+```
+
+### VirtualBox
+
+A new VirtualBox machine of type "Other" gets a **PCnet-FAST III** (AMD Am79C973, PCI id
+1022:2000), which AerOS can't use. In Settings, Network, Adapter 1, Advanced, set **Adapter
+Type** to **Intel PRO/1000 MT Desktop** (either server one works too). Then for "Attached to":
+
+| Attached to | Works | AerOS's address |
+| --- | --- | --- |
+| **NAT** | out of the box | VirtualBox's NAT is the same as QEMU's: AerOS's usual `10.0.2.15`, gateway `10.0.2.2`, DNS `10.0.2.3` are right. Connections in need a port forwarding rule (Advanced, Port Forwarding) |
+| **Bridged Adapter** | once AerOS has an address on your network | AerOS has no DHCP (see "What isn't sealed"), so set a free address on your network yourself, e.g. `NET IP 192.168.1.50/24 192.168.1.1 192.168.1.1` |
+
+**Is a PCnet driver worth writing?** Not for now. VirtualBox offers three Intel cards that work,
+QEMU's default is the e1000, and real PCnet cards are from the 1990s, so a PCnet driver would
+only save changing one setting. It would be a second driver of about the e1000's size: the card
+is set up through registers behind I/O ports (CSRs and BCRs) and an "initialisation block" in
+memory, with its own ring layout. If one is ever written, `net.c` only needs a second set of
+the functions it calls now (`e1000_init`, `_stop`, `_send`, `_receive`, `_mac`, `_name`,
+`_link_up`) to choose between.
+
 ## The firewall
 
 A rule is an address (or a DNS name, looked up once when the rule is made), a port, and the key
@@ -217,7 +256,9 @@ have allowed it (in the background, only with an "always").
 the answer apart: the status line, the headers (`Content-Type`, `Content-Length`,
 `Transfer-Encoding`, `Location`), and the body, put back together first if it was chunked.
 Redirects (301, 302, 303, 307, 308) to another `http://` address are followed up to 5 times.
-Pages are limited to 4 MB.
+Pages are limited to 16 MB (`HTTP_BODY_MAX`). The answer is read into a buffer that doubles as
+it fills, and the body is then moved to its start and the buffer shrunk to fit, so a big page
+never needs room for two copies of itself.
 
 There is no TLS, so `https://` is turned away with a clear message, and a page can be read or
 changed on the way. That is the right trade for things that are checked once they arrive (a

@@ -101,7 +101,7 @@ orange, also called `BROWN`), `BRIGHT`, `DARK_GRAY`, `LIGHT_BLUE`, `LIGHT_GREEN`
 `KEY_DOWN`, `KEY_LEFT`, `KEY_RIGHT`, `KEY_HOME`, `KEY_END`, `KEY_PGUP`, `KEY_PGDN`,
 `KEY_DELETE`, `KEY_ENTER`, `KEY_BACKSPACE`, `KEY_TAB`, `KEY_ESCAPE`.
 
-**Text:** `len(x)`, `str(x)`, `int("42")` (nil if not a number), `chr(65)`, `ord("A")`,
+**Text:** `len(x)`, `str(x)`, `int("42")` (nil if not a number; `"08"` is 8, `"0x1F"` is hex), `chr(65)`, `ord("A")`,
 `sub(s, start, count)`, `find(s, part)` (-1 if missing), `upper(s)`, `lower(s)`,
 `split(s, sep)`, `join(list, sep)`.
 
@@ -135,7 +135,9 @@ The names are built like the terminal's commands: `rd` read, `wr` write, `ap` ap
 (adds to [AerOS's log](logs.md)), `logclear()` (clears it, after asking you),
 `setlogging(on)` and `islogging()` (turn it off or on, after asking), `exit()`.
 `disks()` lists the hard disks, and `install(number)` erases one and installs AerOS on it
-(only in demo mode, after asking you).
+(only in demo mode, after asking you). `osbuild()` and `osversion()` say which AerOS this is,
+and `osupdate(kernel, signature)` puts a newer one on an installed disk, to start next time:
+only one signed by AerOS's makers, after asking you (`osupdatable()` says if it can).
 `args` is the list of words typed after the program's name.
 `sysinfo()` gives everything AerOS knows about the computer as a list of
 `[group, name, value]`, e.g. `["Processor", "Speed", "about 2400 MHz"]`.

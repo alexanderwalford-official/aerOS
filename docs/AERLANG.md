@@ -191,7 +191,8 @@ the mouse copies to at the prompt, sys/clipboard.h) ·
 `PI` (3.14159...)
 
 **Text**
-`len(x)` · `str(x)` · `int("42")` (nil if it isn't a number) · `chr(65)` · `ord("A")` ·
+`len(x)` · `str(x)` · `int("42")` (nil if it isn't a number; read as a number in a program is,
+so `"0x1F"` is hex and `"08"` is 8) · `chr(65)` · `ord("A")` ·
 `sub(s, start, count)` · `find(s, part)` (-1 if missing) · `upper(s)` · `lower(s)` ·
 `split(s, sep)` (spaces if no separator) · `join(list, sep)`
 
@@ -295,7 +296,12 @@ or `queue("s:some text")`; returns how many are queued (-1 if the process stack 
 rows, e.g. `["Processor", "Speed", "about 2400 MHz"]` (`/bin/sysinfo.aer` shows them) ·
 `disks()` the hard disks there are, as `[number, model, megabytes, what is on it]` ·
 `install(number)` erase that disk and install AerOS on it: only in demo mode, and only after
-AerOS has asked you itself (see [installing](INSTALLING.md))
+AerOS has asked you itself (see [installing](INSTALLING.md)) ·
+`osbuild()` this AerOS's build number, `"20261204183000"` · `osversion()` its version,
+`"0.01 ALPHA"` · `osupdatable()` can it be updated here (installed on a disk)? `false` after
+saying why not (`osupdatable(false)`: without saying) · `osupdate(kernel, signature)` put a new AerOS on the disk, to start next time:
+only one signed by AerOS's makers and newer than the one there, and only after AerOS has asked
+you itself (see [updating](UPDATING.md))
 
 `args` is the list of words typed after the program's name.
 

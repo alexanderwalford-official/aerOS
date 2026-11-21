@@ -111,13 +111,16 @@ static int read_answer (int connection, char** answer, size_t* length) {
         return HTTP_ERR_TOO_BIG;
     }
     for (;;) {
-        // room for another TCP buffer's worth: double the buffer when it runs short
+        // room for another TCP buffer's worth: double the buffer when it runs short, up to
+        // ANSWER_MAX (and one TCP buffer more, so an answer of exactly ANSWER_MAX still fits).
+        // An answer that fills even that is too big
         if (size - have < TCP_BUFFER) {
-            if (size >= ANSWER_MAX) {
+            size_t largest = ANSWER_MAX + TCP_BUFFER;
+            if (size >= largest) {
                 free(buffer);
                 return HTTP_ERR_TOO_BIG;
             }
-            size *= 2;
+            size = size * 2 < largest ? size * 2 : largest;
             char* bigger = realloc(buffer, size + 1);
             if (bigger == NULL) {
                 free(buffer);
@@ -134,6 +137,10 @@ static int read_answer (int connection, char** answer, size_t* length) {
             return got;
         }
         have += (size_t)got;
+        if (have > ANSWER_MAX) {
+            free(buffer);
+            return HTTP_ERR_TOO_BIG;
+        }
     }
     buffer[have] = '\0';
     *answer = buffer;
@@ -306,16 +313,18 @@ static int fetch_once (const url_t* url, http_response_t* out, char* location, s
         body_length = promised;
     }
 
-    // the body gets a buffer of its own, so the rest of the answer can go
-    out->body = malloc(body_length + 1);
-    if (out->body == NULL) {
+    if (body_length > HTTP_BODY_MAX) {
         free(answer);
         return HTTP_ERR_TOO_BIG;
     }
-    memcpy(out->body, body, body_length);
-    out->body[body_length] = '\0';
+    // The body is moved to the start of the answer's own buffer, which then shrinks to fit it
+    // (realloc), rather than copied into a new one: a 16 MB download then never needs room for
+    // two copies of itself at once
+    memmove(answer, body, body_length);
+    answer[body_length] = '\0';
+    char* fitted = realloc(answer, body_length + 1);
+    out->body = fitted != NULL ? fitted : answer;
     out->length = body_length;
-    free(answer);
     TRACE("%s answered %d %s, %u bytes", url->host, out->status, out->reason, (unsigned int)body_length);
     return NET_OK;
 }
@@ -377,7 +386,7 @@ const char* http_strerror (int error) {
         case HTTP_ERR_URL:        return "that isn't an http:// address (e.g. http://example.com/page)";
         case HTTP_ERR_HTTPS:      return "AerOS can't do HTTPS yet: try the http:// address";
         case HTTP_ERR_BAD_ANSWER: return "the server's answer didn't make sense, or was cut short";
-        case HTTP_ERR_TOO_BIG:    return "it is bigger than AerOS will fetch (4 MB)";
+        case HTTP_ERR_TOO_BIG:    return "it is bigger than AerOS will fetch (16 MB)";
         case HTTP_ERR_REDIRECTS:  return "the page moved too many times";
         default:                  return net_strerror(error);
     }

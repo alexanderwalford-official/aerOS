@@ -4,8 +4,9 @@
     what AerOS knows about the computer (sysinfo), queueing programs for GO (queue), running a
     terminal command from the prompt (cmd), what app mode did (appmode), adding to AerOS's log
     (logadd), clearing it or turning it off after asking (logclear, setlogging, islogging),
-    the disks there are and installing AerOS on one (disks, install: see sys/install.h) and
-    ending the program (exit).
+    the disks there are and installing AerOS on one (disks, install: see sys/install.h),
+    updating AerOS on an installed disk (osbuild, osversion, osupdatable, osupdate: see
+    sys/update.h) and ending the program (exit).
 
     Which built-ins need which part of AerOS, for app mode, is listed next to aer_profile in
     aer_builtins.c.
@@ -30,6 +31,7 @@
 #include "../sys/f_sys.h"
 #include "../sys/accounts/auth.h"
 #include "../sys/install.h"
+#include "../sys/update.h"
 #include "../sys/boot.h"
 #include "../lib/crypto.h"
 #include "../drivers/video/gfx.h"
@@ -353,6 +355,85 @@ value_t bi_install (int argc, value_t* argv, int line) {
         return aer_bool(false);
     }
     syslog_add("boot", "install", "AerOS was installed on disk %d (%s) with %s", disk->number, disk->model, with);
+    return aer_bool(true);
+}
+
+// ---- updating AerOS: osbuild(), osversion(), osupdatable() and osupdate() (sys/update.h) -----
+
+// osbuild(): this AerOS's build number, the time it was built: "20261204183000" (UTC, year
+// first, so a later build is a bigger number, and comparing them as text works too)
+value_t bi_osbuild (int argc, value_t* argv, int line) {
+    (void)argc; (void)argv; (void)line;
+    const char* build = update_build();
+    return aer_string(build, (uint32_t)slen(build));
+}
+
+// osversion(): this AerOS's version, "0.01 ALPHA"
+value_t bi_osversion (int argc, value_t* argv, int line) {
+    (void)argc; (void)argv; (void)line;
+    const char* version = update_version();
+    return aer_string(version, (uint32_t)slen(version));
+}
+
+// osupdatable(say): can AerOS be updated here? true if so (it was installed on a disk, and started
+// from it), or false after saying why not. osupdatable(false) doesn't say why: for checking
+// quietly, as "update check" does at each login (from startup.txt)
+value_t bi_osupdatable (int argc, value_t* argv, int line) {
+    bool say = true;
+    if (argc == 1) {
+        if (argv[0].type != V_BOOL) {
+            aer_error(line, "osupdatable() takes true (say why not, as it does with nothing) or false (don't)");
+        }
+        say = argv[0].as.i != 0;
+    }
+    const char* why_not = update_unavailable();
+    if (why_not != NULL) {
+        if (say) {
+            prtf("[ ! ] %s\n", why_not);
+        }
+        return aer_bool(false);
+    }
+    return aer_bool(true);
+}
+
+// osupdate(kernel, signature): put a new AerOS (a main.elf, as bytes or text, and its signature
+// as 128 hex digits) on the disk, to start next time. AerOS checks it first, itself: signed by
+// AerOS's makers, newer than the AerOS on the disk, and a kernel GRUB can start (sys/update.h).
+// Then it asks the person at the keyboard (person_agrees, as install() does), so a program can
+// never update AerOS on its own. Gives back true if it is in place, false after saying why not
+value_t bi_osupdate (int argc, value_t* argv, int line) {
+    (void)argc;
+    value_t kernel = argv[0];
+    if (kernel.type != V_STR && kernel.type != V_BYTES) {
+        aer_error(line, "osupdate() needs the new AerOS as bytes (httpget gives them), not a %s",
+                  aer_type_name(kernel));
+    }
+    const char* signature = str_arg(argv, 1, line, "osupdate")->data.chars;
+    const uint8_t* data = kernel.type == V_STR ? (const uint8_t*)kernel.as.obj->data.chars
+                                               : (const uint8_t*)kernel.as.obj->data.bytes;
+    uint32_t size = kernel.as.obj->length;
+
+    // everything checked before asking: there is no point saying yes to one that won't be used
+    char new_build[UPDATE_BUILD_DIGITS + 1], old_build[UPDATE_BUILD_DIGITS + 1];
+    const char* wrong = update_check(data, size, signature, new_build, old_build);
+    if (wrong != NULL) {
+        prtf("[ ! ] %s\n", wrong);
+        return aer_bool(false);
+    }
+    // (short, so with a program's name in front it still fits on one row of the screen)
+    char detail[32];
+    sfmt(detail, sizeof(detail), " %s", new_build);
+    char with[FS_NAME_MAX];
+    if (!person_agrees(line, "osupdate", "update AerOS to build", detail, with, sizeof(with))) {
+        prtf("Nothing was changed.\n");
+        return aer_bool(false);
+    }
+    const char* problem = update_install(data, size, signature);
+    if (problem != NULL) {
+        prtf("[ ! ] %s\n", problem);
+        return aer_bool(false);
+    }
+    syslog_add("boot", "update", "%s updated AerOS to build %s, to start next time", with, new_build);
     return aer_bool(true);
 }
 

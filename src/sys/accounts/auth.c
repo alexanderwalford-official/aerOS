@@ -46,6 +46,7 @@
 #include "../sys_clck.h"
 #include "../ui.h"
 #include "../rt.h"
+#include "../startup.h"
 
 #define ACCOUNTS_FOLDER  "/acc/"
 #define ACCOUNTS_FILE    "users"
@@ -261,7 +262,10 @@ static void make_home (const char* name) {
         fs_create_d(HOMES_FOLDER, "home folders");
     }
     if (!fs_dir_exists(home)) {
-        fs_create_d(home, name);
+        // a new home folder: with an example startup.txt in it (sys/startup.h), all comments
+        if (fs_create_d(home, name) == FS_OK) {
+            startup_make_example(home);
+        }
     }
 }
 

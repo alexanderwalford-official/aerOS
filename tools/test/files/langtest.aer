@@ -107,6 +107,13 @@ check("decimal str", str(2.5), "2.5")
 check("floor", floor(-2.5), -3)
 check("round", round(2.5), 3)
 check("int cuts off", int(-2.7), -2)
+# text is read the way numbers in a program are: 0x is hex, a leading 0 is still decimal
+check("int of text", int("42"), 42)
+check("int of a leading 0", int("08"), 8)
+check("int of 010 is ten", int("010"), 10)
+check("int of hex", int("0x1F"), 31)
+check("int of a negative", int(" -07 "), -7)
+check("int of no number", int("abc"), nil)
 check("sqrt", sqrt(16.0), 4.0)
 check("mixed compare", 3 < 3.5, true)
 

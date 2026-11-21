@@ -197,8 +197,9 @@ static const explanation_t explanations[PROBLEM_COUNT] = {
         "AerOS has a driver for the Intel e1000 (drivers/net/e1000.c): the card QEMU gives a PC "
         "unless told otherwise, and one VirtualBox can pretend to be. It is looked for on the "
         "PCI bus as AerOS starts.",
-        "In QEMU, add one: -nic user,model=e1000 (make run does). In VirtualBox, pick an Intel "
-        "PRO/1000 adapter.",
+        "In QEMU, add one: -nic user,model=e1000 (make run does). In VirtualBox, set the "
+        "adapter type (Settings, Network, Advanced) to Intel PRO/1000 MT Desktop: its usual "
+        "PCnet-FAST III has no driver in AerOS.",
         "e1000_init", NULL,
     },
     [PROBLEM_BLOCKED] = {

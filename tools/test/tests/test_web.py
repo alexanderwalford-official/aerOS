@@ -12,6 +12,10 @@ from aeros import GUEST_PROMPT, free_port
 HELLO = b'Hello from the web!\n'
 # big enough to need many TCP segments, and several fills of AerOS's 16 KB buffer
 BIG = b''.join(b'line %05d of the big file\n' % i for i in range(8000))
+# more than the 4 MB AerOS used to fetch at most (6 MB, 32 bytes a line), and more than the 16 MB
+# it fetches now (src/sys/http.h)
+HUGE = b''.join(b'line %07d of the huge file..\n' % i for i in range(6 * 1024 * 1024 // 32))
+TOO_BIG = b'x' * (17 * 1024 * 1024)
 
 
 class Pages(http.server.BaseHTTPRequestHandler):
@@ -33,6 +37,10 @@ class Pages(http.server.BaseHTTPRequestHandler):
             self.send(200, HELLO)
         elif self.path == '/big.txt':
             self.send(200, BIG)
+        elif self.path == '/huge.txt':
+            self.send(200, HUGE)
+        elif self.path == '/toobig.txt':
+            self.send(200, TOO_BIG)
         elif self.path == '/moved':
             self.send(302, b'', headers=[('Location', '/hello.txt')])
         elif self.path == '/chunked':
@@ -89,6 +97,20 @@ def test_get_and_httpget(t):
         aeros.run('let lines = split(rdf("big.txt"), chr(10))')
         aeros.run('print(lines[4000], lines[7999])')
         aeros.expect_line('line 04000 of the big file line 07999 of the big file')
+
+        # bigger than the old 4 MB limit, every byte of it; but not more than 16 MB
+        aeros.cls()
+        aeros.run(f'let huge = httpget("{site}/huge.txt")', timeout=180)
+        aeros.run('print(len(huge))')
+        aeros.expect_line(str(len(HUGE)))
+        aeros.run('print(sub(huge, 100000 * 32, 31))')
+        aeros.expect_line('line 0100000 of the huge file..')
+        aeros.run('print(sub(huge, len(huge) - 32, 31))')
+        aeros.expect_line('line %07d of the huge file..' % (len(HUGE) // 32 - 1))
+        aeros.cls()
+        aeros.run(f'get {site}/toobig.txt', timeout=180)
+        # (the message is wider than the screen: "(16 MB)" wraps onto the next row)
+        aeros.expect('it is bigger than AerOS will fetch', '(16 MB)')
 
         # in pieces, moved somewhere else, and not there at all
         aeros.cls()

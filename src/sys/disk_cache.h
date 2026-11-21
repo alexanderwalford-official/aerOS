@@ -35,6 +35,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 // how many sectors it keeps: 8192 of 512 bytes = 4 MB (fewer if there isn't the memory)
 #define DISK_CACHE_SECTORS 8192
@@ -66,6 +67,12 @@ bool disk_cache_read (int bus, int slave, uint32_t lba, uint32_t count, void* bu
 // Write count sectors from buffer to lba: they are kept, waiting, and written later (see the top
 // of this file). A drive the cache isn't for is written directly. False on a drive error
 bool disk_cache_write (int bus, int slave, uint32_t lba, uint32_t count, const void* buffer);
+
+// Give the cache's memory back (about 4 MB) while nothing needs the disk: app mode does this for
+// a program that uses no files (sys/appmode.h). Everything waiting is written first, and if any
+// of it can't be, nothing is given back. The next read or write of the drive makes the cache
+// again, empty. Returns how many bytes were given back
+size_t disk_cache_rest (void);
 
 // Write every waiting sector to the drive now, then flush the drive once. Cheap when nothing is
 // waiting. False if the drive refused any of it (those stay waiting, to be tried again)

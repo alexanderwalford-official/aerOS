@@ -62,6 +62,8 @@ static const ability_t abilities[] = {
       "asks you first (UNDO brings back files from your home folder)" },
     { "erase a whole disk, to install AerOS on it", { "install", NULL },
       "only in demo mode, and AerOS asks you first" },
+    { "update AerOS itself",              { "osupdate", NULL },
+      "only to a newer AerOS signed by its makers, and AerOS asks you first" },
     { "encrypt or decrypt files",         { "enc", "dec", NULL },
       "asks you first" },
     { "use databases",                    { "dbopen", "dbrun", "dbquery", NULL },

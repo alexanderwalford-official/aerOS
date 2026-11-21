@@ -66,6 +66,8 @@ typedef struct {
 
 static struct {
     bool on;                  // is there a cache? (a drive started, and memory for it)
+    bool resting;             // its memory was given back (disk_cache_rest): the next read or
+                              // write of the drive makes it again
     int bus, slave;           // the drive it is for
     uint32_t count;           // how many slots (a power of two)
     uint32_t mask;            // count - 1: lba & mask is a sector's bucket
@@ -192,14 +194,10 @@ static void disk_writer (void* arg) {
 }
 
 
-// ---- what the rest of AerOS calls (see disk_cache.h) --------------------------------------------
-
-// start caching a drive (see disk_cache.h)
-void disk_cache_start (int bus, int slave) {
-    // anything waiting for a drive used before goes to it first
-    disk_cache_sync();
-
-    // the memory, the first time: as many slots as there is room for, down to FEWEST_SECTORS
+// The memory for the slots, if it isn't there yet: as many as there is room for, down to
+// FEWEST_SECTORS. Also starts the disk writer, the first time. False if there isn't the memory
+static bool make_slots (void) {
+    static bool writer_started = false;
     if (cache.slots == NULL) {
         for (uint32_t count = DISK_CACHE_SECTORS; count >= FEWEST_SECTORS; count /= 2) {
             cache.data = malloc(count * SECTOR_SIZE);
@@ -219,18 +217,22 @@ void disk_cache_start (int bus, int slave) {
         }
         if (cache.slots == NULL) {
             TRACE("not enough memory for a disk cache: the drive is used directly");
-            return;
-        }
-        // and the thread that writes waiting changes while programs run. (Without it, they are
-        // still written on the next read or write after a second, and at every prompt.) Not if
-        // the timer isn't ticking: its sleeps would then be busy waits, half a second each,
-        // with nothing else able to run
-        if (clck_ready) {
-            thread_create("disk writer", disk_writer, NULL, THREAD_STACK_SIZE);
+            return false;
         }
     }
+    // and the thread that writes waiting changes while programs run. (Without it, they are
+    // still written on the next read or write after a second, and at every prompt.) Not if the
+    // timer isn't ticking: its sleeps would then be busy waits, half a second each, with nothing
+    // else able to run. It stays when the cache rests, sleeping, with nothing to do
+    if (!writer_started && clck_ready) {
+        thread_create("disk writer", disk_writer, NULL, THREAD_STACK_SIZE);
+        writer_started = true;
+    }
+    return true;
+}
 
-    // every slot empty, every bucket's chain empty
+// every slot empty, every bucket's chain empty, and the clock hand at the start
+static void empty_slots (void) {
     for (uint32_t i = 0; i < cache.count; i++) {
         cache.slots[i].lba = NONE;
         cache.slots[i].waiting = false;
@@ -239,17 +241,74 @@ void disk_cache_start (int bus, int slave) {
     }
     cache.mask = cache.count - 1;
     cache.hand = 0;
+    cache.stats.held = 0;
+    cache.stats.waiting = 0;
+    cache.stats.sectors = cache.count;
+}
+
+// The cache was resting (disk_cache_rest) and its drive is wanted again: make it again, empty.
+// If there isn't the memory now, it keeps resting and the drive is used directly
+static void wake (void) {
+    if (!make_slots()) {
+        return;
+    }
+    empty_slots();
+    cache.resting = false;
+    cache.on = true;
+    TRACE("the disk cache is back (%u KB), empty: it fills again as the disk is used",
+          (unsigned int)(cache.count / 2));
+}
+
+
+// ---- what the rest of AerOS calls (see disk_cache.h) --------------------------------------------
+
+// start caching a drive (see disk_cache.h)
+void disk_cache_start (int bus, int slave) {
+    // anything waiting for a drive used before goes to it first
+    disk_cache_sync();
+    if (!make_slots()) {
+        return;
+    }
+    memset(&cache.stats, 0, sizeof(cache.stats));
+    empty_slots();
     cache.bus = bus;
     cache.slave = slave;
-    memset(&cache.stats, 0, sizeof(cache.stats));
-    cache.stats.sectors = cache.count;
+    cache.resting = false;
     cache.on = true;
     TRACE("keeping up to %u sectors (%u KB) of the disk in memory", (unsigned int)cache.count,
           (unsigned int)(cache.count / 2));
 }
 
+// give the cache's memory back until its drive is next used (see disk_cache.h)
+size_t disk_cache_rest (void) {
+    if (!cache.on) {
+        return 0;
+    }
+    // everything waiting goes to the disk first: if any of it won't, the cache stays as it is,
+    // as freeing it would lose those changes
+    if (!disk_cache_sync()) {
+        return 0;
+    }
+    size_t bytes = cache.count * (SECTOR_SIZE + sizeof(slot_t) + sizeof(uint32_t));
+    free(cache.data);
+    free(cache.slots);
+    free(cache.buckets);
+    cache.data = NULL;
+    cache.slots = NULL;
+    cache.buckets = NULL;
+    cache.on = false;
+    cache.resting = true;
+    cache.stats.held = 0;
+    TRACE("gave the disk cache's %u KB back: it starts again when the disk is next used",
+          (unsigned int)(bytes / 1024));
+    return bytes;
+}
+
 // read sectors, from memory where they are kept (see disk_cache.h)
 bool disk_cache_read (int bus, int slave, uint32_t lba, uint32_t count, void* buffer) {
+    if (cache.resting && bus == cache.bus && slave == cache.slave) {
+        wake();
+    }
     if (!cache.on || bus != cache.bus || slave != cache.slave) {
         return drive_read(bus, slave, lba, count, buffer);
     }
@@ -286,6 +345,9 @@ bool disk_cache_read (int bus, int slave, uint32_t lba, uint32_t count, void* bu
 
 // write sectors, to be written to the drive later (see disk_cache.h)
 bool disk_cache_write (int bus, int slave, uint32_t lba, uint32_t count, const void* buffer) {
+    if (cache.resting && bus == cache.bus && slave == cache.slave) {
+        wake();
+    }
     if (!cache.on || bus != cache.bus || slave != cache.slave) {
         return drive_write(bus, slave, lba, count, buffer);
     }

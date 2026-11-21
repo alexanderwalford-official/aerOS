@@ -55,8 +55,13 @@ bool bga_set_mode (uint32_t width, uint32_t height) {
     }
     // check the mode fits in the card's memory, when the card says how much it has
     // (4 bytes a pixel; older versions have no such register and read back 0)
+    //
+    // VirtualBox uses register 0xA for something else and answers 1 (its number of screens),
+    // which would read as 64KB. A card always has at least the screen it is showing now, so
+    // an answer smaller than that can't be the memory size, and is ignored like a 0
     uint32_t memory = (uint32_t)bga_read(BGA_REG_VIDEO_64K) * 64 * 1024;
-    if (memory != 0 && width * height * 4 > memory) {
+    bool memory_known = memory >= fb.pitch * fb.height;
+    if (memory_known && width * height * 4 > memory) {
         return false;
     }
 

@@ -5,6 +5,7 @@ The test boots the kernel the way the other text mode tests do, with "demo" on i
 (as picking 3 in the boot options does), and hands it main.elf as a module with QEMU's -initrd,
 the way GRUB on the CD does (iso/boot/grub/grub.cfg)."""
 
+import os
 import subprocess
 import time
 
@@ -136,3 +137,32 @@ def test_install_from_the_cd(t):
     with open(t.repo('src', 'iso', 'boot', 'main.elf'), 'rb') as f:
         if on_partition(disk, '/boot/main.elf') != f.read():
             aeros.fail('/boot/main.elf on the disk is not the main.elf on the CD')
+
+
+def heap_total(aeros):
+    """The kernel heap's size in bytes, from MEM ("Kernel heap: used / total bytes used")."""
+    aeros.cls()
+    aeros.run('mem')
+    line = [l for l in aeros.screen().split('\n') if 'Kernel heap:' in l][0]
+    return int(line.split('/')[1].split()[0])
+
+
+def test_the_copy_is_only_kept_for_demo_mode(t):
+    # GRUB loads a copy of AerOS for the installer on every boot from the CD. Outside demo mode
+    # nothing can use it, so its memory joins the heap; in demo mode it is kept
+    plain = t.boot()
+    plain.wait_for(GUEST_PROMPT, 60)
+    without = heap_total(plain)
+    plain.quit()
+    normal = t.boot(module=t.kernel)
+    normal.wait_for(GUEST_PROMPT, 60)
+    given_back = heap_total(normal)
+    normal.quit()
+    demo = t.boot(words='fast demo', module=t.kernel)
+    demo.wait_for(GUEST_PROMPT, 60)
+    kept = heap_total(demo)
+    size = os.path.getsize(t.kernel)
+    if abs(given_back - without) > 64 * 1024:
+        demo.fail(f'a normal boot did not give the copy back: heap {given_back} bytes, {without} without one')
+    if without - kept < size - 64 * 1024:
+        demo.fail(f'demo mode did not keep the copy: heap {kept} bytes, {without} without one')

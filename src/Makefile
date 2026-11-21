@@ -66,8 +66,17 @@ main.iso: main.elf iso/boot/grub/grub.cfg
 	grub-mkrescue -o '$@' iso
 
 # multiboot config
+# Each time it is linked, main.elf gets a build stamp: the time it was built (UTC), and the
+# version, "AEROS-BUILD:20261204183000 0.02 ALPHA". An update must have a later build number
+# than the AerOS it replaces (sys/update.h), and tools/aerpkg.py publish-os reads it from there.
+# It starts with a byte that is never in text (1, written \001 in C), so the examples of it in
+# AerOS's own source (built in, as /src/) can't be taken for it
 main.elf: $(OBJECTS) linker.ld
-	$(LD) $(LDFLAGS) -o '$@' $(OBJECTS)
+	@echo '/* written by the Makefile each time main.elf is linked: see sys/update.h */' > obj/build_stamp.c
+	@echo '#include "../sys/boot.h"' >> obj/build_stamp.c
+	@printf '%s\n' "const char aeros_build_stamp[] = \"\\001AEROS-BUILD:$$(date -u +%Y%m%d%H%M%S) \" AEROS_VERSION;" >> obj/build_stamp.c
+	$(CC) $(CFLAGS) -c obj/build_stamp.c -o obj/build_stamp.o
+	$(LD) $(LDFLAGS) -o '$@' $(OBJECTS) obj/build_stamp.o
 
 # assembly entry point
 obj/entry.o: entry.asm

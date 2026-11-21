@@ -54,7 +54,7 @@ void aer_repl (void);
 int aer_scan (const char* source, const char* name);
 
 // What a scan finds, as lines of text (what SCAN prints, and what AerLang's scan() gives back)
-#define AER_SCAN_ABILITIES_MAX 16
+#define AER_SCAN_ABILITIES_MAX 20
 #define AER_SCAN_HINTS_MAX     4
 typedef struct {
     int ability_count;

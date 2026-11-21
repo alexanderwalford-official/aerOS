@@ -7,14 +7,17 @@
 | `/acc/` | the accounts file, `users`, and what programs may always do, `perms` |
 | `/bin/` | the apps: `hello.aer`, `read.aer`, `pkg.aer`... |
 | `/apps/` | [packages](commands.md) you have installed with `pkg`: run by name like the built-in ones |
+| `/boot/` | on a disk AerOS was installed on: AerOS itself, `main.elf`, the one before an update, `old.elf`, and GRUB's menu |
 | `/apps/<name>/` | each package's own folder: the files it came with, and what it keeps |
 | `/docs/` | this manual |
 | `/home/<name>/` | each user's own folder, where the prompt starts |
 | `/home/<name>/versions/` | the [old versions](versions.md) of the files in it |
+| `/home/<name>/startup.txt` | commands that run each time you log in ([more](commands.md)) |
 | `/src/` | AerOS's own source code, read only ([more](why.md)) |
 | `/sys/` | system files, like `startup.wav`, `apps.lst` and [the log](logs.md), `logs.db` |
 | `/sys/cache/`, `/sys/tmp/` | room for the system to work in |
 | `/conf.aer` | settings (not used much yet) |
+| `/grubenv` | what AerOS tells GRUB for the next start: the screen size from `res`, and an update to try |
 
 The apps and this manual are built into AerOS and copied onto the disk when it starts, so
 they are there even with no disk at all. A newer AerOS updates its apps for you, but if you
