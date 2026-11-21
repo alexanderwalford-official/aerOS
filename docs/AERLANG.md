@@ -412,11 +412,17 @@ smoothly whatever the program is doing.
 The `maze3d` package (`pkg install maze3d`) goes further: a first-person 3D maze, drawn with
 ray casting the way early 3D games were. For each strip of the screen it sends a ray across a
 grid of squares until it hits a wall, and draws that wall shorter the further away it is. The
-crystals are sprites, placed with the same maths backwards and hidden behind nearer walls. It
-uses decimals, `sin` / `cos`, `keydown`, `mousemove` (for looking around), `gbuf` and `frame`,
-and its comments explain each step,
-so it is meant to be read and changed: draw your own maze in `MAP`, add wall colours, or widen
-`STRIP_WIDTH` for more speed on a slow computer.
+crystals are sprites, placed with the same maths backwards and hidden behind nearer walls. So
+are the ghosts that haunt it, which find their way to you along a step map of the maze (how
+many steps every square is from yours, counted outwards from you): one that touches you costs
+a life, and your light (Space or a click) sends one away for a while. Its menu chooses the
+hand-drawn maze or a new one made up for each game (up to 55 x 55 squares, dug out by a
+"recursive backtracker"), and how many crystals, ghosts and lives there are. The map in the
+corner is a BMP it builds in `bytes(n)` once for each maze and draws with `image()`, which
+is far quicker than a rectangle for every wall of a big maze on every frame. It uses
+decimals, `sin` / `cos`, `keydown`, `mousemove` (for looking around), `gbuf` and `frame`,
+and its comments explain each step, so it is meant to be read and changed: draw your own maze
+in `MAP`, add wall colours, or widen `STRIP_WIDTH` for more speed on a slow computer.
 
 The `viewer` package is a complete app built from these: a picture picker and viewer that
 zooms (`+` / `-`, `0` to fit) by drawing the picture bigger than the screen and moving it

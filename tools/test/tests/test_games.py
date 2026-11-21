@@ -69,9 +69,94 @@ def test_maze3d(t):
     if aeros.screenshot('walked')[2] == after[2]:
         aeros.fail('holding Up did not move')
 
+    quit_maze(aeros)
+
+
+def quit_maze(aeros):
+    """Escape from a game of Maze 3D: the first goes back to its menu, the second quits."""
+    aeros.key('esc')
+    time.sleep(1)
     aeros.key('esc')
     aeros.wait_for('Thanks for playing Maze 3D!', 20)
     aeros.expect_not('Error')
+
+
+def choose(aeros, keys):
+    """Press keys one at a time, e.g. to make choices on Maze 3D's menu."""
+    for key in keys:
+        aeros.key(key)
+        time.sleep(0.3)
+
+
+# maze3d.aer's colours for the eyes of a ghost chasing you, and for the "CAUGHT" screen
+GHOST_STARE = 0xFF3355
+CAUGHT = 0xFF5A5F
+
+
+def boot_with_maze(t, changes):
+    """Boot with a copy of maze3d.aer changed by (old line, new line) pairs, installed as maze3d."""
+    game = open(t.repo('packages', 'maze3d.aer')).read()
+    for old, new in changes:
+        if game.count(old) != 1:
+            raise AssertionError(f'maze3d.aer no longer has the line {old.strip()!r}: update this test')
+        game = game.replace(old, new)
+    with open(t.path('maze3d.aer'), 'w') as f:
+        f.write(game)
+    files = t.package('maze3d')
+    files['/apps/maze3d.aer'] = t.path('maze3d.aer')
+    aeros = t.boot(graphics=True, disk=t.disk(files=files))
+    aeros.first_login()
+    return aeros
+
+
+# A ghost two squares in front of where you start, looking straight at you
+GHOST_AHEAD = ('    "#P...#.....o..X#",\n', '    "#P.X.#.....o..X#",\n')
+
+
+def test_maze3d_ghosts(t):
+    # Ghosts that stand still, one of them just ahead: it is drawn (with red eyes, as it is
+    # near enough to chase you), and the light sends it away
+    aeros = boot_with_maze(t, [GHOST_AHEAD,
+                               ('let GHOST_SPEED = 1.2 ', 'let GHOST_SPEED = 0.0 '),
+                               ('let CHASE_SPEED = 1.9 ', 'let CHASE_SPEED = 0.0 ')])
+    aeros.run('maze3d', 5)
+    aeros.key('spc')
+    wait_for_colour(aeros, GHOST_STARE, 'ghost', timeout=20)
+    aeros.key('spc')
+    time.sleep(1.5)
+    if has_colour(aeros.screenshot('light'), GHOST_STARE):
+        aeros.fail('shining the light at the ghost did not send it away')
+    quit_maze(aeros)
+
+
+def test_maze3d_caught(t):
+    # With one life (chosen on the menu: down to LIVES, then left from 3 to 1), the ghost just
+    # ahead comes for you, and that's the game over
+    aeros = boot_with_maze(t, [GHOST_AHEAD])
+    aeros.run('maze3d', 5)
+    choose(aeros, ['down', 'down', 'down', 'left', 'spc'])
+    wait_for_colour(aeros, CAUGHT, 'caught', timeout=30)
+    aeros.key('esc')
+    aeros.wait_for('Thanks for playing Maze 3D!', 20)
+    aeros.expect_not('Error')
+
+
+def test_maze3d_huge(t):
+    # The biggest made-up maze, with lots of crystals and many ghosts: it is made, drawn, and
+    # can be looked round. (It is made up afresh each time, so it is only checked loosely.)
+    # On the menu, left from CLASSIC goes round to HUGE, then crystals and ghosts go up one each
+    aeros = boot_with(t, 'maze3d')
+    aeros.run('maze3d', 5)
+    choose(aeros, ['left', 'down', 'right', 'down', 'right', 'spc'])
+    time.sleep(8)
+    before = aeros.screenshot('huge')
+    if colours(before) < 6:
+        aeros.fail('the huge maze looks empty')
+    aeros.key('left', 600)
+    time.sleep(1.5)
+    if aeros.screenshot('turned')[2] == before[2]:
+        aeros.fail('holding Left did not turn in the huge maze')
+    quit_maze(aeros)
 
 
 def test_move(t):

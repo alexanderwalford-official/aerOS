@@ -123,7 +123,7 @@ The first time, let AerOS reach the server: `fw web packages.intercon.network 80
 | Package | What it is |
 | --- | --- |
 | `snake` | Snake, with high scores |
-| `maze3d` | a maze in 3D, seen from inside |
+| `maze3d` | a maze in 3D, seen from inside: choose its size, find the crystals, dodge the ghosts |
 | `move` | move a square with the arrow keys: a small example of a game |
 | `guess` | guess the number |
 | `viewer` | a picture viewer, with two pictures to try it on |

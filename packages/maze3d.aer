@@ -7,21 +7,46 @@
 #     Left / Right         - turn
 #     Mouse                - look around (in QEMU, click the window first: Ctrl+Alt+G lets go)
 #     A / D                - step sideways
+#     Space / mouse click  - shine your light: a ghost it hits straight ahead goes away for a while
 #     M                    - show or hide the map
-#     Escape               - quit
+#     Escape               - back to the menu (and on the menu, quit)
 #
-# Pick up every crystal, then find the gold door.
+# Pick up every crystal, then find the gold door. Ghosts drift about the maze, and chase you
+# once they are close (their eyes glow red). One touching you costs a life: lose them all and
+# the game is over.
+#
+# The menu at the start chooses the maze: the classic one drawn below, or a new one made up
+# for each game in three bigger sizes, and how many crystals, ghosts and lives there are.
 #
 # How it works, for anyone who wants to build on it:
 #
-#   The world is a flat grid of squares (MAP, below). Each square is either empty floor or a
-#   wall. Nothing is really 3D: for every column of the screen, a ray is sent out from the
+#   The world is a flat grid of squares (MAP, below, or a made-up maze). Each square is
+#   either empty floor or a wall. Nothing is really 3D: for every column of the screen, a ray is sent out from the
 #   player across the grid until it hits a wall. The further away the wall is, the shorter its
 #   column is drawn. Do that for every column, left to right, and the walls look solid.
 #
 #   The crystals are "sprites": flat shapes that always face you. Each one is placed on the
 #   screen with a little maths, and is drawn only in the columns where it is nearer than the
 #   wall that ray hit, so walls hide them properly.
+#
+#   The ghosts are sprites as well, drawn strip by strip in the same way. They move from the
+#   middle of one square to the middle of the next, so they never go through a wall. To find
+#   their way to you they use a "step map": for every open square, how many steps it is from
+#   your square, counted outwards from you (a "breadth first search"), and worked out again
+#   each time you move into a new square. A chasing ghost always steps to a square one step
+#   nearer you; one that is too far away to chase just wanders, never turning back unless it
+#   is in a dead end.
+#
+#   The bigger mazes are made up by a "recursive backtracker": start with every square a wall,
+#   dig out a square, then keep digging to a random neighbour two squares away that is still
+#   solid (knocking out the wall in between), and step back along the way you came whenever
+#   there is nowhere new to dig. That makes a maze with exactly one way between any two
+#   squares; knocking out a few more walls then adds some loops, so you can get round a ghost.
+#   The door goes on the outside wall, next to the edge square furthest from the start.
+#
+#   The map in the corner is a tiny picture (a BMP, one pixel a square) made once for each
+#   maze and drawn bigger with image(), which is much quicker than drawing every wall of a big
+#   maze as a rectangle on every frame.
 #
 #   Looking up and down is a trick too: rays can only go across the grid, so instead the whole
 #   picture is drawn higher or lower on the screen. The horizon (where the walls' middles line up)
@@ -30,7 +55,12 @@
 #
 #   Changing it:
 #     - Draw your own maze in MAP: '#', 'B' and 'G' are walls, 'o' is a crystal, 'P' is where
-#       you start and 'E' is the door. Keep a wall all the way round the edge.
+#       you start, 'E' is the door and 'X' is where a ghost starts. Keep a wall all the way
+#       round the edge.
+#       The menu's crystal and ghost numbers still apply: spare ones are left out (the last
+#       ones in the map first), and missing ones are put in at random.
+#     - The ghosts' speed, how close they must be to chase you, and how long your light keeps
+#       them away are all in the settings below, and so are the menu's sizes and numbers.
 #     - New wall colours go in WALL_COLOURS, with a letter for them in read_map().
 #     - STRIP_WIDTH trades detail for speed: wider strips mean fewer rays and more frames a second.
 
@@ -40,19 +70,19 @@
 
 let MAP = [
     "################",
-    "#P...#.....o...#",
+    "#P...#.....o..X#",
     "#.##.#.###.##..#",
     "#.#o.......#...#",
     "#.#.BBB.##.#.#.#",
-    "#...B.....o#.#.#",
+    "#...B..X..o#.#.#",
     "###.B.GGG..#.#.#",
     "#...........#..#",
     "#.###.#.GG.##.##",
-    "#.#o..#..G.....#",
+    "#.#o..#..G.X...#",
     "#.#.###.....##.#",
     "#...#....BB.#..#",
     "#.#.#.##..B.#o.#",
-    "#.#...#.......##",
+    "#.#X..#.......##",
     "#...#...#.....E#",
     "################"
 ]
@@ -70,6 +100,33 @@ let STRIP_WIDTH = 8         # pixels per ray (see the notes at the top)
 let PICK_UP_DISTANCE = 0.5  # how close you must be to take a crystal
 let MOUSE_TURN = 0.004      # radians of turn for each step the mouse moves across
 let MOUSE_LOOK = 1.5        # pixels the horizon moves for each step the mouse moves up or down
+
+# The menu's choices. For each maze, the crystals and ghosts there are for each choice.
+let MAZE_NAMES = ["CLASSIC", "MEDIUM", "LARGE", "HUGE"]
+let MAZE_SIZES = [0, 25, 39, 55]            # squares across and down (0: the classic MAP)
+let CRYSTAL_NAMES = ["FEW", "NORMAL", "LOTS"]
+let CRYSTALS_FOR = [[3, 5, 10], [6, 12, 24], [10, 20, 40], [16, 32, 60]]
+let GHOST_NAMES = ["NONE", "SOME", "MANY"]
+let GHOSTS_FOR = [[0, 4, 8], [0, 6, 12], [0, 10, 20], [0, 16, 32]]
+let LIVES_FOR = [1, 3, 5]
+let SETTING_NAMES = ["MAZE", "CRYSTALS", "GHOSTS", "LIVES"]
+let LOOPS = 40              # a made-up maze gets an extra gap in a wall for every this many squares
+let SPRITE_DISTANCE = 14.0  # crystals and ghosts further away than this aren't drawn
+
+# The ghosts
+let GHOST_SPEED = 1.2       # squares a second while a ghost wanders
+let CHASE_SPEED = 1.9       # squares a second while it chases you (you walk faster, so run!)
+let CHASE_STEPS = 7         # a ghost chases you when it is this many steps away or nearer
+let TOUCH_DISTANCE = 0.75   # how near a ghost must come, in squares, to touch you
+let SAFE_TIME = 1500        # milliseconds after a touch before another ghost can touch you
+let LIGHT_RANGE = 6.0       # how far your light reaches, in squares
+let LIGHT_WAIT = 800        # milliseconds before the light can be shone again
+let GHOST_AWAY = 6000       # milliseconds a ghost stays away after the light or a touch
+let FAR = 9999              # the step map's "can't get there from here"
+# The four ways out of a square, as steps across and down: east, south, west, north. The way
+# back from way d is (d + 2) % 4
+let STEP_X = [1, 0, -1, 0]
+let STEP_Y = [0, 1, 0, -1]
 
 # Wall colours as [red, green, blue], by the number read_map() gives each kind of wall
 # (0 is empty floor, so it has no colour)
@@ -90,6 +147,16 @@ let TEXT = 0xF2F5F7
 let DIM_TEXT = 0x9AA5B1
 let GOLD = 0xFFD166
 let MAP_BACK = 0x101820
+let GHOST = [215, 205, 255]     # a pale lilac, darkened with distance like the walls
+let GHOST_EYES = 0x1A1030       # the eyes of a ghost that is wandering
+let GHOST_STARE = 0xFF3355      # the eyes of one chasing you: they glow, so fog doesn't dim them
+let GHOST_DOT = 0xFF6B6B        # ghosts on the map
+let HURT = 0xD8263A             # the screen's edge, for a moment after a ghost touches you
+let CAUGHT = 0xFF5A5F           # the words on the screen when the ghosts have won
+
+# What a sprite is, for draw_sprites()
+let CRYSTAL_SPRITE = 0
+let GHOST_SPRITE = 1
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -116,15 +183,16 @@ func centre(y, words, colour, size)
 end
 
 # ---------------------------------------------------------------------------
-# Reading the maze
+# Making the maze
 # ---------------------------------------------------------------------------
 
 # Turn MAP's strings into `grid`, a list of rows of numbers (0 floor, 1 to 4 a wall), which is
-# quicker to look things up in than letters. Crystals and the start become floor, and are
-# remembered in `crystals`, `start_x` / `start_y` and `door_x` / `door_y`.
+# quicker to look things up in than letters. Crystals, ghosts and the start become floor, and
+# are remembered in `crystals`, `ghost_home`, `start_x` / `start_y` and `door_x` / `door_y`.
 func read_map()
     grid = []
     crystals = []
+    ghost_home = []
     for y = 0 to len(MAP) - 1 do
         let row = []
         let row_text = MAP[y]
@@ -147,22 +215,256 @@ func read_map()
             elif c == "P" then
                 start_x = x + 0.5
                 start_y = y + 0.5
+            elif c == "X" then
+                push(ghost_home, [x + 0.5, y + 0.5])
             end
             push(row, kind)
         end
         push(grid, row)
     end
+end
 
-    # The map in the corner only needs the walls, so list them once rather than looking at
-    # every square on every frame: [x, y, colour]
-    map_walls = []
-    for y = 0 to len(grid) - 1 do
-        for x = 0 to len(grid[y]) - 1 do
-            if grid[y][x] != 0 then
-                push(map_walls, [x, y, shade(WALL_COLOURS[grid[y][x]], 0.8)])
+# Make up a new maze `size` squares across and down (an odd number, so that it has walls all
+# round), with the start in the top left corner. See the notes at the top for how.
+func make_maze(size)
+    # Every square starts as a wall. The walls are coloured in patches of 6 x 6 squares, each
+    # patch stone, brick or moss (mostly stone), so parts of the maze look different and are
+    # easier to remember
+    let patch_kinds = [1, 1, 1, 2, 3]
+    let patches_across = size / 6 + 1
+    let patches = []
+    for i = 0 to patches_across * patches_across - 1 do
+        push(patches, patch_kinds[random(len(patch_kinds))])
+    end
+    grid = []
+    for y = 0 to size - 1 do
+        let row = []
+        for x = 0 to size - 1 do
+            push(row, patches[(y / 6) * patches_across + x / 6])
+        end
+        push(grid, row)
+    end
+
+    # Dig. The squares where x and y are both odd are the maze's rooms, and the squares between
+    # two rooms are the walls that may be knocked out. `trail` is the way back: the last room
+    # in it is the one being dug from.
+    grid[1][1] = 0
+    let trail = [[1, 1]]
+    while len(trail) > 0 do
+        let x = trail[len(trail) - 1][0]
+        let y = trail[len(trail) - 1][1]
+        # the ways to a room two squares off that hasn't been dug yet (it is still a wall)
+        let ways = []
+        for way = 0 to 3 do
+            let to_x = x + STEP_X[way] * 2
+            let to_y = y + STEP_Y[way] * 2
+            if to_x > 0 and to_x < size - 1 and to_y > 0 and to_y < size - 1 and grid[to_y][to_x] != 0 then
+                push(ways, way)
+            end
+        end
+        if len(ways) == 0 then
+            # nowhere new to dig from here: step back
+            pop(trail)
+        else
+            # dig through the wall to a random one of them, and carry on from there
+            let way = ways[random(len(ways))]
+            grid[y + STEP_Y[way]][x + STEP_X[way]] = 0
+            grid[y + STEP_Y[way] * 2][x + STEP_X[way] * 2] = 0
+            push(trail, [x + STEP_X[way] * 2, y + STEP_Y[way] * 2])
+        end
+    end
+
+    # Knock out some more walls between rooms, to make loops. Such a wall has one odd and one
+    # even position (so x + y is odd), and is never on the edge of the maze
+    let gaps = size * size / LOOPS
+    while gaps > 0 do
+        let x = 1 + random(size - 2)
+        let y = 1 + random(size - 2)
+        if (x + y) % 2 == 1 and grid[y][x] != 0 then
+            grid[y][x] = 0
+            gaps = gaps - 1
+        end
+    end
+
+    start_x = 1.5
+    start_y = 1.5
+    crystals = []
+    ghost_home = []
+end
+
+# Put the door in the outside wall, next to the square on the edge of the maze that is the
+# most steps from the start. `from_start` is the step map from the start (see steps_from).
+func place_door(from_start)
+    let size = len(grid)
+    let far_x = 1
+    let far_y = 1
+    let most = -1
+    for y = 1 to size - 2 do
+        for x = 1 to size - 2 do
+            let on_edge = x == 1 or y == 1 or x == size - 2 or y == size - 2
+            if on_edge and from_start[y][x] < FAR and from_start[y][x] > most then
+                most = from_start[y][x]
+                far_x = x
+                far_y = y
             end
         end
     end
+    # the outside wall beside it (in a corner there are two, and either will do)
+    door_x = far_x
+    door_y = far_y
+    if far_x == size - 2 then
+        door_x = size - 1
+    elif far_y == size - 2 then
+        door_y = size - 1
+    elif far_x == 1 then
+        door_x = 0
+    else
+        door_y = 0
+    end
+    grid[door_y][door_x] = DOOR
+end
+
+# A step map: for every square, how many steps it is from (from_x, from_y) without going
+# through a wall. Walls, and squares more than `limit` steps away, are FAR.
+func steps_from(from_x, from_y, limit)
+    let counts = []
+    for y = 0 to len(grid) - 1 do
+        push(counts, list(len(grid[y]), FAR))
+    end
+    # Start at that square, and spread outwards one step at a time: every square in `waiting`
+    # is looked at in the order it was found, so each one is reached by the shortest way
+    # first. (The maze has walls all round, so a neighbour is never off the edge)
+    counts[from_y][from_x] = 0
+    let waiting = [[from_x, from_y]]
+    let next = 0
+    while next < len(waiting) do
+        let x = waiting[next][0]
+        let y = waiting[next][1]
+        next = next + 1
+        if counts[y][x] < limit then
+            for way = 0 to 3 do
+                let near_x = x + STEP_X[way]
+                let near_y = y + STEP_Y[way]
+                if grid[near_y][near_x] == 0 and counts[near_y][near_x] == FAR then
+                    counts[near_y][near_x] = counts[y][x] + 1
+                    push(waiting, [near_x, near_y])
+                end
+            end
+        end
+    end
+    return counts
+end
+
+# Mark the square of every spot (a list of [x, y]) in `used`
+func mark_used(used, spots)
+    for spot in spots do
+        used[floor(spot[1])][floor(spot[0])] = true
+    end
+end
+
+# Make `spots` (a list of [x, y], like `crystals`) `wanted` long. If there are too many, the
+# last ones are left out. If too few, squares are added at random: open floor, at least
+# `min_steps` from the start, and not `used` already. (If there aren't enough such squares,
+# it stays shorter)
+func fit_spots(spots, wanted, min_steps, from_start, used)
+    while len(spots) > wanted do
+        pop(spots)
+    end
+    if len(spots) == wanted then return end
+
+    let free = []
+    for y = 0 to len(grid) - 1 do
+        for x = 0 to len(grid[y]) - 1 do
+            if from_start[y][x] >= min_steps and from_start[y][x] < FAR and not used[y][x] then
+                push(free, [x, y])
+            end
+        end
+    end
+    while len(spots) < wanted and len(free) > 0 do
+        let pick = random(len(free))
+        let square = free[pick]
+        remove(free, pick)
+        used[square[1]][square[0]] = true
+        # +0.5 puts it in the middle of its square
+        push(spots, [square[0] + 0.5, square[1] + 0.5])
+    end
+end
+
+# Write a number into 4 bytes of `data` from `at`, smallest part first (the way BMP files
+# keep their numbers)
+func put_number(data, at, number)
+    for i = 0 to 3 do
+        data[at + i] = number % 256
+        number = number / 256
+    end
+end
+
+# The map's picture (see the notes at the top): a BMP with one pixel for each square, walls in
+# their colours on the map's background. A BMP is a 54 byte header (the letters "BM", sizes,
+# and how many bits each pixel has), then the rows of pixels, the bottom row first. Each pixel
+# is three bytes, blue, green, red, and each row is padded to a multiple of 4 bytes.
+func make_map_picture()
+    let w = len(grid[0])
+    let h = len(grid)
+    let row_size = (w * 3 + 3) / 4 * 4
+    map_picture = bytes(54 + row_size * h)
+    map_picture[0] = ord("B")
+    map_picture[1] = ord("M")
+    put_number(map_picture, 2, 54 + row_size * h)   # the size of the whole file
+    put_number(map_picture, 10, 54)                 # where the pixels start
+    put_number(map_picture, 14, 40)                 # the size of the rest of the header
+    put_number(map_picture, 18, w)
+    put_number(map_picture, 22, h)
+    map_picture[26] = 1                             # "planes": always 1
+    map_picture[28] = 24                            # bits a pixel
+    # (everything else in the header is 0: no compression, and the usual defaults)
+
+    # the background's red, green and blue, from MAP_BACK (0xRRGGBB)
+    let back = [MAP_BACK / 65536, MAP_BACK / 256 % 256, MAP_BACK % 256]
+    for y = 0 to h - 1 do
+        let at = 54 + (h - 1 - y) * row_size
+        for x = 0 to w - 1 do
+            let colour = back
+            if grid[y][x] != 0 then
+                let wall = WALL_COLOURS[grid[y][x]]
+                colour = [floor(wall[0] * 0.8), floor(wall[1] * 0.8), floor(wall[2] * 0.8)]
+            end
+            map_picture[at] = colour[2]
+            map_picture[at + 1] = colour[1]
+            map_picture[at + 2] = colour[0]
+            at = at + 3
+        end
+    end
+end
+
+# Make the maze chosen on the menu: `grid`, the start, the door, the crystals, where the
+# ghosts start, and the map's picture
+func build_maze()
+    let size = MAZE_SIZES[choice[0]]
+    if size == 0 then
+        read_map()
+    else
+        make_maze(size)
+    end
+
+    # How many steps each square is from the start, so the door can go far away, and nothing
+    # is put right beside you
+    let from_start = steps_from(floor(start_x), floor(start_y), FAR)
+    if size != 0 then place_door(from_start) end
+
+    # Which squares have something on them, so two things never share a square
+    let used = []
+    for y = 0 to len(grid) - 1 do
+        push(used, list(len(grid[y]), false))
+    end
+    used[floor(start_y)][floor(start_x)] = true
+    mark_used(used, crystals)
+    mark_used(used, ghost_home)
+    fit_spots(crystals, CRYSTALS_FOR[choice[0]][choice[1]], 3, from_start, used)
+    # ghosts start well out of reach, so none chases you straight away
+    fit_spots(ghost_home, GHOSTS_FOR[choice[0]][choice[2]], CHASE_STEPS + 4, from_start, used)
+
+    make_map_picture()
 end
 
 # Is the square under this point (in squares, decimals allowed) a wall?
@@ -234,6 +536,178 @@ func horizon()
 end
 
 # ---------------------------------------------------------------------------
+# The ghosts
+# ---------------------------------------------------------------------------
+
+# Each ghost's details are kept in lists, one place in each list per ghost:
+#   ghost_x / ghost_y       - where it is now
+#   ghost_to_x / ghost_to_y - the middle of the square it is heading for
+#   ghost_way               - which way it last went (0 to 3, see STEP_X), or -1 at the start
+#   ghost_back              - 0 while it is in the maze; while it is away, the time it comes back
+
+# Put every ghost back where it started, ready for a new game
+func reset_ghosts()
+    ghost_x = []
+    ghost_y = []
+    ghost_to_x = []
+    ghost_to_y = []
+    ghost_way = []
+    ghost_back = []
+    for i = 0 to len(ghost_home) - 1 do
+        push(ghost_x, ghost_home[i][0])
+        push(ghost_y, ghost_home[i][1])
+        push(ghost_to_x, ghost_home[i][0])
+        push(ghost_to_y, ghost_home[i][1])
+        push(ghost_way, -1)
+        push(ghost_back, 0)
+    end
+    # so the step map is worked out afresh on the first frame
+    steps_x = -1
+end
+
+# Work out the ghosts' step map: in `steps`, how many steps each square is from the player's
+# square (see steps_from). It only changes when the player moves into another square, so most
+# frames this does nothing. It only goes as far as a ghost can chase from (squares further
+# away are FAR), which keeps it quick however big the maze is.
+func work_out_steps()
+    let from_x = floor(pos_x)
+    let from_y = floor(pos_y)
+    if from_x == steps_x and from_y == steps_y then return end
+    steps_x = from_x
+    steps_y = from_y
+    steps = steps_from(from_x, from_y, CHASE_STEPS)
+end
+
+# Is ghost number i near enough to be chasing the player?
+func is_chasing(i)
+    return steps[floor(ghost_y[i])][floor(ghost_x[i])] <= CHASE_STEPS
+end
+
+# Ghost number i has reached the middle of a square: choose the next square to go to
+func choose_way(i)
+    let x = floor(ghost_x[i])
+    let y = floor(ghost_y[i])
+    let chosen = -1
+    if is_chasing(i) then
+        # Any way that is one step nearer the player (on the player's own square, stay put)
+        for way = 0 to 3 do
+            if steps[y + STEP_Y[way]][x + STEP_X[way]] < steps[y][x] then chosen = way end
+        end
+    else
+        # Wander: pick any open way at random, except back the way it came
+        let ways = []
+        for way = 0 to 3 do
+            if grid[y + STEP_Y[way]][x + STEP_X[way]] == 0 and way != (ghost_way[i] + 2) % 4 then
+                push(ways, way)
+            end
+        end
+        if len(ways) > 0 then
+            chosen = ways[random(len(ways))]
+        elif ghost_way[i] >= 0 then
+            # a dead end: the only way out is back
+            chosen = (ghost_way[i] + 2) % 4
+        end
+    end
+    if chosen >= 0 then
+        ghost_way[i] = chosen
+        ghost_to_x[i] = x + STEP_X[chosen] + 0.5
+        ghost_to_y[i] = y + STEP_Y[chosen] + 0.5
+    end
+end
+
+# Move every ghost that is in the maze towards the square it is heading for, and bring back
+# any whose time away is up
+func move_ghosts(seconds, now)
+    for i = 0 to len(ghost_home) - 1 do
+        if ghost_back[i] != 0 then
+            # It comes back where it started, but not while you are standing right there
+            let dx = ghost_home[i][0] - pos_x
+            let dy = ghost_home[i][1] - pos_y
+            if now >= ghost_back[i] and dx * dx + dy * dy > 9 then
+                ghost_back[i] = 0
+                ghost_x[i] = ghost_home[i][0]
+                ghost_y[i] = ghost_home[i][1]
+                ghost_to_x[i] = ghost_x[i]
+                ghost_to_y[i] = ghost_y[i]
+                ghost_way[i] = -1
+            end
+            continue
+        end
+
+        let speed = GHOST_SPEED
+        if is_chasing(i) then speed = CHASE_SPEED end
+        let can_go = speed * seconds
+        # A ghost only ever moves straight across or straight up and down, so the distance to
+        # where it is heading is just the two gaps added up
+        let dx = ghost_to_x[i] - ghost_x[i]
+        let dy = ghost_to_y[i] - ghost_y[i]
+        let gap = abs(dx) + abs(dy)
+        if gap <= can_go then
+            ghost_x[i] = ghost_to_x[i]
+            ghost_y[i] = ghost_to_y[i]
+            choose_way(i)
+        else
+            ghost_x[i] = ghost_x[i] + dx / gap * can_go
+            ghost_y[i] = ghost_y[i] + dy / gap * can_go
+        end
+    end
+end
+
+# Has a ghost touched the player? It costs a life, and that ghost goes away for a while. Gives
+# true when that was the last life.
+func check_ghosts(now)
+    if now < safe_until then return false end
+    for i = 0 to len(ghost_home) - 1 do
+        if ghost_back[i] == 0 then
+            let dx = ghost_x[i] - pos_x
+            let dy = ghost_y[i] - pos_y
+            if dx * dx + dy * dy < TOUCH_DISTANCE * TOUCH_DISTANCE then
+                lives = lives - 1
+                ghost_back[i] = now + GHOST_AWAY
+                hurt_at = now
+                safe_until = now + SAFE_TIME
+                beep(160)
+                return lives <= 0
+            end
+        end
+    end
+    return false
+end
+
+# Shine the light straight ahead: the nearest ghost in the middle of the view, nearer than the
+# wall there and within LIGHT_RANGE, goes away for a while
+func shine_light(now)
+    if now < light_ready then return end
+    light_ready = now + LIGHT_WAIT
+    light_at = now
+
+    let hit = -1
+    let nearest = LIGHT_RANGE
+    for i = 0 to len(ghost_home) - 1 do
+        if ghost_back[i] == 0 then
+            let view = to_view(ghost_x[i], ghost_y[i])
+            let across = view[0]
+            let depth = view[1]
+            # On the screen (see draw_ghost) a ghost's middle is SCREEN_W / 2 * across / depth
+            # from the centre, and it reaches SCREEN_H / depth / 4 either side of that. The
+            # light hits it if the centre of the screen is inside it: multiplying both by
+            # depth, that is the sum below.
+            let in_the_middle = abs(across) * SCREEN_W / 2 < SCREEN_H / 4.0
+            if in_the_middle and depth > 0.2 and depth < nearest and depth < depths[RAYS / 2] then
+                hit = i
+                nearest = depth
+            end
+        end
+    end
+    if hit >= 0 then
+        ghost_back[hit] = now + GHOST_AWAY
+        beep(1500)
+    else
+        beep(600)
+    end
+end
+
+# ---------------------------------------------------------------------------
 # Drawing the walls (ray casting)
 # ---------------------------------------------------------------------------
 
@@ -253,7 +727,7 @@ func draw_backdrop()
 end
 
 # Send one ray per strip of the screen and draw the wall it hits. Each ray's distance is kept
-# in `depths`, so draw_crystals() knows which walls are in front of a crystal.
+# in `depths`, so draw_sprites() knows which walls are in front of a crystal or a ghost.
 func draw_walls(now)
     # The door glows once every crystal has been picked up (sin swings from -1 to 1)
     let door_light = 0.75
@@ -363,49 +837,116 @@ func to_view(x, y)
     return [inverse * (dir_y * dx - dir_x * dy), inverse * (-plane_y * dx + plane_x * dy)]
 end
 
-# Draw every crystal that is still there, furthest first so nearer ones cover them
-func draw_crystals(now)
-    # Work out each crystal's view position, then sort by depth (there are only a few, so a
-    # simple insertion sort is plenty)
+# Add the sprite at (x, y) in the maze to `visible`, unless it is far away, behind you or off
+# to the side. `visible` is kept in order, furthest first (only a few sprites are in view at
+# once, so putting each one straight into its place, an "insertion sort", is plenty). Each
+# entry is [across, depth, kind, number].
+func add_sprite(visible, x, y, kind, number)
+    # a quick check first, as a big maze has dozens of sprites: is it near enough to matter?
+    let dx = x - pos_x
+    let dy = y - pos_y
+    if dx * dx + dy * dy > SPRITE_DISTANCE * SPRITE_DISTANCE then return end
+    let view = to_view(x, y)
+    # across / depth is -1 at the screen's left edge and 1 at its right, and a sprite is about
+    # half a square wide, so past 1.5 none of it shows
+    if view[1] > 0.2 and abs(view[0]) < view[1] * 1.5 then
+        push(view, kind)
+        push(view, number)
+        let place = 0
+        while place < len(visible) and visible[place][1] > view[1] do
+            place = place + 1
+        end
+        insert(visible, place, view)
+    end
+end
+
+# Draw every crystal still there and every ghost in the maze, furthest first, so nearer ones
+# cover the ones behind them
+func draw_sprites(now)
     let visible = []
     for i = 0 to len(crystals) - 1 do
-        if not picked[i] then
-            let view = to_view(crystals[i][0], crystals[i][1])
-            if view[1] > 0.2 then
-                push(view, i)
-                let place = 0
-                while place < len(visible) and visible[place][1] > view[1] do
-                    place = place + 1
-                end
-                insert(visible, place, view)
-            end
-        end
+        if not picked[i] then add_sprite(visible, crystals[i][0], crystals[i][1], CRYSTAL_SPRITE, i) end
+    end
+    for i = 0 to len(ghost_home) - 1 do
+        if ghost_back[i] == 0 then add_sprite(visible, ghost_x[i], ghost_y[i], GHOST_SPRITE, i) end
     end
 
     for v = 0 to len(visible) - 1 do
-        let across = visible[v][0]
-        let depth = visible[v][1]
-        let number = visible[v][2]
+        let sprite = visible[v]
+        if sprite[2] == CRYSTAL_SPRITE then
+            draw_crystal(sprite[0], sprite[1], sprite[3], now)
+        else
+            draw_ghost(sprite[0], sprite[1], sprite[3], now)
+        end
+    end
+end
 
-        # The same sum as the rays, backwards: where on the screen it is, and how big
-        let centre_x = SCREEN_W / 2 * (1.0 + across / depth)
-        let size = SCREEN_H / depth * 0.35
-        # It floats just above the floor and bobs gently (each one a little out of step)
-        let bob = sin(now / 300.0 + number) * size * 0.12
-        let centre_y = horizon() + SCREEN_H / depth * 0.18 + bob
+# Draw crystal number `number`, which to_view() put at `across` and `depth`
+func draw_crystal(across, depth, number, now)
+    # The same sum as the rays, backwards: where on the screen it is, and how big
+    let centre_x = SCREEN_W / 2 * (1.0 + across / depth)
+    let size = SCREEN_H / depth * 0.35
+    # It floats just above the floor and bobs gently (each one a little out of step)
+    let bob = sin(now / 300.0 + number) * size * 0.12
+    let centre_y = horizon() + SCREEN_H / depth * 0.18 + bob
 
-        # A diamond, drawn one strip at a time: tallest in the middle, nothing at its sides.
-        # A strip is only drawn where this crystal is nearer than the wall that ray hit.
-        let first = bigger(floor((centre_x - size / 2) / STRIP_WIDTH), 0)
-        let last = smaller(floor((centre_x + size / 2) / STRIP_WIDTH), RAYS - 1)
-        for column = first to last do
-            if depths[column] > depth then
-                let middle = column * STRIP_WIDTH + STRIP_WIDTH / 2
-                let from_centre = abs(middle - centre_x) / (size / 2)
-                let half = size / 2 * (1.0 - from_centre)
-                if half > 0 then
-                    rect(column * STRIP_WIDTH, centre_y - half, STRIP_WIDTH, half * 2, CRYSTAL)
-                    rect(column * STRIP_WIDTH, centre_y - half, STRIP_WIDTH, half / 3, CRYSTAL_EDGE)
+    # A diamond, drawn one strip at a time: tallest in the middle, nothing at its sides.
+    # A strip is only drawn where this crystal is nearer than the wall that ray hit.
+    let first = bigger(floor((centre_x - size / 2) / STRIP_WIDTH), 0)
+    let last = smaller(floor((centre_x + size / 2) / STRIP_WIDTH), RAYS - 1)
+    for column = first to last do
+        if depths[column] > depth then
+            let middle = column * STRIP_WIDTH + STRIP_WIDTH / 2
+            let from_centre = abs(middle - centre_x) / (size / 2)
+            let half = size / 2 * (1.0 - from_centre)
+            if half > 0 then
+                rect(column * STRIP_WIDTH, centre_y - half, STRIP_WIDTH, half * 2, CRYSTAL)
+                rect(column * STRIP_WIDTH, centre_y - half, STRIP_WIDTH, half / 3, CRYSTAL_EDGE)
+            end
+        end
+    end
+end
+
+# Draw ghost number `number`, which to_view() put at `across` and `depth`: a round head, a
+# wavy hem that ripples, and two eyes (red while it chases you)
+func draw_ghost(across, depth, number, now)
+    let centre_x = SCREEN_W / 2 * (1.0 + across / depth)
+    # `tall` is how tall a wall this far away is drawn, so the ghost is sized to match: half a
+    # square wide, and two thirds of a wall high
+    let tall = SCREEN_H / depth
+    let half = tall / 4
+    let bob = sin(now / 250.0 + number * 2) * tall * 0.03
+    # Its hem hangs a little above the floor (the floor is half a wall below the horizon), and
+    # its head is a half circle, whose middle is `head`
+    let foot = horizon() + tall * 0.36 + bob
+    let head = foot - tall * 0.42
+
+    # Darker further away, like the walls. Strips near its sides are a little darker still, to
+    # make it look round.
+    let light = bigger(1.0 - depth / FOG_DISTANCE, 0.25)
+    let body = shade(GHOST, light)
+    let edge = shade(GHOST, light * 0.78)
+    let eyes = GHOST_EYES
+    if is_chasing(number) then eyes = GHOST_STARE end
+
+    let first = bigger(floor((centre_x - half) / STRIP_WIDTH), 0)
+    let last = smaller(floor((centre_x + half) / STRIP_WIDTH), RAYS - 1)
+    for column = first to last do
+        if depths[column] > depth then
+            # where this strip crosses the ghost: -1 at its left side, 0 its middle, 1 its right
+            let middle = column * STRIP_WIDTH + STRIP_WIDTH / 2
+            let u = (middle - centre_x) / half
+            if abs(u) < 1.0 then
+                # the top of a circle is sqrt(1 - u * u) above its middle
+                let top = head - half * sqrt(1.0 - u * u)
+                # the hem goes up and down across the ghost, and the waves move along with time
+                let hem = foot - (1.0 + sin(u * 8.0 + now / 120.0)) * tall * 0.03
+                let x = column * STRIP_WIDTH
+                let colour = body
+                if abs(u) > 0.7 then colour = edge end
+                rect(x, top, STRIP_WIDTH, hem - top, colour)
+                if abs(u) > 0.15 and abs(u) < 0.55 then
+                    rect(x, head - tall * 0.01, STRIP_WIDTH, tall * 0.09, eyes)
                 end
             end
         end
@@ -416,20 +957,26 @@ end
 # The map and the words on top
 # ---------------------------------------------------------------------------
 
-# A small map in the top right corner: the walls, the crystals left, and you as a dot with a
-# line showing which way you face
+# A small map in the top right corner: the walls, the crystals left, the ghosts, and you as a
+# dot with a line showing which way you face
 func draw_map()
-    let cell = 6
-    let left = SCREEN_W - len(grid[0]) * cell - 10
+    # 6 pixels a square, or fewer for a big maze, so the map is never more than 240 across
+    let cell = smaller(6, 240 / len(grid[0]))
+    let width = len(grid[0]) * cell
+    let height = len(grid) * cell
+    let left = SCREEN_W - width - 10
     let top = 10
-    rect(left - 2, top - 2, len(grid[0]) * cell + 4, len(grid) * cell + 4, MAP_BACK)
-    for i = 0 to len(map_walls) - 1 do
-        let w = map_walls[i]
-        rect(left + w[0] * cell, top + w[1] * cell, cell, cell, w[2])
-    end
+    rect(left - 2, top - 2, width + 4, height + 4, MAP_BACK)
+    # the walls: the map's picture, drawn `cell` times bigger
+    image(map_picture, left, top, width, height)
     for i = 0 to len(crystals) - 1 do
         if not picked[i] then
             rect(left + crystals[i][0] * cell - 1, top + crystals[i][1] * cell - 1, 3, 3, CRYSTAL)
+        end
+    end
+    for i = 0 to len(ghost_home) - 1 do
+        if ghost_back[i] == 0 then
+            rect(left + ghost_x[i] * cell - 2, top + ghost_y[i] * cell - 2, 4, 4, GHOST_DOT)
         end
     end
     let me_x = left + pos_x * cell
@@ -438,18 +985,52 @@ func draw_map()
     rect(me_x - 1, me_y - 1, 3, 3, TEXT)
 end
 
-# The crystal count, the time, a hint, and the frame rate (handy while changing things)
+# The crystal count, the time, the lives left, a hint, and the frame rate (handy while
+# changing things)
 func draw_status(now, fps)
     text(12, 12, "CRYSTALS " + str(taken) + " / " + str(len(crystals)), CRYSTAL, 2)
     text(12, 40, "TIME " + str((now - started) / 1000), TEXT, 2)
+    text(12, 68, "LIVES " + str(lives), GHOST_DOT, 2)
     if taken == len(crystals) then
-        text(12, 68, "FIND THE GOLD DOOR", GOLD, 2)
+        text(12, 96, "FIND THE GOLD DOOR", GOLD, 2)
     end
-    text(12, SCREEN_H - 20, str(fps) + " FPS   M MAP   ESC QUIT", DIM_TEXT, 1)
+    text(12, SCREEN_H - 20, str(fps) + " FPS   SPACE LIGHT   M MAP   ESC QUIT", DIM_TEXT, 1)
+end
+
+# A small cross in the middle of the view, where the light shines (dim while it gets ready
+# again), the beam for a moment after shining it, and a red edge round the screen for a
+# moment after a ghost touches you
+func draw_light_and_hurt(now)
+    let centre_x = SCREEN_W / 2
+    let centre_y = horizon()
+    if now - light_at < 120 then
+        # the beam: lines fanning in from the bottom of the screen to the middle
+        for i = 0 to 8 do
+            line(centre_x - 64 + i * 16, SCREEN_H, centre_x, centre_y, CRYSTAL_EDGE)
+        end
+        rect(centre_x - 6, centre_y - 6, 12, 12, CRYSTAL_EDGE)
+    end
+    let colour = CRYSTAL
+    if now < light_ready then colour = DIM_TEXT end
+    rect(centre_x - 10, centre_y - 1, 6, 2, colour)
+    rect(centre_x + 4, centre_y - 1, 6, 2, colour)
+    rect(centre_x - 1, centre_y - 10, 2, 6, colour)
+    rect(centre_x - 1, centre_y + 4, 2, 6, colour)
+
+    if now - hurt_at < 400 then draw_hurt_edge() end
+end
+
+# A red edge all round the screen
+func draw_hurt_edge()
+    let thick = 14
+    rect(0, 0, SCREEN_W, thick, HURT)
+    rect(0, SCREEN_H - thick, SCREEN_W, thick, HURT)
+    rect(0, 0, thick, SCREEN_H, HURT)
+    rect(SCREEN_W - thick, 0, thick, SCREEN_H, HURT)
 end
 
 # ---------------------------------------------------------------------------
-# The game
+# Crystals and the door
 # ---------------------------------------------------------------------------
 
 # Take any crystal close enough, and see if the door has been reached. Gives true when the
@@ -477,32 +1058,118 @@ func check_pickups()
     return false
 end
 
-# The title screen. Gives false if Escape was pressed.
-func title_screen()
-    gclear(0x0B1018)
-    centre(SCREEN_H / 4, "MAZE 3D", GOLD, 6)
-    centre(SCREEN_H / 2, "Pick up every crystal, then find the gold door", TEXT, 1)
-    # The controls in two columns: keys on the left, what they do on the right. Centring each
-    # line on its own would make the columns wander, so the block is centred as a whole
-    let keys = ["UP / DOWN or W / S", "LEFT / RIGHT", "MOUSE", "A / D", "M", "ESC"]
-    let actions = ["walk", "turn", "look around", "step sideways", "show or hide the map", "quit"]
-    let left = (SCREEN_W - 42 * 8) / 2
-    for i = 0 to len(keys) - 1 do
-        text(left, SCREEN_H / 2 + 40 + i * 18, keys[i], TEXT, 1)
-        text(left + 22 * 8, SCREEN_H / 2 + 40 + i * 18, actions[i], DIM_TEXT, 1)
-    end
-    centre(SCREEN_H / 2 + 175, "Press any key to start", CRYSTAL, 2)
-    gshow()
-    return key() != KEY_ESCAPE
+# ---------------------------------------------------------------------------
+# The menu
+# ---------------------------------------------------------------------------
+
+# The names of the choices for menu row `row` (0 the maze, 1 crystals, 2 ghosts, 3 lives)
+func choice_names(row)
+    if row == 0 then return MAZE_NAMES end
+    if row == 1 then return CRYSTAL_NAMES end
+    if row == 2 then return GHOST_NAMES end
+    return ["1", "3", "5"]
 end
 
-# Play one game, from the start square to the door. Gives false if Escape was pressed.
+# What menu row `row` shows for its choice, e.g. "LARGE  39 x 39" or "NORMAL  (20)"
+func choice_text(row)
+    let maze = choice[0]
+    let name = choice_names(row)[choice[row]]
+    if row == 0 then
+        let size = MAZE_SIZES[maze]
+        if size == 0 then size = len(MAP) end
+        return name + "  " + str(size) + " x " + str(size)
+    elif row == 1 then
+        return name + "  (" + str(CRYSTALS_FOR[maze][choice[1]]) + ")"
+    elif row == 2 then
+        return name + "  (" + str(GHOSTS_FOR[maze][choice[2]]) + ")"
+    end
+    return name
+end
+
+# The title, the four choices (the one being changed in gold), and the controls
+func draw_menu()
+    let top = SCREEN_H / 7
+    gclear(0x0B1018)
+    centre(top, "MAZE 3D", GOLD, 6)
+    centre(top + 80, "Pick up every crystal, then find the gold door", TEXT, 1)
+    centre(top + 98, "Mind the ghosts: each one that touches you costs a life", GHOST_DOT, 1)
+
+    # The choices, in big letters (16 pixels each): the name, then < choice >. Lined up
+    # in two columns, centred as a block 30 letters wide
+    let left = (SCREEN_W - 30 * 16) / 2
+    for row = 0 to 3 do
+        let y = top + 140 + row * 30
+        let colour = TEXT
+        if row == menu_row then
+            colour = GOLD
+            text(left - 32, y, ">", GOLD, 2)
+        end
+        text(left, y, SETTING_NAMES[row], colour, 2)
+        text(left + 10 * 16, y, "< " + choice_text(row) + " >", colour, 2)
+    end
+
+    # The controls in two columns: keys on the left, what they do on the right. Centring each
+    # line on its own would make the columns wander, so the block is centred as a whole
+    let keys = ["UP / DOWN or W / S", "LEFT / RIGHT", "MOUSE", "A / D", "SPACE / CLICK", "M", "ESC"]
+    let actions = ["walk", "turn", "look around", "step sideways", "shine your light at a ghost", "show or hide the map", "back to this menu"]
+    left = (SCREEN_W - 49 * 8) / 2
+    for i = 0 to len(keys) - 1 do
+        text(left, top + 280 + i * 18, keys[i], TEXT, 1)
+        text(left + 22 * 8, top + 280 + i * 18, actions[i], DIM_TEXT, 1)
+    end
+    centre(top + 425, "UP / DOWN to choose, LEFT / RIGHT to change, ESC to quit", DIM_TEXT, 1)
+    centre(top + 450, "ENTER OR SPACE TO START", CRYSTAL, 2)
+    gshow()
+end
+
+# The menu, until Enter or Space starts a game (true) or Escape quits (false). The choices
+# stay as they were for the next game.
+func menu()
+    while true do
+        draw_menu()
+        let k = key()
+        let count = len(choice_names(menu_row))
+        if k == KEY_ESCAPE then return false end
+        if k == KEY_ENTER or k == ord(" ") then return true end
+        if k == KEY_UP or k == ord("w") then menu_row = (menu_row + 3) % 4 end
+        if k == KEY_DOWN or k == ord("s") then menu_row = (menu_row + 1) % 4 end
+        # Left / Right go round: past the last choice is the first again
+        if k == KEY_LEFT or k == ord("a") then choice[menu_row] = (choice[menu_row] + count - 1) % count end
+        if k == KEY_RIGHT or k == ord("d") then choice[menu_row] = (choice[menu_row] + 1) % count end
+    end
+end
+
+# A word on the screen while a maze is made (the huge one takes a moment)
+func building_screen()
+    gclear(0x0B1018)
+    centre(SCREEN_H / 2 - 16, "MAKING THE MAZE...", GOLD, 2)
+    gshow()
+end
+
+# ---------------------------------------------------------------------------
+# The game
+# ---------------------------------------------------------------------------
+
+# Play one game in the maze build_maze() made, from the start square to the door. Gives "won"
+# for reaching the door, "caught" when the ghosts took the last life, and "menu" if Escape
+# was pressed.
 func play()
-    face(0)
     pos_x = start_x
     pos_y = start_y
+    # face along the first way out of the start square that isn't a wall
+    let way = 0
+    while way < 3 and grid[floor(start_y) + STEP_Y[way]][floor(start_x) + STEP_X[way]] != 0 do
+        way = way + 1
+    end
+    face(way * PI / 2)
     picked = list(len(crystals), false)
     taken = 0
+    lives = LIVES_FOR[choice[3]]
+    reset_ghosts()
+    safe_until = 0
+    hurt_at = -100000
+    light_ready = 0
+    light_at = -100000
     started = time()
     # look straight ahead, and forget any mouse movement from before the game started
     look = 0
@@ -522,16 +1189,23 @@ func play()
         # Single presses: every press waits until it is read, so take them all each frame
         while haskey() do
             let k = key()
-            if k == KEY_ESCAPE then return false end
+            if k == KEY_ESCAPE then return "menu" end
             if k == ord("m") or k == ord("M") then show_map = not show_map end
+            if k == ord(" ") then shine_light(now) end
         end
+        # A click shines the light too (holding the button shines it again as soon as it can)
+        if mousedown(MOUSE_LEFT) then shine_light(now) end
 
         handle_movement(seconds)
-        if check_pickups() then return true end
+        if check_pickups() then return "won" end
+        work_out_steps()
+        move_ghosts(seconds, now)
+        if check_ghosts(now) then return "caught" end
 
         draw_backdrop()
         draw_walls(now)
-        draw_crystals(now)
+        draw_sprites(now)
+        draw_light_and_hurt(now)
         if show_map then draw_map() end
         draw_status(now, fps)
         gshow()
@@ -547,15 +1221,31 @@ func play()
     end
 end
 
-# The end of a game: your time, then a key to play again. Gives false if Escape was pressed.
+# The end of a game: your time, then a key for the menu. Gives false if Escape was pressed.
 func finished_screen()
     let seconds = (time() - started) / 1000.0
     gclear(0x0B1018)
     centre(SCREEN_H / 3, "YOU GOT OUT", GOLD, 4)
     centre(SCREEN_H / 2, "Time: " + str(round(seconds * 10) / 10.0) + " seconds", TEXT, 2)
-    centre(SCREEN_H / 2 + 60, "Press any key to play again, ESC to quit", DIM_TEXT, 1)
+    centre(SCREEN_H / 2 + 60, "Press any key for the menu, ESC to quit", DIM_TEXT, 1)
     gshow()
     beep(880)
+    return key() != KEY_ESCAPE
+end
+
+# The ghosts took your last life: a red edge, a moment to see where they got you, then how far
+# you got and a key for the menu. Gives false if Escape was pressed.
+func caught_screen()
+    draw_hurt_edge()
+    gshow()
+    sleep(700)
+    # forget the keys pressed while running away, so they don't skip this screen
+    while haskey() do key() end
+    gclear(0x0B1018)
+    centre(SCREEN_H / 3, "CAUGHT", CAUGHT, 4)
+    centre(SCREEN_H / 2, "The ghosts got you, with " + str(taken) + " of " + str(len(crystals)) + " crystals", TEXT, 2)
+    centre(SCREEN_H / 2 + 60, "Press any key for the menu, ESC to quit", DIM_TEXT, 1)
+    gshow()
     return key() != KEY_ESCAPE
 end
 
@@ -578,9 +1268,11 @@ let depths = list(RAYS, 0.0)
 
 # Everything the functions above share. AerLang needs a variable made (with let) before a
 # function can change it.
+let choice = [0, 1, 1, 1]   # the menu's choices: maze, crystals, ghosts, lives (see the settings)
+let menu_row = 0           # which of them Left / Right changes
 let grid = []
 let crystals = []
-let map_walls = []
+let map_picture = nil       # see make_map_picture
 let picked = []
 let taken = 0
 let start_x = 1.5
@@ -597,16 +1289,37 @@ let plane_y = VIEW_WIDTH
 let started = 0
 let show_map = true
 let look = 0                # how far the horizon is moved down by looking up, in pixels
+let lives = 0
+let safe_until = 0          # the time until which no ghost can touch you
+let hurt_at = 0             # when a ghost last touched you
+let light_ready = 0         # the time from which the light can be shone again
+let light_at = 0            # when it was last shone
+# the ghosts (see reset_ghosts) and the step map (see work_out_steps)
+let ghost_home = []
+let ghost_x = []
+let ghost_y = []
+let ghost_to_x = []
+let ghost_to_y = []
+let ghost_way = []
+let ghost_back = []
+let steps = []
+let steps_x = -1            # the square the step map was worked out from
+let steps_y = -1
 
-read_map()
-
-let playing = title_screen()
+# The menu, then a game, then the menu again, until Escape on the menu (or on the screen at
+# the end of a game)
+let playing = menu()
+let result = ""
 while playing do
-    if play() then
+    building_screen()
+    build_maze()
+    result = play()
+    if result == "won" then
         playing = finished_screen()
-    else
-        playing = false
+    elif result == "caught" then
+        playing = caught_screen()
     end
+    if playing then playing = menu() end
 end
 
 gclose()

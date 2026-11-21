@@ -256,6 +256,6 @@ And these [packages](commands.md), once installed (`pkg install guess`), are in 
 | `/apps/viewer.aer` | graphics, pictures and a menu |
 | `/apps/move.aer` | smooth movement, held keys and mixed sounds |
 | `/apps/snake.aer` | a whole game: graphics, a back buffer, held keys, lists, and high scores in a database |
-| `/apps/maze3d.aer` | a 3D maze drawn with ray casting: decimals, sin / cos, sprites and mouse look |
+| `/apps/maze3d.aer` | a 3D maze drawn with ray casting: decimals, sin / cos, sprites, mouse look, ghosts that find their way to you, and made-up mazes |
 | `/apps/anim.aer` | spinners, progress bars and moving text |
 | `/apps/webserve.aer` | a web server: TCP, and serving files |
