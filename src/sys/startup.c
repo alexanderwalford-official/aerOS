@@ -32,6 +32,7 @@ static const char example[] =
     "#\n"
     "# print(\"Welcome back!\")\n"
     "# fw web packages.intercon.network 80\n"
+    "# update check\n"
     "# bg webserve 8080 /docs/\n"
     "# desktop\n";
 

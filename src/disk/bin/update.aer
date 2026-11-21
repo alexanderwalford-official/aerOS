@@ -1,6 +1,10 @@
 # aerOS update utility
 # very simmilar to pkg.aer, but simpler and only for the OS itself
 # Alexander Walford 2026
+#
+#     update          check for a newer aerOS, show it, ask, and install it
+#     update check    just say, in one line, if there is a newer aerOS, and nothing if not:
+#                     for startup.txt, so you hear about updates each time you log in
 
 let SERVER = "http://packages.intercon.network" # http://10.0.2.2:8000
 
@@ -70,9 +74,14 @@ end
 
 # ---- the index -------------------------------------------------------------------------------
 
-func fetch_index()
-    # get the index of packages from the server, check it, and return it as a string
+func fetch_index(quiet)
+    # get the index of packages from the server, check it, and return it as a string. If
+    # anything is wrong it says so and ends the program, or, when quiet is true, just gives
+    # back nil (update check runs at each login: no network shouldn't mean a page of errors)
     if packagekey() == "" then
+        if quiet then
+            return nil
+        end
         fail("aerOS has no package key, so updates can't be checked.")
     end
 
@@ -82,12 +91,18 @@ func fetch_index()
 
     # if either is nil: the server can't be reached
     if index == nil or signature == nil then
+        if quiet then
+            return nil
+        end
         warn("Can't reach the update server.")
         fail("fw web packages.intercon.network 80 allows it.")
     end
 
     # if the signature doesn't check out: the index can't be trusted
     if verify(index, signature, packagekey()) == false then
+        if quiet then
+            return nil
+        end
         danger("The update list from the server isn't signed by aerOS's makers.")
         fail("It won't be used: nothing was changed.")
     end
@@ -116,6 +131,27 @@ func find_os(index)
 end
 
 
+# ---- checking quietly ------------------------------------------------------------------------
+
+func check()
+    # "update check": one line if there is a newer aerOS, and nothing at all if there isn't,
+    # or if it can't tell (not installed on a disk, no network, the firewall: all quiet)
+    if osupdatable(false) == false then
+        return
+    end
+    let index = fetch_index(true)
+    if index == nil then
+        return
+    end
+    let newest = find_os(index)
+    if newest == nil or newest[0] == osbuild() then
+        return
+    end
+    # (short enough for one row of the screen)
+    warn("aerOS " + newest[2] + " is available (built " + when(newest[0]) + "): type update")
+end
+
+
 # ---- updating --------------------------------------------------------------------------------
 
 func main()
@@ -128,7 +164,7 @@ func main()
     end
 
     # fetch the update list, and find aerOS's line in it
-    let index = fetch_index()
+    let index = fetch_index(false)
     let newest = find_os(index)
     if newest == nil then
         success("No aerOS update has been published yet: you have the newest.")
@@ -178,4 +214,9 @@ func main()
     warn("Type rbt to restart into it.")
 end
 
-main()
+# "update check" checks quietly, and "update" on its own does the rest
+if len(args) > 0 and args[0] == "check" then
+    check()
+else
+    main()
+end

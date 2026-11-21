@@ -87,6 +87,21 @@ def put_update_app(t, disk, port):
     must(done.returncode == 0, f'could not put updt.aer on the disk: {done.stderr!r}')
 
 
+def said_by(aeros, line, timeout=60):
+    """Run a line at the prompt, and give back what was printed after it (its echo left out)."""
+    start = len(aeros.serial())
+    aeros.run(line, timeout=timeout)
+    printed = aeros.serial()[start:]
+    return printed.split('\n', 1)[1] if '\n' in printed else ''
+
+
+def quiet(printed):
+    """Nothing printed but the next prompt: no [ ! ], [ X ] or any other message. (App mode's line
+    is only on the serial port, never the screen: src/sys/appmode.c)"""
+    return all(line.strip() == '' or re.match(r'\S+@\d+//\S*: $', line) or line.startswith('app mode: ')
+               for line in printed.split('\n'))
+
+
 def start_from_disk(t, disk, network=False):
     """Start AerOS from the installed disk alone, as a PC would, and log in."""
     aeros = t.boot(disk=disk, from_disk=True, network='user,model=e1000' if network else None)
@@ -121,6 +136,26 @@ def test_publish_os(t):
         must(server.get('/os/main.elf') == (200, read(second)), 'AerOS should still be served')
     finally:
         server.stop()
+
+
+def test_check_is_quiet_when_not_installed(t):
+    # On an AEROS disk that wasn't made by INSTALL (AerOS started some other way), there is
+    # nothing to update: osupdatable() says why, osupdatable(false) doesn't, and update check
+    # (the real one, as it is built in) says nothing at all
+    aeros = t.boot(disk=t.disk(), network='user,model=e1000')
+    aeros.first_login()
+    aeros.cls()
+    aeros.run('print(osupdatable(false))')
+    aeros.expect_line('false')
+    aeros.expect_not('[ ! ]')
+    aeros.cls()
+    aeros.run('update check', timeout=60)
+    aeros.expect_not('[ ! ]', '[ X ]', 'available')
+    aeros.cls()
+    aeros.run('print(osupdatable())')
+    aeros.expect("[ ! ] This AEROS disk has no /boot/main.elf")
+    aeros.expect_line('false')
+    aeros.quit()
 
 
 def test_update_and_go_back(t):
@@ -164,7 +199,16 @@ def test_update_and_go_back(t):
                   ' + chr(34) + "x" + chr(34) + "))")')
         aeros.run('sneaky', timeout=30)
 
+        # update check, before the firewall lets AerOS reach the server: not a word (it is for
+        # startup.txt, at every login, network or not)
+        printed = said_by(aeros, 'updt check')
+        must(quiet(printed), f'update check should say nothing when it can\'t reach the server: {printed!r}')
+
         aeros.run(f'fw web 10.0.2.2 {server.port}')
+        # ...and once it can, one line: there is a newer one
+        printed = said_by(aeros, 'updt check')
+        must('[ ! ] aerOS 0.01 ALPHA is available (built 2030-01-01 00:00): type update' in printed,
+             f'update check should say a newer aerOS is available: {printed!r}')
         aeros.run(f'let k = httpget("{url}")', timeout=120)
         aeros.run(f'let s = "{signature[:64]}"')
         aeros.run(f'let s2 = "{signature[64:]}"')
@@ -210,6 +254,8 @@ def test_update_and_go_back(t):
         aeros.run(f'fw web 10.0.2.2 {server.port}')
         aeros.run('updt', timeout=60)
         aeros.expect(f'[ OK ] aerOS is up to date: 0.01 ALPHA, build {SECOND}')
+        printed = said_by(aeros, 'updt check')
+        must(quiet(printed), f'update check should say nothing when it is up to date: {printed!r}')
 
         # the same one again is refused: it isn't newer than the one on the disk
         aeros.run(f'fw web 10.0.2.2 {server.port}')

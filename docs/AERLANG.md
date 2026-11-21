@@ -299,7 +299,7 @@ rows, e.g. `["Processor", "Speed", "about 2400 MHz"]` (`/bin/sysinfo.aer` shows 
 AerOS has asked you itself (see [installing](INSTALLING.md)) ·
 `osbuild()` this AerOS's build number, `"20261204183000"` · `osversion()` its version,
 `"0.01 ALPHA"` · `osupdatable()` can it be updated here (installed on a disk)? `false` after
-saying why not · `osupdate(kernel, signature)` put a new AerOS on the disk, to start next time:
+saying why not (`osupdatable(false)`: without saying) · `osupdate(kernel, signature)` put a new AerOS on the disk, to start next time:
 only one signed by AerOS's makers and newer than the one there, and only after AerOS has asked
 you itself (see [updating](UPDATING.md))
 

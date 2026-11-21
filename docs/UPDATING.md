@@ -16,10 +16,13 @@ AerOS:      the update app  ->  osupdate(kernel, signature)  ->  restart  ->  th
 | --- | --- |
 | `osbuild()` | this AerOS's build number: the time it was built, `"20261204183000"` (UTC, year first, so comparing two as text puts them in time order) |
 | `osversion()` | this AerOS's version, `"0.01 ALPHA"` |
-| `osupdatable()` | `true` if AerOS can be updated here (it is on a disk made by `INSTALL`), or `false` after saying why not |
+| `osupdatable()` | `true` if AerOS can be updated here (it is on a disk made by `INSTALL`), or `false` after saying why not. `osupdatable(false)` doesn't say why |
 | `osupdate(kernel, signature)` | checks a new `main.elf` (bytes, as `httpget` gives them) and its signature (128 hex digits), asks you, and puts it on the disk to start next time. `true` if it is in place, `false` after saying why not |
 
-An update app follows the same steps as `pkg`:
+`update` (`src/disk/bin/update.aer`) does it all with a question or two, and `update check` only
+says in one line whether there is a newer AerOS, and nothing if there isn't or it can't tell
+(`osupdatable(false)` doesn't say why not): a line for `startup.txt`. An update app follows the
+same steps as `pkg`:
 1. fetch `/index.txt` and `/index.sig`, and `verify` the index;
 2. find the `#os` line;
 3. show `osversion()` and `osbuild()` beside the line's version and build, and stop if they're the same;

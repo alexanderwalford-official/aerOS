@@ -375,13 +375,22 @@ value_t bi_osversion (int argc, value_t* argv, int line) {
     return aer_string(version, (uint32_t)slen(version));
 }
 
-// osupdatable(): can AerOS be updated here? true if so (it was installed on a disk, and started
-// from it), or false after saying why not
+// osupdatable(say): can AerOS be updated here? true if so (it was installed on a disk, and started
+// from it), or false after saying why not. osupdatable(false) doesn't say why: for checking
+// quietly, as "update check" does at each login (from startup.txt)
 value_t bi_osupdatable (int argc, value_t* argv, int line) {
-    (void)argc; (void)argv; (void)line;
+    bool say = true;
+    if (argc == 1) {
+        if (argv[0].type != V_BOOL) {
+            aer_error(line, "osupdatable() takes true (say why not, as it does with nothing) or false (don't)");
+        }
+        say = argv[0].as.i != 0;
+    }
     const char* why_not = update_unavailable();
     if (why_not != NULL) {
-        prtf("[ ! ] %s\n", why_not);
+        if (say) {
+            prtf("[ ! ] %s\n", why_not);
+        }
         return aer_bool(false);
     }
     return aer_bool(true);

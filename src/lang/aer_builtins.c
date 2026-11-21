@@ -86,7 +86,7 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("install", bi_install, 1, 1),
     BUILTIN("osbuild", bi_osbuild, 0, 0),
     BUILTIN("osversion", bi_osversion, 0, 0),
-    BUILTIN("osupdatable", bi_osupdatable, 0, 0),
+    BUILTIN("osupdatable", bi_osupdatable, 0, 1),
     BUILTIN("osupdate", bi_osupdate, 2, 2),
     BUILTIN("sync", bi_sync, 0, 0),
     BUILTIN("enc", bi_encrypt_file, 2, 2),
