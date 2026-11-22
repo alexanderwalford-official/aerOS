@@ -1,7 +1,7 @@
 """The desktop package (packages/desktop.aer): windows, the taskbar and start menu, the mouse and
-the keyboard, Notes saving what was typed, the apps found on the disk, the power entries and
-the settings. Booted from the ISO, so there is a graphics screen; the desktop is put on the
-disk the way pkg install would (t.package)."""
+the keyboard, Notes saving what was typed, the apps found on the disk, the power entries, the
+settings and the system monitor. Booted from the ISO, so there is a graphics screen; the
+desktop is put on the disk the way pkg install would (t.package)."""
 
 import os
 import struct
@@ -18,6 +18,11 @@ PICTURE = bytes([0x12, 0xA4, 0x56])     # the colour of the picture test_desktop
 # aerOS's own question, in a box over the graphics: its "Y = yes ..." line (ask_in_graphics in
 # src/sys/perm.c). It isn't on the serial port, as a question at the prompt is
 QUESTION = bytes([0xFF, 0xD0, 0x80])
+# the system monitor (desktop.aer): the network's signal bars while the link is up, the dark
+# screen its graphs are drawn on, and the edge round its panel
+LINK_UP = bytes([0x4F, 0xD1, 0x8B])
+SCREEN_BACK = bytes([0x0A, 0x0D, 0x12])
+MONITOR_EDGE = bytes([0x3C, 0x46, 0x54])
 
 # the desktop's own windows, in the order the start menu has them (OWN_APPS in desktop.aer)
 OWN_APPS = ['clock', 'files', 'notes', 'calc', 'system', 'settings', 'about']
@@ -321,6 +326,70 @@ def test_desktop_settings(t):
     saved = read_disk_file(disk, '/home/tester/desktop.cfg') or b''
     if b'picture=/home/tester/pic.bmp' not in saved:
         aeros.fail(f'desktop.cfg has no picture=/home/tester/pic.bmp: {saved!r}')
+
+
+def test_desktop_monitor(t):
+    """The system monitor: its indicators on the taskbar (the network's signal bars lit, the
+    processor's graph), and its panel, opened with Home or a click on them and closed with Esc
+    or a click outside it. Taking the network's link down (QEMU's set_link) puts the bars out
+    within a couple of seconds, without the desktop starting the card that app mode put away."""
+    disk = t.disk(files=t.package('desktop'))
+    aeros = t.boot(graphics=True, disk=disk, network='user,model=e1000,id=n0')
+    aeros.first_login()
+    before = start_desktop(aeros)
+
+    # the indicators, along the bottom of the screen (the taskbar is 34 pixels tall)
+    wait_for_colour(aeros, LINK_UP, 'the network signal bars, lit')
+    shot = aeros.screenshot('desktop-monitor-tray')
+    if not row_has(shot, shot[1] - 17, SCREEN_BACK):
+        aeros.fail("the processor's graph is not on the taskbar")
+    if not row_has(shot, shot[1] - 17, LINK_UP):
+        aeros.fail('the network signal bars are not on the taskbar')
+
+    # Home opens the panel; it stays up to date while open, so pulling the network's cable
+    # puts its bars out (on the taskbar and in the panel) within a look or two
+    aeros.key('home')
+    wait_for_colour(aeros, MONITOR_EDGE, 'the system monitor, after Home')
+    aeros.screenshot('desktop-monitor')
+    aeros.monitor('set_link n0 off')
+    wait_without_colour(aeros, LINK_UP, 'the signal bars to go out, with the link down')
+    aeros.screenshot('desktop-monitor-unplugged')
+    aeros.key('esc')
+    wait_without_colour(aeros, MONITOR_EDGE, 'the system monitor to close, after Esc')
+    aeros.monitor('set_link n0 on')
+    wait_for_colour(aeros, LINK_UP, 'the signal bars again, with the link back up')
+
+    # the mouse: into the bottom left corner, then along the taskbar onto the indicators,
+    # which sit just before the clock (130 to 225 pixels from the right end). QEMU sends a big
+    # move in pieces, so it goes a step at a time
+    for _ in range(8):
+        aeros.mouse_move(-200, 200)
+        time.sleep(0.1)
+    width = shot[0]
+    for _ in range(5):
+        aeros.mouse_move((width - 175) // 5, 0)
+        time.sleep(0.1)
+    aeros.mouse_move(0, -17)
+    time.sleep(0.5)
+    aeros.mouse_buttons(1)
+    time.sleep(0.2)
+    aeros.mouse_buttons(0)
+    wait_for_colour(aeros, MONITOR_EDGE, 'the system monitor, after clicking its indicators')
+    # a click on the desk, left of the panel, closes it
+    aeros.mouse_move(-(width // 2), -150)
+    time.sleep(0.5)
+    aeros.mouse_buttons(1)
+    time.sleep(0.2)
+    aeros.mouse_buttons(0)
+    wait_without_colour(aeros, MONITOR_EDGE, 'the system monitor to close, after a click outside')
+
+    # Esc closes the clock, then leaves the desktop
+    aeros.key('esc')
+    time.sleep(0.5)
+    aeros.key('esc')
+    aeros.wait_prompt(before, 30, what='desktop')
+    aeros.expect('Left the desktop.')
+    aeros.expect_not('Error')
 
 
 def answer_question(aeros, answer='a', timeout=30):

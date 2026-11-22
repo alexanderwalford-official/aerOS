@@ -75,6 +75,12 @@ bool clck_verify(void);
 // (0 before clck_init(), wraps back to 0 after about 49.7 days)
 uint32_t clkuptms(void);
 
+// how many of those milliseconds the processor was idle: stopped with "hlt" (cpu_idle), with
+// nothing to do until the next interrupt. Waiting for a key, sleep(), frame() and a thread with
+// nothing ready to run all count. The rest is how busy it was: over a second, (1000 - idle)
+// milliseconds of work is the CPU load the desktop's taskbar shows (AerLang's telemetry())
+uint32_t clck_idle_ms(void);
+
 // wait for the given number of milliseconds
 // uses the timer and "hlt" when it can, otherwise a rough busy wait (before clck_init() or with
 // interrupts disabled, e.g. inside an IRQ handler). The wait can be up to 1ms shorter than asked

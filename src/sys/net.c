@@ -755,6 +755,21 @@ void net_status (net_status_t* out) {
     net_unlock();
 }
 
+// a quick look at the network, without starting the card (see net.h). No lock is needed: these
+// are flags and whole numbers, each read in one go, and another thread only gets a turn at a
+// safe point (sys/thread.h), so none of them can be caught half changed
+void net_glance (net_glance_t* out) {
+    // only the first time does this read /acc/network; after that it is already loaded
+    load_config();
+    out->card = card_found;
+    out->running = card_ready;
+    out->link = e1000_link_up();
+    out->address = config.address;
+    out->sent = counts.sent;
+    out->received = counts.received;
+    out->blocked = counts.blocked;
+}
+
 // set our address, netmask, gateway and DNS server (NET IP), and keep them in /acc/network
 void net_set_address (uint32_t address, uint32_t netmask, uint32_t gateway, uint32_t dns_server) {
     net_lock();

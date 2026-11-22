@@ -305,6 +305,21 @@ app AerOS waits for a key before the program comes back ·
 never comes back. Save first: there is no going back once you say yes ·
 `sysinfo()` everything AerOS knows about the computer, as a list of `[group, name, value]`
 rows, e.g. `["Processor", "Speed", "about 2400 MHz"]` (`/bin/sysinfo.aer` shows them) ·
+`telemetry()` how busy AerOS is right now, for a live display (the desktop's system monitor
+asks once a second). Unlike `sysinfo()` it is quick: it only reads counters AerOS keeps anyway,
+never waits, never touches a disk and never starts a network card app mode put away. It gives
+`[ms, idle ms, threads, memory, disk cache, network]`, e.g.
+`[6294, 3353, [["main", "running"], ["disk writer", "sleeping"]], [4286, 257489], [1, 4096, 1618, 11, 0], [true, false, true, "10.0.2.15", 0, 0, 0, 0]]`:
+`ms` is milliseconds since AerOS started and `idle ms` how many of them the processor had
+nothing to do (stopped with `hlt` until the next interrupt: waiting for a key, `sleep()`,
+`frame()`; `clck_idle_ms` in `src/sys/sys_clck.h`), so asked twice, the share of the time
+between that wasn't idle is the CPU load; `threads` is `[name, state]` for each thread
+(`"running"`, `"ready"`, `"sleeping"`, `"waiting"`: see THREADS.md); `memory` is
+`[KB of the kernel heap used, KB it has]`; `disk cache` is `[KB kept, KB it can keep,
+sectors found in it, sectors read from the drive, KB changed and not written yet]`
+(DISK_CACHE.md); `network` is `[is there a card, is it running, is the link up, AerOS's
+address, sealed messages sent, received, packets blocked, firewall rules]` (NETWORK.md: a card
+app mode put away isn't running, but its link is still known) ·
 `disks()` the hard disks there are, as `[number, model, megabytes, what is on it]` ·
 `install(number)` erase that disk and install AerOS on it: only in demo mode, and only after
 AerOS has asked you itself (see [installing](INSTALLING.md)) ·

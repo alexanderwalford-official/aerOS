@@ -99,6 +99,7 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("sleep", bi_sleep, 1, 1),
     BUILTIN("time", bi_time, 0, 0),
     BUILTIN("sysinfo", bi_system_info, 0, 0),
+    BUILTIN("telemetry", bi_telemetry, 0, 0),
     BUILTIN("big", bi_big_text, 3, 5),
     BUILTIN("progress", bi_progress, 5, 6),
     BUILTIN("spinner", bi_spinner, 2, 4),

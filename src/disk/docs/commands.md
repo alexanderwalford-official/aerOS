@@ -133,7 +133,7 @@ The first time, let AerOS reach the server: `fw web packages.intercon.network 80
 | `browser` | a web browser for http:// pages: `browser frogfind.com` ([network](network.md)) |
 | `bench` | how fast the disk is |
 | `anim` | the animations AerLang can draw |
-| `desktop` | a desktop with windows: a clock, files, notes, a calculator, your installed apps, Sleep / Restart / Shut down, and Settings for its colours, background picture and taskbar (from the CD, for its graphics screen) |
+| `desktop` | a desktop with windows: a clock, files, notes, a calculator, your installed apps, Sleep / Restart / Shut down, Settings for its colours, background picture and taskbar, and a live system monitor (from the CD, for its graphics screen) |
 
 A package is its program, `/apps/<name>.aer`, and a folder of its own, `/apps/<name>/`, for the
 files it comes with (the viewer's pictures) and what it keeps there (Snake's high scores). It
@@ -141,7 +141,9 @@ may read its own folder without asking.
 
 The desktop shows every app in `/bin/` and `/apps/` as an icon and in its start menu. Opening
 one closes the desktop until the app ends, then it comes back with the same windows. Its
-settings are kept in `desktop.cfg` in your home folder.
+settings are kept in `desktop.cfg` in your home folder. The little graphics by its clock are
+the system monitor: the network, how busy the processor is, the threads, the memory and the
+disk cache, live. Click them, or press Home, for a panel with graphs and numbers.
 | `pm` | show the process stack |
 
 ## Updating aerOS

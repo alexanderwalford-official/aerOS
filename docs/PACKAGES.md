@@ -113,7 +113,7 @@ description:
 | `browser` | a text web browser for plain `http://` pages: numbered links, back, paging, `s` to search with FrogFind, and pictures (BMP, PNG, GIF, JPEG) on a graphics screen | |
 | `bench` | how fast AerOS reads and writes its disk | |
 | `anim` | spinners, progress bars and moving text | |
-| `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, System, Settings and About, and an icon for every app installed, by mouse or keyboard | |
+| `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, System, Settings and About, an icon for every app installed, and a live system monitor on the taskbar, by mouse or keyboard | |
 
 **The desktop** finds the apps as it starts: every program in `/bin/` and the packages in
 `/apps/` (not itself, and not `sleep`, which the power menu has). AerOS runs one program in
@@ -127,6 +127,15 @@ wakes it, as `sleep` does, but with the windows kept), Restart and Shut down, wh
 chosen from your files) and which side the taskbar is on, and keeps them in `desktop.cfg` in
 your home folder, read each time it starts. As that is your folder, AerOS asks before the
 desktop reads or changes it: A (always) answers once and for all.
+
+Next to the clock, the **system monitor** shows what AerOS is doing, live, in little graphics:
+the network's signal bars (lit while the link is up; crossed out with no card), how busy the
+processor has been over the last seconds, a square for each thread running, and gauges for the
+memory in use and the disk cache. Clicking them, or Home, opens a panel with a minute of the
+processor's load, the numbers behind every gauge, each thread by name, and the network's
+address, counters and firewall rules; Esc, Home or a click outside closes it. It all comes from
+AerLang's `telemetry()`, asked once a second: it only reads counters AerOS keeps, so it costs
+next to nothing, and it never starts the network card that app mode put away.
 
 The tests don't need the server for them: `t.package('snake')` puts one on a test's disk the
 way `pkg install` would (`tools/test/run.py`).

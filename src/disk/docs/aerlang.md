@@ -141,6 +141,14 @@ only one signed by AerOS's makers, after asking you (`osupdatable()` says if it 
 `args` is the list of words typed after the program's name.
 `sysinfo()` gives everything AerOS knows about the computer as a list of
 `[group, name, value]`, e.g. `["Processor", "Speed", "about 2400 MHz"]`.
+`telemetry()` says how busy AerOS is right now, quickly enough to ask every second (the
+desktop's system monitor does): `[ms, idle ms, threads, memory, disk cache, network]`, e.g.
+`[6294, 3353, [["main", "running"], ["disk writer", "sleeping"]], [4286, 257489],
+[1, 4096, 1618, 11, 0], [true, false, true, "10.0.2.15", 0, 0, 0, 0]]`. Ask twice: the
+processor was busy for the time between, less the idle time between. Memory is
+`[KB used, KB there]`, the disk cache `[KB kept, KB it can keep, reads found in it, reads
+from the disk, KB waiting to be written]`, and the network `[card?, running?, link up?,
+address, sent, received, blocked, firewall rules]`.
 `queue("hello.aer")` adds a program (with its arguments) to the queue that `go` runs, and
 gives back how many are queued. `launch("maze3d", "back")` runs an installed app (in `/bin/`
 or `/apps/`) when the program ends, then starts the program again with `back` as its `args`:

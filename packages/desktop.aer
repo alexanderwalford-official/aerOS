@@ -21,10 +21,16 @@
 # Without a mouse: Tab opens the start menu, the arrows choose, Enter opens. The arrows move
 # the pointer too, and Enter clicks, so everything can be reached from the keyboard.
 #
+# The system monitor: little graphics by the clock show what aerOS is doing, live: the
+# network's signal bars, how busy the processor is, the threads running, and gauges for the
+# memory and the disk cache. Click them (or press Home) for a panel with graphs and numbers.
+# See "the system monitor" below.
+#
 # How it works: everything on the screen is drawn again, back to front (the wallpaper, the
 # icons, each window, the taskbar, the menu, then the pointer), into the back buffer (gbuf),
 # and shown at once (gshow), so nothing flickers. It is only drawn again when something has
-# changed: the mouse moved, a key was pressed, or the clock ticked.
+# changed: the mouse moved, a key was pressed, the clock ticked, or the system monitor took
+# its look, once a second.
 #
 # The windows are lists: windows holds them back to front, so the last one is in front. Each
 # is [kind, title, x, y, w, h, shrunk, scroll, data], and W_KIND... below say which is which.
@@ -72,6 +78,17 @@ let FAINT = 0x8A8A84             # quieter text
 let BUTTON_FACE = 0xDCDCD6       # a button in a window
 let WHITE_INK = 0xFFFFFF
 
+# the system monitor's colours (see "the system monitor"), the same in every theme: how things
+# are going (fine, getting busy, wrong), the network's link, and the dark little screens the
+# graphs are drawn on
+let GOOD = 0x6BCB77
+let BUSY = 0xF2C25C
+let BAD = 0xE5534B
+let LINK_UP = 0x4FD18B           # the network's signal bars, while the link is up
+let SCREEN_BACK = 0x0A0D12       # behind a graph
+let MONITOR_EDGE = 0x3C4654      # round the system monitor's panel
+let SOFT_INK = 0xA8AEB8          # quieter text on the dark panel
+
 let TASKBAR_H = 34               # pixels: the taskbar along the top or the bottom...
 let TASKBAR_SIDE_W = 132         # ...or down the left or the right
 let TITLE_H = 24
@@ -80,6 +97,10 @@ let ROW = 18                     # one row of text in a list
 let MENU_ROW = 28                # one entry of the start menu
 let MENU_COLUMN = 200            # the start menu's width (more columns if it doesn't fit)
 let CHAR_W = 8                   # text(..., 1) is 8 x 16 pixels a character
+let TRAY_W = 124                 # the system monitor's indicators along the taskbar...
+let TRAY_UPRIGHT_H = 46          # ...or their height, down a taskbar on the left or the right
+let MONITOR_W = 340              # the panel they open
+let MONITOR_H = 500
 
 # where the taskbar can go
 let SIDES = ["bottom", "top", "left", "right"]
@@ -118,7 +139,7 @@ let APPS = []                    # every icon: [kind, name], and [kind, name, pa
 let windows = []
 let running = true
 let launching = ""               # the app the desktop is closing for, if it is (see the top)
-let menu_open = ""               # "start", "power", or "" for no menu
+let menu_open = ""               # "start", "power", "monitor" (the system monitor) or "" for none
 let menu_choice = 0              # the menu entry the keyboard is on
 let dragging = nil               # the window being dragged by its title bar, or nil
 let drag_dx = 0                  # where in the title bar it was taken hold of
@@ -162,6 +183,38 @@ let year = 2026
 
 # what System shows, kept from the same sysinfo()
 let system_rows = []
+
+# The system monitor: what aerOS is doing, from telemetry() once a second (it is quick: it only
+# reads counters aerOS keeps anyway). It gives back [ms, idle ms, threads, memory, disk cache,
+# network], and T_MS... say which is which; the network's part is [card, running, link,
+# address, sent, received, blocked, firewall rules], N_CARD... below (docs/AERLANG.md has it all)
+let T_MS = 0
+let T_IDLE = 1
+let T_THREADS = 2
+let T_MEMORY = 3
+let T_CACHE = 4
+let T_NET = 5
+let N_CARD = 0
+let N_RUNNING = 1
+let N_LINK = 2
+let N_ADDRESS = 3
+let N_SENT = 4
+let N_RECEIVED = 5
+let N_BLOCKED = 6
+let N_RULES = 7
+let THREADS_MAX = 16             # aerOS runs at most 16 threads (src/sys/thread.h)
+let LOOK_EVERY = 1000            # milliseconds between looks
+let HISTORY = 60                 # looks kept for the graphs: the last minute
+
+let reading = nil                # what telemetry() said last time
+let looked_at = 0                # time() then
+let cpu_load = 0                 # how busy the processor was since the look before, 0 to 100 (%)
+# The graphs' readings, as rings: the newest goes in at history_next, over the oldest, and
+# history_next moves on one (back to 0 after the end). So the oldest is always at history_next
+let cpu_history = list(HISTORY, 0)
+let memory_history = list(HISTORY, 0)
+let history_next = 0
+let readings = 0                 # how many of the rings' places have a reading yet
 
 # Notes: what has been typed, kept while its window is closed too
 let NOTES_FILE = ""
@@ -675,15 +728,24 @@ func clock_spot()
     return [BAR_X + BAR_W - 96, BAR_Y + 9]
 end
 
+func tray_box()
+    # the system monitor's indicators, as [x, y, w, h]: just before the clock along the taskbar,
+    # or above it down one side
+    if upright() then
+        return [BAR_X + 6, clock_spot()[1] - 8 - TRAY_UPRIGHT_H, BAR_W - 12, TRAY_UPRIGHT_H]
+    end
+    return [clock_spot()[0] - 10 - TRAY_W, BAR_Y + 5, TRAY_W, BAR_H - 10]
+end
+
 func window_button(i)
     # window i's button on the taskbar, as [x, y, w, h]: 150 pixels apart along the taskbar, or
     # 30 down it, or closer with many windows, so they all fit between the start button and
-    # the clock
+    # the system monitor's indicators
     let count = len(windows)
-    let room = clock_spot()[0] - 10 - 100
+    let room = tray_box()[0] - 10 - 100
     let gap = 150
     if upright() then
-        room = BAR_H - 40 - 70
+        room = tray_box()[1] - 6 - (BAR_Y + 40)
         gap = 30
     end
     if count > 0 and room / count < gap then
@@ -1558,7 +1620,8 @@ func draw_about(x, y)
     text(x + 20, y + 76, "It is a package: pkg install desktop", INK, 1)
     text(x + 20, y + 106, "Drag a window by its title bar.", FAINT, 1)
     text(x + 20, y + 124, "Tab opens the menu, Esc closes the front window.", FAINT, 1)
-    text(x + 20, y + 142, "Read it: /apps/desktop.aer", FAINT, 1)
+    text(x + 20, y + 142, "Home shows the system monitor.", FAINT, 1)
+    text(x + 20, y + 160, "Read it: /apps/desktop.aer", FAINT, 1)
 end
 
 func draw_power_sign(cx, cy, colour)
@@ -1605,6 +1668,7 @@ func draw_taskbar()
         text(b[0] + 8, b[1] + b[3] / 2 - 8, fit(win[W_TITLE], (b[2] - 16) / CHAR_W), WHITE_INK, 1)
     end
 
+    draw_tray()
     let spot = clock_spot()
     text(spot[0], spot[1], time_text(false), WHITE_INK, 1)
     let off = power_button()
@@ -1614,6 +1678,371 @@ func draw_taskbar()
     end
     rect(off[0], off[1], off[2], off[3], off_colour)
     draw_power_sign(off[0] + off[2] / 2, off[1] + off[3] / 2 + 1, WHITE_INK)
+end
+
+
+# ---- the system monitor ---------------------------------------------------------------------
+
+# Little graphics on the taskbar, next to the clock, show what aerOS is doing, from left to
+# right (or in two rows, down a taskbar on the left or the right):
+#     the network     signal bars, lit while the link is up. A dot in the corner says whether
+#                     the card is running (green) or resting: app mode puts it away while a
+#                     program that doesn't use the network runs, as the desktop doesn't
+#     the processor   how busy it has been, a bar a second, the newest on the right
+#     the threads     a square for each of the 16 aerOS can run, lit for the ones running
+#     memory          two gauges: the memory in use, and how full the disk cache is
+# Clicking them (or Home) opens a panel with more: bigger graphs and the numbers behind them.
+# It is drawn again each time the desktop is, so it stays up to date while it is open, and a
+# click outside it, Esc or Home closes it. menu_open is "monitor" while it is open.
+
+func take_telemetry()
+    # ask telemetry() how things are, and add a reading to each graph. How busy the processor
+    # was is the share of the time since the last look that it wasn't idle
+    let now = telemetry()
+    if reading != nil then
+        let spent = now[T_MS] - reading[T_MS]
+        if spent > 0 then
+            let busy = spent - (now[T_IDLE] - reading[T_IDLE])
+            cpu_load = keep_between(busy * 100 / spent, 0, 100)
+        end
+        cpu_history[history_next] = cpu_load
+        memory_history[history_next] = share(now[T_MEMORY][0], now[T_MEMORY][1])
+        history_next = (history_next + 1) % HISTORY
+        readings = keep_between(readings + 1, 0, HISTORY)
+    end
+    reading = now
+end
+
+func keep_between(n, low, high)
+    # n, or low or high if it is past them
+    if n < low then
+        return low
+    end
+    if n > high then
+        return high
+    end
+    return n
+end
+
+func share(part, total)
+    # part as a percentage of total, 0 to 100 (0 when there is no total)
+    if total <= 0 then
+        return 0
+    end
+    return keep_between(part * 100 / total, 0, 100)
+end
+
+func level_colour(percent)
+    # green while there is plenty left, yellow as it fills, red when it is nearly full
+    if percent < 60 then
+        return GOOD
+    elif percent < 85 then
+        return BUSY
+    end
+    return BAD
+end
+
+func thread_colour(state)
+    # a thread's square or dot: the one running now (the desktop itself) in the theme's colour,
+    # one waiting for its turn yellow, and one asleep (the disk writer, mostly) pale
+    if state == "running" then
+        return ACCENT
+    elif state == "ready" or state == "waiting" then
+        return BUSY
+    elif state == "sleeping" then
+        return SELECT
+    end
+    return FAINT
+end
+
+func size_text(kb)
+    # a size in KB as "640 KB", or "12.5 MB" from a megabyte up
+    if kb < 1024 then
+        return str(kb) + " KB"
+    end
+    let tenths = kb * 10 / 1024
+    return str(tenths / 10) + "." + str(tenths % 10) + " MB"
+end
+
+func duration(ms)
+    # how long, as "3h 05m" or "4m 12s"
+    let seconds = ms / 1000
+    if seconds >= 3600 then
+        return str(seconds / 3600) + "h " + two(seconds / 60 % 60) + "m"
+    end
+    return str(seconds / 60) + "m " + two(seconds % 60) + "s"
+end
+
+func tray_parts()
+    # where each indicator goes in tray_box(): [signal, processor graph, threads, gauges], each
+    # [x, y, w, h]. In a row along the taskbar, or two rows down one side (the graph below)
+    let box = tray_box()
+    let x = box[0]
+    let y = box[1]
+    if upright() then
+        return [[x + 8, y + 4, 16, 18], [x + 8, y + 26, box[2] - 16, 16],
+                [x + box[2] / 2 - 8, y + 5, 15, 15], [x + box[2] - 26, y + 4, 18, 18]]
+    end
+    return [[x + 6, y + 3, 16, 18], [x + 28, y + 3, 44, 18], [x + 78, y + 5, 15, 15], [x + 100, y + 3, 18, 18]]
+end
+
+func draw_signal(x, y, w, h, net)
+    # the network as 4 signal bars, each taller than the last, in w x h. Lit while the link is
+    # up; with none, dim with a red dot, and with no card at all, crossed out in red. A dot in
+    # the top left (where the bars are short) is green while the card is running
+    let bar_w = (w + 1) / 4
+    let dim = blend(TASKBAR_LIGHT, 0xFFFFFF, 1, 5)
+    let colour = dim
+    if net[N_CARD] and net[N_LINK] then
+        colour = LINK_UP
+    end
+    for i = 0 to 3 do
+        let tall = (i + 1) * h / 4
+        rect(x + i * bar_w, y + h - tall, bar_w - 1, tall, colour)
+    end
+    if not net[N_CARD] then
+        line(x, y + 2, x + w - 1, y + h - 1, BAD)
+        line(x + 1, y + 2, x + w, y + h - 1, BAD)
+        line(x + w - 1, y + 2, x, y + h - 1, BAD)
+        line(x + w, y + 2, x + 1, y + h - 1, BAD)
+    elif not net[N_LINK] then
+        draw_disc(x + 3, y + 3, 3, BAD)
+    elif net[N_RUNNING] then
+        draw_disc(x + 3, y + 3, 2, GOOD)
+    end
+end
+
+func draw_graph(history, x, y, w, h, bar_w, colour)
+    # a bar graph of a history ring (readings of 0 to 100) on a dark little screen: as many of
+    # the newest readings as fit, bar_w pixels each, the newest on the right. Each bar is a
+    # dimmer colour with a bright top, so the bars together look like a glowing line. Only the
+    # readings taken so far are drawn, so a new graph fills in from the right
+    rect(x, y, w, h, SCREEN_BACK)
+    # lines across at a quarter, a half and three quarters (only a half on a small graph), in
+    # a faint shade of the graph's colour, like the lines on an oscilloscope's screen
+    let grid = blend(SCREEN_BACK, colour, 1, 7)
+    if h >= 40 then
+        for q = 1 to 3 do
+            rect(x, y + h * q / 4, w, 1, grid)
+        end
+    else
+        rect(x, y + h / 2, w, 1, grid)
+    end
+    let shown = keep_between(w / bar_w, 0, readings)
+    let first_x = x + w - shown * bar_w
+    let body = blend(colour, SCREEN_BACK, 2, 5)
+    let gap = 1
+    if bar_w <= 2 then
+        gap = 0
+    end
+    for c = 0 to shown - 1 do
+        # (the ring's oldest reading is at history_next, so the newest `shown` start that many before it)
+        let value = history[(history_next - shown + c + HISTORY) % HISTORY]
+        # at least the bright top, so a quiet minute is still a line along the bottom
+        let tall = keep_between(value * (h - 2) / 100, 1, h - 2)
+        let bx = first_x + c * bar_w
+        rect(bx, y + h - 1 - tall, bar_w - gap, tall, body)
+        rect(bx, y + h - 1 - tall, bar_w - gap, 1, colour)
+    end
+end
+
+func draw_thread_squares(x, y, threads)
+    # a 4 x 4 grid of squares, one for each thread aerOS can run: lit (thread_colour) for the
+    # ones running, faint for the rest
+    let unused = blend(TASKBAR_LIGHT, 0xFFFFFF, 1, 6)
+    for i = 0 to THREADS_MAX - 1 do
+        let colour = unused
+        if i < len(threads) then
+            colour = thread_colour(threads[i][1])
+        end
+        rect(x + (i % 4) * 4, y + (i / 4) * 4, 3, 3, colour)
+    end
+end
+
+func filled(percent, room)
+    # how many of `room` pixels a gauge fills for percent: at least 2 for anything above 0, so
+    # a little is still seen
+    if percent <= 0 then
+        return 0
+    end
+    return keep_between(percent * room / 100, 2, room)
+end
+
+func draw_gauge(x, y, w, h, percent, colour)
+    # an upright gauge, filled from the bottom, its empty part a dark shade of its colour
+    rect(x, y, w, h, SCREEN_BACK)
+    rect(x + 1, y + 1, w - 2, h - 2, blend(SCREEN_BACK, colour, 1, 6))
+    let full = filled(percent, h - 2)
+    rect(x + 1, y + h - 1 - full, w - 2, full, colour)
+end
+
+func draw_meter(x, y, w, h, percent, colour)
+    # a gauge lying down, filled from the left
+    rect(x, y, w, h, SCREEN_BACK)
+    rect(x + 1, y + 1, w - 2, h - 2, blend(SCREEN_BACK, colour, 1, 6))
+    rect(x + 1, y + 1, filled(percent, w - 2), h - 2, colour)
+end
+
+func cache_colour()
+    # the disk cache's gauge: a lighter shade of the theme's title bars
+    return blend(TITLE_ON, 0xFFFFFF, 2, 5)
+end
+
+func draw_tray()
+    # the indicators on the taskbar (see the top of this section), lit up while the pointer is
+    # on them or their panel is open
+    let box = tray_box()
+    if menu_open == "monitor" or inside_box(pointer_x, pointer_y, box) then
+        rect(box[0], box[1], box[2], box[3], TASKBAR_LIGHT)
+    end
+    if reading == nil then
+        return
+    end
+    let parts = tray_parts()
+    let s = parts[0]
+    draw_signal(s[0], s[1], s[2], s[3], reading[T_NET])
+    let g = parts[1]
+    draw_graph(cpu_history, g[0], g[1], g[2], g[3], 2, ACCENT)
+    draw_thread_squares(parts[2][0], parts[2][1], reading[T_THREADS])
+    let m = parts[3]
+    let memory = reading[T_MEMORY]
+    let used = share(memory[0], memory[1])
+    draw_gauge(m[0], m[1], 7, m[3], used, level_colour(used))
+    let cache = reading[T_CACHE]
+    draw_gauge(m[0] + 11, m[1], 7, m[3], share(cache[0], cache[1]), cache_colour())
+end
+
+func monitor_box()
+    # where the panel goes, as [x, y, w, h]: by the indicators, on the desk side of the taskbar
+    let tray = tray_box()
+    let w = MONITOR_W
+    let h = MONITOR_H
+    let x = tray[0] + tray[2] - w
+    let y = BAR_Y - h - 2
+    if TASKBAR_SIDE == "top" then
+        y = BAR_Y + BAR_H + 2
+    elif upright() then
+        # beside the taskbar, its bottom level with the indicators'
+        y = tray[1] + tray[3] - h
+        if TASKBAR_SIDE == "left" then
+            x = BAR_X + BAR_W + 2
+        else
+            x = BAR_X - w - 2
+        end
+    end
+    return [keep_between(x, 2, SW - 2 - w), keep_between(y, 2, SH - 2 - h), w, h]
+end
+
+func monitor_heading(x, y, w, title, value, value_colour)
+    # a heading in the panel: the title on the left, a figure on the right
+    text(x, y, title, WHITE_INK, 1)
+    text(x + w - len(value) * CHAR_W, y, value, value_colour, 1)
+end
+
+func draw_monitor()
+    # the panel: like frosted glass, the desk showing faintly through it, with a line of the
+    # theme's colour along the top. Then a part for each of the processor, memory, the disk
+    # cache, the threads and the network
+    let box = monitor_box()
+    let x = box[0]
+    let y = box[1]
+    let w = box[2]
+    let h = box[3]
+    rect(x - 1, y - 1, w + 2, h + 2, MONITOR_EDGE)
+    gtint(x, y, w, h, MENU, 0.88)
+    rect(x, y, w, 3, ACCENT)
+    let left = x + 18
+    let wide = w - 36
+
+    text(left, y + 14, "System monitor", ACCENT, 1)
+    let up = "up " + duration(reading[T_MS])
+    text(x + w - 18 - len(up) * CHAR_W, y + 14, up, SOFT_INK, 1)
+
+    # the processor: the last minute, a bar a second
+    let row = y + 44
+    monitor_heading(left, row, wide, "Processor", str(cpu_load) + "% busy", ACCENT)
+    draw_graph(cpu_history, left, row + 22, wide, 64, wide / HISTORY, ACCENT)
+    text(left, row + 90, "a minute ago", SOFT_INK, 1)
+    text(left + wide - 3 * CHAR_W, row + 90, "now", SOFT_INK, 1)
+
+    # memory: the kernel's heap, where programs get theirs from, and its last minute as a line
+    # of little bars under the meter
+    row = row + 118
+    let memory = reading[T_MEMORY]
+    let used = share(memory[0], memory[1])
+    monitor_heading(left, row, wide, "Memory", size_text(memory[0]) + " of " + size_text(memory[1]), SOFT_INK)
+    draw_meter(left, row + 22, wide, 10, used, level_colour(used))
+    draw_graph(memory_history, left, row + 34, wide, 12, wide / HISTORY, level_colour(used))
+
+    # the disk cache: how full it is, and how often a read was found in it
+    row = row + 60
+    let cache = reading[T_CACHE]
+    if cache[1] == 0 then
+        monitor_heading(left, row, wide, "Disk cache", "none", SOFT_INK)
+        text(left, row + 22, "No aerOS disk: files are in memory.", SOFT_INK, 1)
+    else
+        monitor_heading(left, row, wide, "Disk cache", size_text(cache[0]) + " of " + size_text(cache[1]), SOFT_INK)
+        draw_meter(left, row + 22, wide, 10, share(cache[0], cache[1]), cache_colour())
+        let found = "found in memory " + str(share(cache[2], cache[2] + cache[3])) + "%"
+        text(left, row + 38, found + ", " + size_text(cache[4]) + " to write", SOFT_INK, 1)
+    end
+
+    # the threads, a row each (room for 3): a dot in the colour of what it is doing, its name,
+    # and what it is doing
+    row = row + 62
+    let threads = reading[T_THREADS]
+    let how_many = str(len(threads)) + " of " + str(THREADS_MAX)
+    if len(threads) > 3 then
+        how_many = "first 3 of " + how_many
+    end
+    monitor_heading(left, row, wide, "Threads", how_many, SOFT_INK)
+    for i = 0 to keep_between(len(threads), 0, 3) - 1 do
+        let ty = row + 22 + i * 18
+        let doing = threads[i][1]
+        draw_disc(left + 4, ty + 8, 4, thread_colour(doing))
+        text(left + 16, ty, fit(threads[i][0], 20), SOFT_INK, 1)
+        text(left + wide - len(doing) * CHAR_W, ty, doing, thread_colour(doing), 1)
+    end
+
+    # the network: the signal bars, bigger, and what they mean
+    row = row + 84
+    let net = reading[T_NET]
+    let status = "connected"
+    let status_colour = LINK_UP
+    if not net[N_CARD] then
+        status = "no card"
+        status_colour = BAD
+    elif not net[N_LINK] then
+        status = "no link"
+        status_colour = BAD
+    end
+    monitor_heading(left, row, wide, "Network", status, status_colour)
+    draw_signal(left, row + 24, 22, 30, net)
+    let lines = []
+    if not net[N_CARD] then
+        lines = ["aerOS found no network card", "when it started."]
+    else
+        let card = "The card is resting (app mode)."
+        if net[N_RUNNING] then
+            card = "The card is running."
+        end
+        if not net[N_LINK] then
+            lines = ["Not plugged in: no link.", card]
+        else
+            lines = ["Address " + net[N_ADDRESS], card]
+        end
+        push(lines, "Sent " + str(net[N_SENT]) + ", received " + str(net[N_RECEIVED]) + ", blocked " + str(net[N_BLOCKED]))
+        if net[N_RULES] == 0 then
+            push(lines, "Firewall: no rules, all blocked")
+        else
+            push(lines, "Firewall: " + str(net[N_RULES]) + " rule(s)")
+        end
+    end
+    for i = 0 to len(lines) - 1 do
+        text(left + 34, row + 22 + i * 18, fit(lines[i], (wide - 34) / CHAR_W), SOFT_INK, 1)
+    end
+
+    text(left, y + h - 28, "Esc, Home or a click outside closes it", FAINT, 1)
 end
 
 
@@ -1822,7 +2251,9 @@ func draw_all()
         end
     end
     draw_taskbar()
-    if menu_open != "" then
+    if menu_open == "monitor" then
+        draw_monitor()
+    elif menu_open != "" then
         draw_menu(menu_open)
     end
     draw_pointer()
@@ -1834,7 +2265,18 @@ end
 
 func click(px, py)
     # the left button went down at px, py: whatever is on top there gets it
-    # a menu first, as it is drawn over everything
+    # the system monitor's panel first, as it is drawn over everything: a click in it does
+    # nothing, and anywhere else closes it (and on its indicators, that is all it does)
+    if menu_open == "monitor" then
+        if inside_box(px, py, monitor_box()) then
+            return
+        end
+        menu_open = ""
+        if inside_box(px, py, tray_box()) then
+            return
+        end
+    end
+    # a menu, also drawn over everything
     if menu_open != "" then
         let which = menu_open
         menu_open = ""
@@ -1852,11 +2294,15 @@ func click(px, py)
         end
     end
 
-    # the taskbar: the start button, the power button, or a window's button
+    # the taskbar: the start button, the power button, the system monitor or a window's button
     if inside(px, py, BAR_X, BAR_Y, BAR_W, BAR_H) then
         if inside_box(px, py, start_button()) then
             menu_open = "start"
             menu_choice = -1
+            return
+        end
+        if inside_box(px, py, tray_box()) then
+            menu_open = "monitor"
             return
         end
         if inside_box(px, py, power_button()) then
@@ -2008,8 +2454,20 @@ func press(k)
         menu_choice = 0
         return
     end
-    if menu_open != "" then
+    # the system monitor: Esc or Home closes it. Other keys carry on as usual underneath it (the
+    # arrows move the pointer, typing goes to Notes)
+    if menu_open == "monitor" then
+        if k == KEY_ESCAPE or k == KEY_HOME then
+            menu_open = ""
+            return
+        end
+    elif menu_open != "" then
         menu_key(k)
+        return
+    end
+    # Home opens the system monitor
+    if k == KEY_HOME then
+        menu_open = "monitor"
         return
     end
     if k == KEY_ESCAPE then
@@ -2184,6 +2642,8 @@ func main()
 
     # The desktop as it starts, then the settings. aerOS may ask about reading them (they are
     # in the home folder), in a box over the desktop
+    take_telemetry()
+    looked_at = time()
     draw_all()
     load_settings()
     move_taskbar(TASKBAR_SIDE)
@@ -2202,6 +2662,12 @@ func main()
         let half = time() / 500
         if half != shown_second then
             shown_second = half
+            needs_drawing = true
+        end
+        # the system monitor's indicators (and its panel, if it is open) take a new look each second
+        if time() - looked_at >= LOOK_EVERY then
+            looked_at = time()
+            take_telemetry()
             needs_drawing = true
         end
         if needs_drawing and running then

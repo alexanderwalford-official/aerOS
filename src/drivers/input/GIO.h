@@ -45,6 +45,7 @@
 #define GIO_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 // write one byte to an I/O port ("outb %al, %dx")
 // port: the port number (0x0000 - 0xFFFF), value: the byte to send
@@ -150,11 +151,20 @@ static inline int interrupts_enabled(void) {
     return (flags & 0x200) != 0;
 }
 
+// true while the CPU is stopped in cpu_idle. The timer looks at it on every tick, to count how
+// long the processor has had nothing to do (clck_idle_ms in sys/sys_clck.h: the CPU load the
+// desktop shows). It lives in sys/sys_clck.c
+extern volatile bool cpu_halted;
+
 // sleep the CPU until the next interrupt arrives
 // "hlt" stops the CPU (saving power and, in a VM, host CPU time) until an interrupt wakes it.
-// gotcha: with interrupts disabled only an NMI can wake it, so hlt with IF clear hangs forever
+// gotcha: with interrupts disabled only an NMI can wake it, so hlt with IF clear hangs forever.
+// The interrupt that wakes it is handled before the line after hlt runs, so a timer tick that
+// ends the wait still finds cpu_halted true, and counts that millisecond as idle
 static inline void cpu_idle(void) {
-    __asm__ volatile ("hlt");
+    cpu_halted = true;
+    __asm__ volatile ("hlt" ::: "memory");
+    cpu_halted = false;
 }
 
 #endif /* GIO_H */
