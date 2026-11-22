@@ -65,13 +65,24 @@ bool gfx_image(const uint8_t* data, uint32_t length, int x, int y, int max_w, in
 //           its right, each the picture's whole height stretched to h
 //   row:    a w x h band at x, y whose every row reads the picture along the line from
 //           (u0, v0) at the left to (u1, v1) at the right
-// See-through parts of a PNG or GIF are drawn solid. False if the data isn't a picture.
-bool gfx_texture_column(const uint8_t* data, uint32_t length, int x, int y, int w, int h, double u0, double u1, double light);
+// See-through parts of a PNG or GIF are drawn solid, except in a column drawn see_through (a
+// sprite's strip), which skips them (a 32 bit BMP's 4th byte counts too: under 128 is
+// see-through). False if the data isn't a picture.
+bool gfx_texture_column(const uint8_t* data, uint32_t length, int x, int y, int w, int h, double u0, double u1, double light, bool see_through);
 bool gfx_texture_row(const uint8_t* data, uint32_t length, int x, int y, int w, int h, double u0, double v0, double u1, double v1, double light);
 // A spotlight on the textures drawn from now on, like a flashlight: they are lit only inside a
-// circle round x, y on the screen (fully out to a third of the radius, then fading), and are
-// black outside it. A radius of 0 or less turns it off, and gfx_begin starts with it off
-void gfx_texture_light(int x, int y, int radius);
+// circle round x, y on the screen (fully out to a third of the radius, then fading), and
+// outside it only by `ambient` (0 to 1: 0 is pitch black). A radius of 0 or less turns it
+// off, and gfx_begin starts with it off
+void gfx_texture_light(int x, int y, int radius, double ambient);
+
+// Effects over what has been drawn, on a w x h area at x, y (cut to fit the screen):
+//   tint:  every pixel mixed with the colour 0xRRGGBB, `amount` of the way (0 to 1): fading
+//          to black, or a red flash
+//   noise: every pixel made lighter or darker by a random amount up to `amount` (0 to 255),
+//          like the grain of a picture seen in the dark
+void gfx_tint(int x, int y, int w, int h, uint32_t rgb, double amount);
+void gfx_noise(int x, int y, int w, int h, int amount);
 
 // Draw over the screen for a moment, without spoiling what a program has drawn:
 //

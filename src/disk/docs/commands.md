@@ -124,6 +124,7 @@ The first time, let AerOS reach the server: `fw web packages.intercon.network 80
 | --- | --- |
 | `snake` | Snake, with high scores |
 | `maze3d` | a maze in 3D, seen from inside: a pitch black stone dungeon, seen by flashlight (or lantern light, or plain colours for a slow computer); choose its size, find the crystals, dodge the ghosts, with music and sound |
+| `knocks` | Four Knocks, a horror game: find your father in a pitch black observatory, by flashlight, while something blind hunts you by sound (headphones help) |
 | `move` | move a square with the arrow keys: a small example of a game |
 | `guess` | guess the number |
 | `viewer` | a picture viewer, with two pictures to try it on |

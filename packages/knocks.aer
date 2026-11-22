@@ -1,0 +1,2649 @@
+# Four Knocks: a horror game for AerOS
+# Run it with:
+#     knocks
+#
+# CONTENT WARNING: darkness, sudden loud noises, frightening images, and death and loss.
+# Play it with headphones: what you hear tells you where things are.
+#
+# Controls:
+#     W / S, Up / Down     - walk forwards and backwards
+#     A / D                - step sideways
+#     Left / Right, mouse  - turn (the mouse also looks up and down; in QEMU click the window
+#                            first, and Ctrl+Alt+G lets go)
+#     Shift (held)         - run: quicker, and loud
+#     C or Ctrl (held)     - creep: slow, and almost silent
+#     Space (held)         - hold your breath
+#     E, Enter, left click - use what is in front of you: read, take, open, answer
+#     F, right click       - your flashlight on or off
+#     Tab (held)           - what you are doing, and what you carry
+#     Escape               - pause (and from there, quit)
+#
+# THE STORY
+#
+#   October 1989. Your father, Martin Venn, was the engineer at the Corvid Hill Deep
+#   Observatory: a station on a lonely hill, built over a borehole four kilometres deep, to
+#   listen to the earth. In March 1986 he vanished with the ten other people who worked there.
+#   The doors were found chained from the inside, and the building empty.
+#
+#   Last night your answering machine played you a message in his voice: come down, and
+#   bring my key. You still have it.
+#
+#   It is told by what you find: notes, tapes, a telephone, the places themselves. In short
+#   (spoilers): in 1986 the observatory heard four knocks from the bottom of the hole, and
+#   answered them. What came up the hole is blind, finds people by the sounds they make, and
+#   copies what it hears, voices most of all. Martin trapped it on the lower level by cutting
+#   the lift's power; it has been calling up the telephone line ever since. There are two
+#   endings.
+#
+# HOW IT WORKS, for anyone who wants to build on it
+#
+#   It is the ray caster from Maze 3D (packages/maze3d.aer, which explains it step by step):
+#   the walls, floor and ceiling are pictures drawn with imgcol and imgrow, and imglight
+#   shines your flashlight on them, black outside its beam. What is new here:
+#
+#   - The view is letterboxed (black bars above and below, where the subtitles and the
+#     words go), like a film, and its proportions come from the screen's width (PROJ).
+#   - The thing and the furniture are sprites drawn with imgcol(..., true): strips of a
+#     picture with see-through parts, lit by the flashlight like the walls, so the thing is
+#     only there when your beam is on it. They are 3D models, rendered from 5 sides by
+#     tools/make_knocks_sprites.py (and mirrored for the other 3).
+#   - Sounds have a place: splay's pan puts each on the left or right, and svol moves it as
+#     you turn. The thing's footsteps get quieter the further away it is, counted along the
+#     corridors (the "step map", see steps_from), so you hear it round corners, not through
+#     walls.
+#   - The thing hunts by ear. Every frame you make a noise (see noise_now): none standing,
+#     a little creeping, more walking, a lot running. If it is that many steps away or
+#     fewer, it hears you, and goes to where it heard you. If you're close enough, it runs.
+#   - imglight's ambient light shows everything for a moment in a flash of lightning; gtint
+#     fades the picture and flashes it red; gnoise is the static you see when it is near.
+#   - The sounds and pictures are made by tools/make_knocks_sounds.py,
+#     tools/make_knocks_textures.py and tools/make_knocks_sprites.py, and loaded from the
+#     game's folder (/apps/knocks/).
+#
+#   For testing: "knocks demo" plays itself from start to end (the thing can't catch it;
+#   "knocks demo 2" from level B2, and "knocks demo 2 leave" to the other ending), printing
+#   what it does,
+#   "knocks start 2" (or 3) starts on that level, and "knocks safe" plays with a harmless
+#   thing. Progress is saved in /apps/knocks/save.txt when you reach each level.
+
+# ---------------------------------------------------------------------------
+# The map
+# ---------------------------------------------------------------------------
+#
+# One grid holds all three levels: the observatory's ground floor (top left), the level
+# below it, B2 (the bottom half), and the casing round the borehole (top right). The lift and
+# the stairs move you between them. Each letter is a square:
+#
+#   .  floor                      D  wooden door      M  steel door (both open with E)
+#   #  wallpaper  W  window       P  wood panels      Q  wallpaper with tally marks
+#   C  concrete   K  pipes        T  tiles            S  concrete, QUIET scratched on it
+#   A  tape shelves               R  rock             O  the borehole's casing
+#   B  the front doors            L  the lift         Z  the stairs down
+#   G  the generator              V  the power board  H  the charge console   Y  the ladder
+
+let MAP = [
+    "############################RRRRRRRRRRRRRRRRRRRR",
+    "#.........................##RRRRRRRRRRRRRRRR.RRR",
+    "###D#PPPDPPPPPDPPCCCDCCC#.W#RRRRRRRRRRRRRRRR.RRR",
+    "#....P.....P.....C.....C#.##RRRRYRRRRRRRRRRR.RRR",
+    "#....P.....P.....C.....G#.W#RRRR.RRRRRRRRRRR.RRR",
+    "L....P.....P.....C.....C#.##RRRR.RRRRRRRRRRR.RRR",
+    "#....P.....P.....C.....C#.W#RRRR.RRRRRRRRRRR.RRR",
+    "#####P.....P.....CCCCCCC#.##RRRR.............RRR",
+    "#####QPPPPPPPPPPPP#######.W#RRRR.............RRR",
+    "#.........................##RRRR..OOOOOOOOO..RRR",
+    "####D#######D############.W#RRRR..OOOOOOOOO..RRR",
+    "#.......#.......#.......#.##RRRR..OOOOOOOOO..RRR",
+    "#.......#.......#.......#.W#RRRR..OOOOOOOOO..RRR",
+    "#.......#.......#.......#.##RRRR..OOOOHOOOO..RRR",
+    "#.......#.......#.......#.W#RRRR.............RRR",
+    "#.......#.......#.........##RRRR.............RRR",
+    "#.......#.......#.......#.W#RRRRRRRRRRRRRRRRRRRR",
+    "#.......#.......#.......#.##RRRRRRRRRRRRRRRRRRRR",
+    "###################BBB######RRRRRRRRRRRRRRRRRRRR",
+    "################################################",
+    "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+    "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+    "CC....CCCCCCCCCCCCCCCCCCCCCCSCCCCCCCCCCCCCCCCCCC",
+    "CL.......................................CCCCCCC",
+    "CC.....CKKKKKKKKKKKC.TTTTTMTTTTKKKKMKKKK.CCCCCCC",
+    "CCCCCC.C...........C.T.........K.......K.CCCCCCC",
+    "CCCCCC.C..AAA.AAA..C.T.........K.......K.CCCCCCC",
+    "CCCCCC.M...........C.M.........K.......M.CCCCCCC",
+    "CCCCCC.C..AAA.AAA..M.T.........K.......K.CCCCCCC",
+    "CCCCCC.C...........C.T.........K.......K.CCCCCCC",
+    "CCCCCC.C...........C.TTTTTTTTTTK.......K.CCCCCCC",
+    "CCCCCC.PPPPPPTTTMTTT.C........CKKVKKKKKK.CCCCCCC",
+    "CCCCCC.P.....T.....T.C........CC.......C.CCCCCCC",
+    "CCCCCC.P.....T.....T.C........CC.......M.CCCCCCC",
+    "CCCCCC.P.....T.....T.C........CZ.......C.CCCCCCC",
+    "CCCCCC.P.....T.....T.C........CC.......C.CCCCCCC",
+    "CCCCCC.PPPMPPSTTTTTT.CCCCMCCCCCCCCCCCCCC.CCCCCCC",
+    "CCCCCC...................................CCCCCCC",
+    "CCCCCCSCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+    "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+]
+
+# The walls' letters, in the order of their pictures (WALL_PICTURES): a wall's number in
+# `grid` is its place in this string plus 1 (0 is floor)
+let WALL_LETTERS = "#WPCKTRAOHLZYBSQGVDM"
+let WALL_PICTURES = ["wallpap", "window", "panel", "concrete", "pipes", "tiles", "rock", "shelves",
+                     "shaft", "console", "lift", "stairs", "ladder", "entrance", "scrawl", "tally",
+                     "genny", "switch", "door", "steeldr"]
+# the numbers of the walls that do something (see WALL_LETTERS)
+let W_WINDOW = 2
+let W_CONSOLE = 10
+let W_LIFT = 11
+let W_STAIRS = 12
+let W_LADDER = 13
+let W_ENTRANCE = 14
+let W_GENERATOR = 17
+let W_SWITCH = 18
+let W_DOOR = 19
+let W_STEEL_DOOR = 20
+
+# Each level's floor and ceiling pictures, its sound, and where you arrive on it (x, y and
+# the way you face: 0 east, PI / 2 south, PI west, -PI / 2 north)
+let LEVEL_NAMES = ["", "THE OBSERVATORY", "LEVEL B2", "THE CASING"]
+let FLOOR_PICTURES = ["", "carpet", "cfloor", "rfloor"]
+let CEILING_PICTURES = ["", "ceiltile", "cceil", "rceil"]
+let LEVEL_SOUNDS = ["", "wind", "hum", "deep"]
+let ARRIVE = [[0, 0, 0], [20.5, 16.5, -1.5708], [2.5, 23.5, 0.0], [44.5, 1.5, 1.5708]]
+
+# ---------------------------------------------------------------------------
+# The things in it
+# ---------------------------------------------------------------------------
+#
+# Every thing, as [what, x, y, number]. `what` is one of PROP_NAMES (its picture in
+# props.bmp, in that order). Notes, tapes on recorders and the like have a number saying
+# which: a note's number is its place in NOTES.
+
+let PROP_NAMES = ["desk", "chair", "cabinet", "recorder", "phone", "coatstand", "lockers", "bed",
+                  "note", "battery", "fuse", "tape", "key", "speaker", "crates", "belongings",
+                  "rubble", "drum"]
+# which of them you can't walk through
+let SOLID_PROPS = ["desk", "cabinet", "recorder", "phone", "lockers", "bed", "crates", "drum", "speaker"]
+
+let THINGS = [
+    # the ground floor: the foyer, where you start
+    ["desk", 18, 12, 0], ["note", 19, 13, 1], ["chair", 17, 13, 0], ["crates", 23, 11, 0],
+    # the long corridor, and the coat at the end of it
+    ["coatstand", 25, 2, 0],
+    # records
+    ["cabinet", 6, 3, 0], ["cabinet", 7, 3, 0], ["cabinet", 10, 3, 0], ["desk", 8, 5, 0],
+    ["note", 9, 6, 2], ["note", 7, 7, 3], ["chair", 8, 6, 0],
+    # the director's office: the telephone, her recorded log, her memo
+    ["phone", 12, 4, 0], ["desk", 14, 5, 0], ["chair", 14, 6, 0], ["recorder", 16, 7, 1],
+    ["note", 15, 3, 4], ["cabinet", 16, 3, 0],
+    # the generator room
+    ["note", 19, 3, 7], ["drum", 18, 6, 0], ["crates", 22, 6, 0],
+    # the lift lobby
+    ["chair", 4, 6, 0],
+    # the dormitory
+    ["bed", 2, 12, 0], ["bed", 2, 15, 0], ["bed", 6, 12, 0], ["lockers", 7, 17, 0],
+    ["fuse", 6, 16, 0], ["note", 4, 14, 5], ["battery", 5, 11, 0],
+    # the canteen
+    ["desk", 11, 13, 0], ["desk", 13, 13, 0], ["desk", 11, 15, 0], ["desk", 13, 15, 0],
+    ["chair", 12, 13, 0], ["chair", 10, 15, 0], ["note", 14, 16, 6], ["battery", 10, 17, 0],
+    # B2: the landing, where your father left a note
+    ["note", 3, 22, 8], ["drum", 5, 22, 0],
+    # the tape archive
+    ["note", 9, 25, 9], ["tape", 16, 29, 0], ["recorder", 8, 30, 2], ["crates", 18, 25, 0],
+    # Dr Askew's office below, and the washroom
+    ["desk", 10, 33, 0], ["key", 11, 34, 0], ["note", 9, 35, 10], ["cabinet", 12, 32, 0],
+    ["note", 17, 34, 11],
+    # the sound lab
+    ["desk", 24, 26, 0], ["desk", 28, 26, 0], ["recorder", 26, 28, 4], ["battery", 29, 29, 0],
+    ["speaker", 22, 29, 0], ["chair", 24, 27, 0],
+    # the power room
+    ["note", 33, 26, 12], ["drum", 38, 25, 0], ["crates", 32, 30, 0], ["drum", 38, 29, 0],
+    # the store
+    ["crates", 22, 31, 0], ["crates", 29, 35, 0], ["crates", 23, 35, 0], ["battery", 27, 33, 0],
+    ["note", 25, 32, 13],
+    # the stair room: your father's last recording
+    ["recorder", 35, 32, 3], ["chair", 36, 33, 0],
+    # the corridors
+    ["rubble", 6, 31, 0], ["drum", 40, 34, 0],
+    # the casing
+    ["belongings", 36, 15, 14], ["speaker", 33, 8, 0], ["speaker", 43, 14, 0], ["speaker", 33, 14, 0],
+    ["rubble", 40, 7, 0], ["rubble", 32, 11, 0], ["battery", 44, 4, 0]
+]
+
+# ---------------------------------------------------------------------------
+# The words: notes, and the lines of the recordings
+# ---------------------------------------------------------------------------
+#
+# A note is its heading, then its words (\n starts a new paragraph). They are wrapped to fit.
+
+let NOTES = [
+    nil,
+    ["SIGNING IN BOOK, 14 MARCH 1986", "R. ASKEW (Director)     in 07:50     out\nM. VENN (Engineer)      in 07:55     out\nJ. PELL (Technician)    in 08:10     out\nS. OKAFOR (Geophysics)  in 08:12     out\n... and seven more names.\n\nNobody signed out.\n\nAt the bottom of the page, in pencil, pressed so hard it tore the paper:\nDON'T ANSWER IT"],
+    ["BOREHOLE CH-1: LOG", "4,120 metres deep. Eight geophones (listening sensors) hang in it, numbered from the bottom up: number 1 at 4,000 metres, number 8 just under the surface.\n\n2 Feb 1986. A signal on geophone 1. Four sharp knocks, 0.7 seconds apart. Then nothing for eleven minutes. Then four more. Not an earthquake. Not the drill.\n\nDr Askew wants us to answer it with the thumper. - S. Okafor"],
+    ["BOREHOLE CH-1: LOG (CONTINUED)", "3 Feb. We sent four knocks down the hole. Four came back within the hour.\n\n5 Feb. It sent ours back. Not four knocks: OUR four knocks. The thumper's own sound, with the fault in the third strike.\n\n19 Feb. Geophone 2 now. Louder.\n\n28 Feb. Geophone 3. Martin says the hole is a throat, and we have been shouting down it. - S.O."],
+    ["MEMO FROM THE DIRECTOR", "From today nobody is to use the intercom, or the telephones to B2.\n\nWhatever is on those lines is not the switchboard.\n\nAnd if you hear me call you from somewhere I could not be, do not come. - R. Askew"],
+    ["A NOTE UNDER A PILLOW", "It heard me through the intercom. I was on the phone to my sister and I said her name, and that night it said her name back to me, through the wall by my bunk. In my voice.\n\nIt doesn't need to see. It listens.\n\nDon't talk near the speakers. Don't talk at all. - Jonah"],
+    ["PINNED BY THE KETTLE", "Since they bricked up the stairs to B2, the lift is the only way down or up. Martin has the only key. He says it can't climb. It can only call.\n\nSo nobody answers, and nobody goes down. We wait for the road to clear. - J.P."],
+    ["EMERGENCY GENERATOR", "Powers: the lift, the emergency lights.\n\nTo start: fit fuse F2 in the holder at the bottom, then press START.\n\nSpare fuses are kept in the dormitory lockers."],
+    ["IN YOUR FATHER'S HANDWRITING", "If you are reading this, something brought you down here. I cut the lift's power from below so that it could never come up.\n\nIt is blind. It finds you by the sounds you make.\nWalk slowly (hold C). Never run unless it has already heard you.\nIf it comes close, stand still, and hold your breath (hold SPACE).\n\n- M. Venn"],
+    ["TAPE ARCHIVE: INDEX CARD", "Reel 0217. FOUR KNOCKS (ORIGINAL). Geophone 1, 2 Feb 1986. Shelf C, bottom.\n\nIn red pen: the only recording of its own knock, not ours. Keep it safe. - M."],
+    ["DR ASKEW'S DESK", "The survey charges: four of them, in the casing at the foot of the stairs, laid for the deep seismic shoot we never made. Enough to bring the hole down, and everything near it.\n\nThe arming key is in my desk. The console is by the casing.\n\nMartin thinks that if we play it its own knock, it will come to the sound. Then we set them off. Someone has to be down there to do it. - R.A."],
+    ["SCRATCHED ON THE MIRROR", "Sara has been gone four days.\n\nFor two days after, I heard her calling me from the store room. I knew it wasn't her. I nearly went anyway. - J."],
+    ["B2 POWER BOARD", "Restores: the lift, the stair door to the casing, the casing's speakers.\n\nWARNING: the board is LOUD when thrown."],
+    ["THE STORE: A LIST", "Food: 3 days. Water. Batteries: 6. Rope.\n\nMartin has gone to get the key from Ruth's desk, and then down to the casing with the tape. He told us to stay here and keep quiet.\n\nIf he doesn't come back, take the lift up when the power's on. Don't look for him. - J.P."],
+    ["YOUR FATHER'S THINGS", "His coat, folded. His headphones. A note under them:\n\nCouldn't reach Ruth's desk for the key. It was between me and it. So I've led it down here instead, to keep it busy as long as I can.\n\nIf anyone finds this: the tape in the slot, then turn the key. The hatch over the ladder opens when the charges arm. You'll have a minute.\n\nIt's coming. I can hear it on the stairs. - M."]
+]
+
+# The lines of each recording, as [who, words, seconds], in the order and length
+# tools/make_knocks_sounds.py made them (its MESSAGE, CALL..., LOG, FINAL and HOME lists): it
+# leaves half a second between lines. Change both together. `who` "" shows no name.
+let MESSAGE_LINES = [["DAD", "Kit. It's me. It's Dad.", 2.2], ["DAD", "I know how long it's been. I'm sorry.", 2.6],
+                     ["DAD", "I'm still at the station. I can't get out.", 2.6], ["DAD", "Come down to me. Bring my key.", 2.4],
+                     ["DAD", "Please, Kit. Come down.", 2.0]]
+let LOG_LINES = [["DR ASKEW (TAPE)", "Askew. Ninth of March, 1986.", 2.8],
+                 ["DR ASKEW (TAPE)", "The knocks are on geophone four now. Not six. Four.", 3.2],
+                 ["DR ASKEW (TAPE)", "It is coming up the hole.", 1.8],
+                 ["DR ASKEW (TAPE)", "Martin wants to stop answering it. I think it is too late for that.", 3.6]]
+let FINAL_LINES = [["DAD (TAPE)", "Kit. If you're hearing this, it called you.", 2.8],
+                   ["DAD (TAPE)", "That wasn't me on the phone. It never was.", 2.6],
+                   ["DAD (TAPE)", "It learns voices. It learned mine.", 2.2],
+                   ["DAD (TAPE)", "I killed the lift so it couldn't follow anyone up.", 2.8],
+                   ["DAD (TAPE)", "The survey charges are still in the casing.", 2.4],
+                   ["DAD (TAPE)", "Play it the knocks, and it will come to the sound.", 2.8],
+                   ["DAD (TAPE)", "Then set them off, and take the ladder up.", 2.4],
+                   ["DAD (TAPE)", "Don't wait for me. I love you.", 2.4]]
+# the telephone call: these have their own times (milliseconds from the start), as there are
+# pauses of different lengths between them
+let CALL_LINES = [[0, "DAD", "Kit. You came.", 1.6], [2700, "YOU", "Dad? Dad, is that you?", 1.8],
+                  [5500, "DAD", "The lift. Bring the key down to me.", 2.4],
+                  [9800, "YOUR OWN VOICE", "Dad? Dad, is that you?", 1.8], [12900, "", "(four knocks, down the line)", 3.0]]
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+let WALK_SPEED = 1.9        # squares a second
+let RUN_SPEED = 3.1
+let CREEP_SPEED = 0.85
+let TURN_SPEED = 2.2        # radians a second
+let RADIUS = 0.25           # how close you can get to a wall
+let VIEW_WIDTH = 0.66       # the camera plane (see maze3d): about 66 degrees across
+let STRIP_WIDTH = 8         # pixels per ray
+let MOUSE_TURN = 0.004
+let MOUSE_LOOK = 1.2
+let USE_REACH = 1.4         # how far away you can use things, in squares
+
+# How far a noise carries, in steps along the corridors (see noise_now)
+let NOISE_CREEP = 1
+let NOISE_WALK = 4
+let NOISE_RUN = 9
+let NOISE_GASP = 6
+let NOISE_DOOR = 4
+let BREATH_HEARD = 1.4      # squares: closer than this it hears you breathe (unless you hold it)
+let HOLD_BREATH = 7000      # milliseconds you can hold your breath
+
+# The thing
+let BEAST_WANDER = 0.8      # squares a second, wandering
+let BEAST_SEEK = 1.5        # going to where it heard something
+let BEAST_HUNT = 2.45       # rushing at you (you run faster, but running is loud)
+let BEAST_FINALE = 2.0      # coming down to the casing at the end
+let HUNT_STEPS = 5          # hearing you this near, it rushes
+let CATCH_DISTANCE = 0.6    # squares
+let HEAR_STEPS = 16         # the step map for sounds reaches this far (beyond, you hear nothing)
+let SEARCH_TIME = 7000      # milliseconds it searches round where it lost you
+
+# Light
+let FLASHLIGHT_SIZE = 0.3   # the beam's radius, as a share of the screen's width
+let REACH = 26.0            # how far the flashlight reaches (see lamp_light)
+let FLASHLIGHT_FAR = 10.0   # floor and ceiling further away than this are black
+let FLOOR_BAND = 3
+let DRAIN = 4500            # milliseconds for the battery to lose 1 (of 100) with the light on
+let BATTERY_GIVES = 45
+
+# The finale: seconds from arming the charges to the hill coming down
+let FUSE_SECONDS = 75
+
+let FOLDER = "/apps/knocks/"
+let SAVE_FILE = FOLDER + "save.txt"
+
+# Colours
+let INK = 0x2A2420          # writing on paper
+let PAPER = 0xD8D0BC
+let TEXT = 0xD9D4C8
+let DIM = 0x7D776C
+let RED = 0xB0201C
+let BRIGHT_RED = 0xFF3B30
+let SUBTITLE = 0xF0E8D0
+let SPEAKER = 0xC8A060
+
+# The four ways out of a square: east, south, west, north
+let STEP_X = [1, 0, -1, 0]
+let STEP_Y = [0, 1, 0, -1]
+let FAR = 9999
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
+func smaller(a, b)
+    if a < b then return a end
+    return b
+end
+
+func bigger(a, b)
+    if a > b then return a end
+    return b
+end
+
+func clamp(x, low, high)
+    return bigger(low, smaller(high, x))
+end
+
+# An angle brought into -PI to PI
+func wrap_angle(a)
+    while a > PI do a = a - 2 * PI end
+    while a < -PI do a = a + 2 * PI end
+    return a
+end
+
+# The place of `item` in `items`, or -1
+func index_of(items, item)
+    for i = 0 to len(items) - 1 do
+        if items[i] == item then return i end
+    end
+    return -1
+end
+
+# Write a line of text across the middle of the screen
+func centre(y, words, colour, size)
+    text((SCREEN_W - len(words) * 8 * size) / 2, y, words, colour, size)
+end
+
+# Say what just happened, for the tests, which read it in the serial log: only when testing
+# ("knocks demo" or "knocks start"), as print() writes over the picture for a moment
+func note_event(words)
+    if testing then print(words) end
+end
+
+# Words broken into lines at most `width` letters long, at spaces (and at every \n)
+func wrap_words(words, width)
+    let lines = []
+    for paragraph in split(words, "\n") do
+        let line = ""
+        for word in split(paragraph, " ") do
+            if line == "" then
+                line = word
+            elif len(line) + 1 + len(word) <= width then
+                line = line + " " + word
+            else
+                push(lines, line)
+                line = word
+            end
+        end
+        push(lines, line)
+    end
+    return lines
+end
+
+# Which level a square is on: 1 the ground floor, 2 B2, 3 the casing
+func level_of(x, y)
+    if y >= 20 then return 2 end
+    if x >= 28 then return 3 end
+    return 1
+end
+
+# ---------------------------------------------------------------------------
+# Sound
+# ---------------------------------------------------------------------------
+
+func load_sound(name)
+    return sload(FOLDER + name + ".wav")
+end
+
+# Load the sounds the game uses all the time (the long voices are loaded when they are needed)
+func load_sounds()
+    snd_step1 = load_sound("step1")
+    snd_step2 = load_sound("step2")
+    snd_bstep = load_sound("bstep")
+    snd_breath = load_sound("breath")
+    snd_shriek = load_sound("shriek")
+    snd_sting = load_sound("sting")
+    snd_heart = load_sound("heart")
+    snd_knocks = load_sound("knocks")
+    snd_knockd = load_sound("knockd")
+    snd_creak = load_sound("creak")
+    snd_slam = load_sound("slam")
+    snd_ring = load_sound("ring")
+    snd_lift = load_sound("lift")
+    snd_click = load_sound("click")
+    snd_buzz = load_sound("buzz")
+    snd_paper = load_sound("paper")
+    snd_pickup = load_sound("pickup")
+    snd_thunder = load_sound("thunder")
+    snd_alarm = load_sound("alarm")
+    snd_caught = load_sound("caught")
+    snd_gasp = load_sound("gasp")
+    snd_static = load_sound("static")
+    snd_genstart = load_sound("genstart")
+    snd_genloop = load_sound("genloop")
+    snd_switch = load_sound("switch")
+    snd_whisper = load_sound("whisper")
+    # with no sound card splay gives -1: try one silently to find out
+    sound_card = snd_click != nil and splay(snd_click, false, 0) >= 0
+end
+
+# Play a sound with no place (in both ears). Gives its voice number (-1 if none). (Not
+# called play: that is AerLang's own, which plays a file and waits)
+func sfx(sound, volume)
+    if sound == nil or not sound_card then return -1 end
+    return splay(sound, false, clamp(volume, 0, 100))
+end
+
+# How a sound at (x, y) is heard from where you stand: [volume, pan]. Louder nearer (`range`
+# squares away it has faded out), from the left or right as you face, and a little muffled
+# behind you. `distance` is how far it has to come (pass -1 to use the straight line)
+func heard_from(x, y, volume, distance, range)
+    if distance < 0 then
+        distance = sqrt((x - pos_x) * (x - pos_x) + (y - pos_y) * (y - pos_y))
+    end
+    let fade = clamp(1.0 - distance / range, 0.0, 1.0)
+    let loud = volume * fade * fade
+    let toward = wrap_angle(atan2(y - pos_y, x - pos_x) - angle)
+    let pan = sin(toward) * 80
+    if cos(toward) < 0 then loud = loud * 0.75 end
+    # something right beside you is in both ears
+    if distance < 0.7 then pan = pan * distance / 0.7 end
+    return [loud, pan]
+end
+
+# Play a sound from a place in the level
+func play_at(sound, x, y, volume, range)
+    if sound == nil or not sound_card then return -1 end
+    let h = heard_from(x, y, volume, -1, range)
+    if h[0] < 1 then return -1 end
+    return splay(sound, false, h[0], h[1])
+end
+
+# Start a sound going round and round (silent until `move_loop` gives it a place and a volume)
+func start_loop(sound, volume)
+    if sound == nil or not sound_card then return -1 end
+    return splay(sound, true, volume)
+end
+
+# Keep a looping sound at its place as you move and turn
+func move_loop(voice, x, y, volume, range)
+    if voice < 0 then return end
+    let h = heard_from(x, y, volume, -1, range)
+    svol(voice, h[0], h[1])
+end
+
+func stop_voice(voice)
+    if voice >= 0 then sstop(voice) end
+    return -1
+end
+
+# Sounds waiting to be played later: [time, sound, x, y, volume] (x < 0: no place)
+func later(ms, sound, x, y, volume)
+    push(waiting_sounds, [time() + ms, sound, x, y, volume])
+end
+
+# Play the waiting sounds whose time has come
+func play_waiting(now)
+    let i = 0
+    while i < len(waiting_sounds) do
+        let w = waiting_sounds[i]
+        if now >= w[0] then
+            if w[2] < 0 then
+                sfx(w[1], w[4])
+            else
+                play_at(w[1], w[2], w[3], w[4], 18)
+            end
+            remove(waiting_sounds, i)
+        else
+            i = i + 1
+        end
+    end
+end
+
+# The level's background sound (wind, hum, rumble), round and round
+func level_sound(n)
+    background = stop_voice(background)
+    background = start_loop(loaded(LEVEL_SOUNDS[n]), 55)
+end
+
+# A sound loaded the first time it is wanted, and kept: splay holds on to every sound it has
+# played until the program ends, so loading the same one again would only use more memory
+func loaded(name)
+    let at = index_of(kept_names, name)
+    if at >= 0 then return kept_sounds[at] end
+    let sound = load_sound(name)
+    push(kept_names, name)
+    push(kept_sounds, sound)
+    return sound
+end
+
+# A recording (a voice) with its subtitles: `lines` as in MESSAGE_LINES, starting `offset`
+# milliseconds into the sound
+func play_recording(name, lines, offset, volume)
+    recording = loaded(name)
+    recording_voice = sfx(recording, volume)
+    let at = time() + offset
+    for entry in lines do
+        say(at, entry[0], entry[1], entry[2] * 1000)
+        at = at + entry[2] * 1000 + 500
+    end
+    return at
+end
+
+# Show a subtitle from `at` (a time()) for `ms` milliseconds
+func say(at, who, words, ms)
+    push(subtitles, [at, at + ms, who, words])
+end
+
+# ---------------------------------------------------------------------------
+# Pictures
+# ---------------------------------------------------------------------------
+
+func load_pictures()
+    wall_pictures = [nil]
+    pictures_ok = true
+    for name in WALL_PICTURES do
+        let picture = rdb(FOLDER + name + ".bmp")
+        if picture == nil then pictures_ok = false end
+        push(wall_pictures, picture)
+    end
+    floor_pictures = [nil]
+    ceiling_pictures = [nil]
+    for level = 1 to 3 do
+        push(floor_pictures, rdb(FOLDER + FLOOR_PICTURES[level] + ".bmp"))
+        push(ceiling_pictures, rdb(FOLDER + CEILING_PICTURES[level] + ".bmp"))
+    end
+    beast_picture = rdb(FOLDER + "beast.bmp")
+    lunge_picture = rdb(FOLDER + "lunge.bmp")
+    props_picture = rdb(FOLDER + "props.bmp")
+    scare_picture = rdb(FOLDER + "scare.bmp")
+    if beast_picture == nil or props_picture == nil or scare_picture == nil then pictures_ok = false end
+end
+
+# How bright the flashlight makes something `distance` squares away
+func lamp_light(distance)
+    return REACH / (REACH + distance * distance)
+end
+
+# ---------------------------------------------------------------------------
+# The map
+# ---------------------------------------------------------------------------
+
+# Turn MAP's letters into `grid`, numbers (0 floor, otherwise the wall's number, see
+# WALL_LETTERS), and put every thing in its place. `blocked` marks squares a solid thing
+# stands on, which you and the thing walk round.
+func read_map()
+    grid = []
+    blocked = []
+    for y = 0 to len(MAP) - 1 do
+        let row = []
+        for x = 0 to len(MAP[y]) - 1 do
+            push(row, find(WALL_LETTERS, MAP[y][x]) + 1)
+        end
+        push(grid, row)
+        push(blocked, list(len(MAP[y]), false))
+    end
+    thing_what = []
+    thing_x = []
+    thing_y = []
+    thing_frame = []
+    thing_number = []
+    thing_gone = []
+    for t in THINGS do
+        push(thing_what, t[0])
+        push(thing_x, t[1] + 0.5)
+        push(thing_y, t[2] + 0.5)
+        push(thing_frame, index_of(PROP_NAMES, t[0]))
+        push(thing_number, t[3])
+        push(thing_gone, false)
+        if index_of(SOLID_PROPS, t[0]) >= 0 then blocked[t[2]][t[1]] = true end
+    end
+end
+
+func is_wall(x, y)
+    return grid[floor(y)][floor(x)] != 0
+end
+
+# Can you (or the thing) stand in this square?
+func is_open(x, y)
+    return grid[y][x] == 0 and not blocked[y][x]
+end
+
+# A step map (see maze3d): how many steps every square is from (from_x, from_y), going
+# round walls and furniture, as far as `limit` steps (further is FAR). With `doors`, closed
+# doors count as open (the thing opens them)
+func steps_from(from_x, from_y, limit, doors)
+    let counts = []
+    for y = 0 to len(grid) - 1 do
+        push(counts, list(len(grid[y]), FAR))
+    end
+    counts[from_y][from_x] = 0
+    let waiting = [[from_x, from_y]]
+    let next = 0
+    while next < len(waiting) do
+        let x = waiting[next][0]
+        let y = waiting[next][1]
+        next = next + 1
+        if counts[y][x] < limit then
+            for way = 0 to 3 do
+                let nx = x + STEP_X[way]
+                let ny = y + STEP_Y[way]
+                let kind = grid[ny][nx]
+                let open = kind == 0 or (doors and (kind == W_DOOR or kind == W_STEEL_DOOR))
+                if open and not blocked[ny][nx] and counts[ny][nx] == FAR then
+                    counts[ny][nx] = counts[y][x] + 1
+                    push(waiting, [nx, ny])
+                end
+            end
+        end
+    end
+    return counts
+end
+
+# ---------------------------------------------------------------------------
+# You
+# ---------------------------------------------------------------------------
+
+func face(new_angle)
+    angle = wrap_angle(new_angle)
+    dir_x = cos(angle)
+    dir_y = sin(angle)
+    plane_x = -dir_y * VIEW_WIDTH
+    plane_y = dir_x * VIEW_WIDTH
+end
+
+# Is there a wall or solid thing within RADIUS of (x, y)?
+func bumps(x, y)
+    for corner in [[-RADIUS, -RADIUS], [RADIUS, -RADIUS], [-RADIUS, RADIUS], [RADIUS, RADIUS]] do
+        let cx = floor(x + corner[0])
+        let cy = floor(y + corner[1])
+        if grid[cy][cx] != 0 or blocked[cy][cx] then return true end
+    end
+    return false
+end
+
+# Move by (dx, dy), one direction at a time so you slide along walls
+func move(dx, dy)
+    if not bumps(pos_x + dx, pos_y) then pos_x = pos_x + dx end
+    if not bumps(pos_x, pos_y + dy) then pos_y = pos_y + dy end
+end
+
+# Walk, run or creep with the keys, turn with the keys and the mouse. Gives how far you
+# moved. Sets `gait`: 0 still, 1 creeping, 2 walking, 3 running
+func handle_movement(seconds)
+    let speed = WALK_SPEED
+    gait = 2
+    if keydown(KEY_SHIFT) then
+        speed = RUN_SPEED
+        gait = 3
+    elif keydown("c") or keydown(KEY_CTRL) then
+        speed = CREEP_SPEED
+        gait = 1
+    end
+    let go = speed * seconds
+    let was_x = pos_x
+    let was_y = pos_y
+    if keydown(KEY_LEFT) then face(angle - TURN_SPEED * seconds) end
+    if keydown(KEY_RIGHT) then face(angle + TURN_SPEED * seconds) end
+    if keydown(KEY_UP) or keydown("w") then move(dir_x * go, dir_y * go) end
+    if keydown(KEY_DOWN) or keydown("s") then move(-dir_x * go * 0.7, -dir_y * go * 0.7) end
+    if keydown("d") then move(plane_x / VIEW_WIDTH * go * 0.8, plane_y / VIEW_WIDTH * go * 0.8) end
+    if keydown("a") then move(-plane_x / VIEW_WIDTH * go * 0.8, -plane_y / VIEW_WIDTH * go * 0.8) end
+    let moved_mouse = mousemove()
+    if moved_mouse[0] != 0 then face(angle + moved_mouse[0] * MOUSE_TURN) end
+    look = clamp(look - moved_mouse[1] * MOUSE_LOOK, -VIEW_H / 4, VIEW_H / 4)
+    let moved = sqrt((pos_x - was_x) * (pos_x - was_x) + (pos_y - was_y) * (pos_y - was_y))
+    if moved < 0.0005 then gait = 0 end
+    return moved
+end
+
+# Your footsteps: one every so far, quieter when creeping. On B2 something may copy them
+func footsteps(moved, now)
+    stride = stride + moved
+    let pace = 0.8
+    if gait == 3 then pace = 1.1 end
+    if gait == 1 then pace = 0.6 end
+    if stride < pace then return end
+    stride = 0.0
+    let sound = snd_step1
+    if level != 1 then sound = snd_step2 end
+    let volume = 26
+    if gait == 1 then volume = 9 end
+    if gait == 3 then volume = 42 end
+    sfx(sound, volume)
+    # the mimic (see events_b2): your own steps, a moment later, behind you
+    if now < mimic_until then
+        later(380, sound, pos_x - dir_x * 3, pos_y - dir_y * 3, volume + 6)
+    end
+end
+
+# How far your noise carries right now, in steps (see "How it works" at the top)
+func noise_now(now)
+    let noise = 0
+    if gait == 1 then noise = NOISE_CREEP end
+    if gait == 2 then noise = NOISE_WALK end
+    if gait == 3 then noise = NOISE_RUN end
+    if now < loud_until then noise = bigger(noise, loud_noise) end
+    return noise
+end
+
+# A sudden noise you made (a door, a gasp): it carries `steps` for a moment
+func make_noise(steps, now)
+    loud_noise = steps
+    loud_until = now + 400
+end
+
+# Holding your breath (Space), and gasping when you can't any more
+func handle_breath(seconds, now)
+    let want = keydown(KEY_SPACE) and not gasping
+    if want then
+        breath = breath - seconds * 1000
+        if breath <= 0 then
+            breath = 0
+            gasping = true
+            sfx(snd_gasp, 70)
+            make_noise(NOISE_GASP, now)
+        end
+    else
+        breath = smaller(HOLD_BREATH, breath + seconds * 1500)
+        if breath > HOLD_BREATH * 0.4 then gasping = false end
+    end
+    holding = want
+end
+
+# The flashlight's battery runs down while it is on; low, the beam shrinks and flickers
+func handle_battery(now)
+    if not light_on or demo then return end
+    if now - drained_at >= DRAIN then
+        drained_at = now
+        battery = bigger(0, battery - 1)
+    end
+end
+
+func flashlight_radius(now)
+    if not light_on then return 0 end
+    let radius = SCREEN_W * FLASHLIGHT_SIZE
+    if battery < 25 then radius = radius * (0.45 + battery / 45.0) end
+    if battery == 0 then radius = SCREEN_W * 0.1 end
+    # flickering: when the battery is low, or the thing is near (its static), now and then
+    if now < flicker_until and random(3) == 0 then return 1 end
+    if battery < 12 and random(20) == 0 then return 1 end
+    return radius
+end
+
+func horizon()
+    return VIEW_TOP + VIEW_H / 2 + look + shake_y
+end
+
+# ---------------------------------------------------------------------------
+# The thing
+# ---------------------------------------------------------------------------
+#
+# It is in one of these states:
+#   "gone"      not on this level
+#   "path"      walking a set path (the first time you see it), then it wanders
+#   "wander"    drifting from room to room
+#   "seek"      going to where it heard something
+#   "hunt"      rushing to where it heard you, close by
+#   "search"    standing and listening where the sound stopped, turning this way and that
+# It moves square by square (like maze3d's ghosts), down a step map worked out from where it
+# is going (`beast_map`), and opens doors as it goes.
+
+let ROOMS_CASING = [[33, 8], [43, 8], [33, 14], [43, 14], [38, 8], [38, 14], [44, 4]]
+let ROOMS_B2 = [[3, 23], [12, 27], [10, 34], [16, 33], [26, 27], [35, 27], [25, 33], [35, 34],
+                [20, 30], [6, 30], [40, 30], [30, 37], [13, 37], [30, 23], [13, 23]]
+
+func beast_start(x, y, state)
+    beast = state
+    beast_x = x + 0.5
+    beast_y = y + 0.5
+    beast_to_x = beast_x
+    beast_to_y = beast_y
+    beast_heading = PI / 2
+    beast_goal_x = x
+    beast_goal_y = y
+    beast_map = []
+    beast_frame = 0.0
+    beast_stride = 0.0
+    search_until = 0
+    beast_path = []
+    breath_voice = stop_voice(breath_voice)
+    breath_voice = start_loop(snd_breath, 0)
+    static_voice = stop_voice(static_voice)
+    static_voice = start_loop(snd_static, 0)
+end
+
+func beast_stop()
+    beast = "gone"
+    breath_voice = stop_voice(breath_voice)
+    static_voice = stop_voice(static_voice)
+end
+
+# Send it to a square: work out the step map from there (it walks downhill on it)
+func beast_go(x, y)
+    if x == beast_goal_x and y == beast_goal_y and len(beast_map) > 0 then return end
+    beast_goal_x = x
+    beast_goal_y = y
+    beast_map = steps_from(x, y, FAR, true)
+end
+
+func beast_speed()
+    if beast == "hunt" then return BEAST_HUNT end
+    if beast == "seek" then return BEAST_SEEK end
+    if beast == "finale" then return BEAST_FINALE end
+    if beast == "search" then return 0 end
+    return BEAST_WANDER
+end
+
+# Somewhere to wander to: a room on B2, or a place round the casing
+func beast_wander()
+    beast = "wander"
+    let rooms = ROOMS_B2
+    if level == 3 then rooms = ROOMS_CASING end
+    let room = rooms[random(len(rooms))]
+    beast_go(room[0], room[1])
+end
+
+# At the middle of a square: choose the next one (one step nearer its goal)
+func beast_choose()
+    let x = floor(beast_x)
+    let y = floor(beast_y)
+    if beast == "path" then
+        # the next point of its path (dropping the ones it has reached), then it wanders
+        while len(beast_path) > 0 and x == beast_path[0][0] and y == beast_path[0][1] do
+            remove(beast_path, 0)
+        end
+        if len(beast_path) == 0 then
+            beast_wander()
+        else
+            beast_go(beast_path[0][0], beast_path[0][1])
+        end
+    end
+    if len(beast_map) == 0 then beast_wander() end
+    let here = beast_map[y][x]
+    if here == 0 then
+        # arrived: where it heard something, it stops and listens; otherwise, somewhere else
+        if beast == "seek" or beast == "hunt" or beast == "finale" then
+            beast = "search"
+            search_until = time() + SEARCH_TIME
+        else
+            beast_wander()
+        end
+        return
+    end
+    for way = 0 to 3 do
+        let nx = x + STEP_X[way]
+        let ny = y + STEP_Y[way]
+        if beast_map[ny][nx] < here then
+            beast_to_x = nx + 0.5
+            beast_to_y = ny + 0.5
+            # a closed door in the way: it opens it, and you hear it
+            let kind = grid[ny][nx]
+            if kind == W_DOOR or kind == W_STEEL_DOOR then
+                grid[ny][nx] = 0
+                play_at(snd_creak, nx + 0.5, ny + 0.5, 70, 16)
+            end
+            return
+        end
+    end
+end
+
+# Does it hear you? Your noise carries `noise` steps; it is `steps` away along the corridors
+func beast_listen(noise, now)
+    if beast == "gone" or beast == "path" or level == 1 then return end
+    let x = floor(beast_x)
+    let y = floor(beast_y)
+    let steps = sound_map[y][x]
+    let close = sqrt((beast_x - pos_x) * (beast_x - pos_x) + (beast_y - pos_y) * (beast_y - pos_y))
+    let heard = noise > 0 and steps <= noise
+    # right beside you, it hears you breathe
+    if close < BREATH_HEARD and not holding then heard = true end
+    if not heard then return end
+    let was = beast
+    beast_go(floor(pos_x), floor(pos_y))
+    if steps <= HUNT_STEPS or close < BREATH_HEARD then
+        beast = "hunt"
+    elif beast != "hunt" then
+        beast = "seek"
+    end
+    if beast == "hunt" and was != "hunt" and now - shrieked_at > 9000 then
+        shrieked_at = now
+        let h = heard_from(beast_x, beast_y, 95, steps, HEAR_STEPS + 4)
+        if sound_card and snd_shriek != nil then splay(snd_shriek, false, bigger(h[0], 35), h[1]) end
+    end
+end
+
+# A loud noise somewhere (the power board, a recorder): it comes to see
+func beast_alert(x, y, range)
+    if beast == "gone" or beast == "path" then return end
+    let map = steps_from(x, y, range, true)
+    if map[floor(beast_y)][floor(beast_x)] <= range and beast != "hunt" then
+        beast = "seek"
+        beast_go(x, y)
+    end
+end
+
+func move_beast(seconds, now)
+    if beast == "gone" then return end
+    if beast == "search" then
+        # standing still, its head cocked, then wandering off
+        beast_heading = beast_heading + sin(now / 700.0) * seconds * 1.5
+        if now >= search_until then
+            beast_wander()
+            beast_choose()
+        end
+        return
+    end
+    let go = beast_speed() * seconds
+    let dx = beast_to_x - beast_x
+    let dy = beast_to_y - beast_y
+    let gap = abs(dx) + abs(dy)
+    if gap <= go then
+        beast_x = beast_to_x
+        beast_y = beast_to_y
+        beast_choose()
+    else
+        beast_x = beast_x + dx / gap * go
+        beast_y = beast_y + dy / gap * go
+        beast_heading = atan2(dy, dx)
+        beast_frame = beast_frame + go * 7
+        # its footsteps, heard along the corridors
+        beast_stride = beast_stride + go
+        if beast_stride > 0.62 then
+            beast_stride = 0.0
+            let steps = sound_map[floor(beast_y)][floor(beast_x)]
+            if steps < FAR then
+                let h = heard_from(beast_x, beast_y, 100, steps, HEAR_STEPS)
+                if h[0] >= 2 and sound_card and snd_bstep != nil then splay(snd_bstep, false, h[0], h[1]) end
+            end
+        end
+    end
+end
+
+# Its breathing and the static round it, louder as it nears; the flashlight flickers
+func beast_sounds(now)
+    if beast == "gone" then return end
+    let close = sqrt((beast_x - pos_x) * (beast_x - pos_x) + (beast_y - pos_y) * (beast_y - pos_y))
+    let steps = sound_map[floor(beast_y)][floor(beast_x)]
+    if steps >= FAR then steps = 30 end
+    let h = heard_from(beast_x, beast_y, 80, steps, 7)
+    if breath_voice >= 0 then svol(breath_voice, h[0], h[1]) end
+    let fuzz = clamp(1.0 - close / 5.0, 0.0, 1.0)
+    if static_voice >= 0 then svol(static_voice, fuzz * fuzz * 45, 0) end
+    static_amount = floor(fuzz * fuzz * 36)
+    if close < 4 and random(6) == 0 then flicker_until = now + 150 end
+end
+
+# Has it got you?
+func beast_caught()
+    if beast == "gone" or harmless then return false end
+    let dx = beast_x - pos_x
+    let dy = beast_y - pos_y
+    return dx * dx + dy * dy < CATCH_DISTANCE * CATCH_DISTANCE
+end
+
+# Your heart: quicker and louder the nearer the thing is (or while you hold your breath)
+func heartbeat(now)
+    let fear = 0.0
+    if beast != "gone" then
+        let steps = sound_map[floor(beast_y)][floor(beast_x)]
+        if steps < 12 then fear = 1.0 - steps / 12.0 end
+        if beast == "hunt" then fear = bigger(fear, 0.6) end
+    end
+    if holding then fear = bigger(fear, 0.45) end
+    if armed then fear = bigger(fear, 0.7) end
+    if fear <= 0.05 then return end
+    let every = 1100 - fear * 650
+    if now - heart_at >= every then
+        heart_at = now
+        sfx(snd_heart, 25 + fear * 60)
+    end
+end
+
+# ---------------------------------------------------------------------------
+# The story: what happens where
+# ---------------------------------------------------------------------------
+
+func set_goal(words, now)
+    goal = words
+    goal_at = now
+end
+
+func message(words, now)
+    hint = words
+    hint_until = now + 3500
+end
+
+# What you still need on B2, as the goal
+func b2_goal(now)
+    if not plan_known then
+        set_goal("Find Dad. Keep quiet.", now)
+        return
+    end
+    let need = []
+    if not has_tape then push(need, "the tape of the knocks (the archive)") end
+    if not has_key then push(need, "the arming key (Dr Askew's office)") end
+    if not power2 then push(need, "power (the power room)") end
+    if len(need) == 0 then
+        if heard_final then
+            set_goal("Take the stairs down to the casing. Or take the lift up, and leave.", now)
+        else
+            set_goal("The stair room is open now.", now)
+        end
+    else
+        set_goal("Find " + join(need, ", "), now)
+    end
+end
+
+# The ground floor's events, checked every frame
+func events_ground(now)
+    let x = floor(pos_x)
+    let y = floor(pos_y)
+    # the long corridor: lightning, and someone standing at the end of it
+    if not lightning_done and x == 25 and y <= 13 then
+        lightning_done = true
+        lightning(now, true)
+        next_lightning = now + 18000
+    end
+    if lightning_done and now >= next_lightning then
+        lightning(now, false)
+        next_lightning = now + 22000 + random(20000)
+    end
+    # into the north hall: the telephone in the director's office starts to ring
+    if lightning_done and phone == 0 and y <= 1 then
+        phone = 1
+        ring_voice = start_loop(snd_ring, 0)
+        set_goal("A telephone is ringing.", now)
+    end
+    if phone == 1 then move_loop(ring_voice, 12.5, 4.5, 75, 22) end
+    # the dormitory: footsteps on the intercom, then outside in the hall
+    if not dorm_done and x <= 7 and y >= 11 then
+        dorm_done = true
+        for i = 0 to 5 do later(600 + i * 520, snd_step1, 4.5, 10.8, 55) end
+        for i = 0 to 7 do later(5200 + i * 560, snd_step1, 1.5 + i * 0.9, 9.5, 60) end
+        say(now + 600, "", "(footsteps, on the intercom: your footsteps)", 3500)
+    end
+    # after the generator: a door slams, and from the lift shaft, the knocks
+    if power1 and not slam_done and now - power1_at > 25000 then
+        slam_done = true
+        play_at(snd_slam, 4.5, 10.5, 100, 30)
+    end
+    if power1 and not shaft_knocks and x <= 4 and y >= 3 and y <= 6 then
+        shaft_knocks = true
+        later(800, snd_knocks, 0.5, 5.5, 70)
+        say(now + 900, "", "(four knocks, far below)", 3000)
+    end
+end
+
+# A flash of lightning: everything shows for a moment, then thunder. The first, in the long
+# corridor, comes with the sting: there is someone standing at the end of it
+func lightning(now, first)
+    flash_at = now
+    let thunder_after = 400 + random(1500)
+    if first then
+        thunder_after = 250
+        sfx(snd_sting, 70)
+        # the demo holds this flash a moment longer, so it can be seen (and photographed)
+        long_flash = demo
+        note_event("demo: lightning")
+    else
+        long_flash = false
+    end
+    later(thunder_after, snd_thunder, -1, 0, 70 + random(30))
+end
+
+# How much the lightning lights everything up just now (0 to 1): two quick flashes
+func flash_light(now)
+    if level != 1 then return 0.0 end
+    let since = now - flash_at
+    if long_flash and since < 1500 then return 0.6 end
+    if since < 90 then return 0.75 end
+    if since < 160 then return 0.0 end
+    if since < 260 then return 0.55 end
+    return 0.0
+end
+
+func events_b2(now)
+    let x = floor(pos_x)
+    let y = floor(pos_y)
+    # the first time you see it: it crosses the corridor ahead, and goes on its way
+    if not sighting and y == 23 and x >= 9 then
+        sighting = true
+        beast_start(20, 30, "path")
+        beast_path = [[20, 23], [30, 23], [40, 23], [40, 30]]
+    end
+    # in the archive, a recorder plays a voice: yours. And it hears it too
+    if not whisper_done and x >= 8 and x <= 18 and y >= 25 and y <= 30 and sighting then
+        whisper_done = true
+        later(1500, snd_whisper, 8.5, 30.5, 85)
+        say(now + 1500, "A RECORDER", "Kit...", 1500)
+        beast_alert(8, 30, 30)
+    end
+    # walking the bottom corridor, your footsteps come back to you from behind
+    if not mimic_done and y == 37 and x >= 12 and x <= 30 then
+        mimic_done = true
+        mimic_until = now + 9000
+    end
+end
+
+func events_casing(now)
+    if armed then
+        let left = FUSE_SECONDS * 1000 - (now - armed_at)
+        # the speakers play the knocks, over and over
+        if now >= next_pa then
+            next_pa = now + 4200
+            play_at(snd_knocks, 33.5, 8.5, 100, 30)
+            play_at(snd_knocks, 43.5, 14.5, 100, 30)
+        end
+        # and it comes down the stairs, to the sound
+        if beast == "gone" and now - armed_at > 3500 then
+            beast_start(44, 2, "finale")
+            beast_go(38, 14)
+            later(0, snd_shriek, 44.5, 3.0, 100)
+        end
+        if left <= 0 then return "buried" end
+    end
+    return ""
+end
+
+# ---------------------------------------------------------------------------
+# Using things
+# ---------------------------------------------------------------------------
+
+# What is in front of you to use: [kind, x, y] where kind is "thing" (x is its number) or
+# "wall" (x, y its square), or nil
+func in_front()
+    # a thing close by, almost straight ahead
+    let best = -1
+    let nearest = USE_REACH
+    for i = 0 to len(thing_what) - 1 do
+        if not thing_gone[i] and level_of(floor(thing_x[i]), floor(thing_y[i])) == level and usable(i) then
+            let v = to_view(thing_x[i], thing_y[i])
+            if v[1] > 0.1 and v[1] < nearest and abs(v[0] * VIEW_WIDTH) < 0.4 + 0.1 * v[1] then
+                best = i
+                nearest = v[1]
+            end
+        end
+    end
+    if best >= 0 then return ["thing", best, 0] end
+    # or the wall straight ahead
+    let d = 0.2
+    while d <= USE_REACH do
+        let x = floor(pos_x + dir_x * d)
+        let y = floor(pos_y + dir_y * d)
+        if grid[y][x] != 0 then return ["wall", x, y] end
+        d = d + 0.1
+    end
+    return nil
+end
+
+func usable(i)
+    let what = thing_what[i]
+    if what == "phone" then return phone == 1 end
+    if what == "recorder" then return thing_number[i] == 1 or thing_number[i] == 3 end
+    return what == "note" or what == "battery" or what == "fuse" or what == "tape" or what == "key" or what == "belongings"
+end
+
+# The words for the prompt: what E would do to `target`
+func use_words(target)
+    if target[0] == "thing" then
+        let what = thing_what[target[1]]
+        if what == "note" or what == "belongings" then return "read" end
+        if what == "phone" then return "answer the telephone" end
+        if what == "recorder" then return "play the tape" end
+        if what == "battery" then return "take the batteries" end
+        return "take the " + what
+    end
+    let kind = grid[target[2]][target[1]]
+    if kind == W_DOOR or kind == W_STEEL_DOOR then return "open" end
+    if kind == W_LIFT then return "call the lift" end
+    if kind == W_GENERATOR then return "the generator" end
+    if kind == W_SWITCH then return "the power board" end
+    if kind == W_STAIRS then return "the stairs down" end
+    if kind == W_CONSOLE then return "the charge console" end
+    if kind == W_LADDER then return "climb the ladder" end
+    if kind == W_ENTRANCE then return "the front doors" end
+    return ""
+end
+
+# Use it. Gives "" or what happens next: "lift" (down to B2), "stairs", "leave" (the lift up:
+# the second ending) or "ladder" (the first)
+func use(target, now)
+    if target[0] == "thing" then return use_thing(target[1], now) end
+    let x = target[1]
+    let y = target[2]
+    let kind = grid[y][x]
+    if kind == W_DOOR or kind == W_STEEL_DOOR then
+        if x == 39 and y == 33 and not power2 then
+            message("Locked. A red lamp by the handle: NO POWER.", now)
+            return ""
+        end
+        grid[y][x] = 0
+        play_at(snd_creak, x + 0.5, y + 0.5, 70, 16)
+        make_noise(NOISE_DOOR, now)
+        return ""
+    end
+    if kind == W_ENTRANCE then
+        message("The doors are chained shut, from the inside. And you're not leaving without him.", now)
+        return ""
+    end
+    if kind == W_GENERATOR then
+        if power1 then
+            message("The generator thumps away.", now)
+        elif has_fuse then
+            power1 = true
+            power1_at = now
+            sfx(snd_genstart, 80)
+            gen_voice = start_loop(snd_genloop, 0)
+            ambient = 0.07
+            set_goal("Take the lift down.", now)
+            message("You fit the fuse and press START. It catches. A few dim lamps come on.", now)
+        else
+            message("The fuse holder is empty. Fuse F2 is missing.", now)
+            set_goal("Find a fuse for the generator. (The dormitory lockers.)", now)
+        end
+        return ""
+    end
+    if kind == W_LIFT then
+        if level == 1 then
+            if phone != 2 then
+                message("The lift. Your father's key fits the panel, but it is dead: no power.", now)
+            elif not power1 then
+                message("The panel is dead. No power. There's an emergency generator somewhere.", now)
+                set_goal("Start the generator, to power the lift.", now)
+            else
+                return "lift"
+            end
+        elif power2 then
+            return "leave"
+        else
+            message("Nothing. The power is off down here.", now)
+        end
+        return ""
+    end
+    if kind == W_SWITCH then
+        if power2 then
+            message("The board hums.", now)
+        else
+            power2 = true
+            sfx(snd_switch, 100)
+            ambient = 0.05
+            make_noise(40, now)
+            beast_alert(34, 30, 60)
+            message("The lever goes up with a bang that echoes all down the corridors. Something heard that.", now)
+            b2_goal(now)
+        end
+        return ""
+    end
+    if kind == W_STAIRS then
+        if not has_tape or not has_key then
+            message("Not yet. You need the tape of the knocks, and the arming key.", now)
+            plan_known = true
+            b2_goal(now)
+            return ""
+        end
+        return "stairs"
+    end
+    if kind == W_CONSOLE then
+        if armed then
+            message("The charges are armed. RUN.", now)
+            return ""
+        end
+        armed = true
+        armed_at = now
+        next_pa = now + 600
+        alarm_voice = start_loop(snd_alarm, 45)
+        set_goal("RUN. The ladder: the north-west passage.", now)
+        message("The tape slides in. The key turns. CHARGES ARMED. And the speakers start to knock.", now)
+        return ""
+    end
+    if kind == W_LADDER then
+        if armed then return "ladder" end
+        message("A hatch above the ladder, locked. Stencilled on it: OPENS WHEN THE CHARGES ARM.", now)
+        return ""
+    end
+    return ""
+end
+
+func use_thing(i, now)
+    let what = thing_what[i]
+    if what == "note" or what == "belongings" then
+        sfx(snd_paper, 60)
+        read_note(thing_number[i])
+        if thing_number[i] == 8 then b2_goal(now) end
+        if thing_number[i] == 9 or thing_number[i] == 10 or thing_number[i] == 13 then
+            plan_known = true
+            b2_goal(now)
+        end
+        return ""
+    end
+    if what == "battery" then
+        thing_gone[i] = true
+        battery = smaller(100, battery + BATTERY_GIVES)
+        sfx(snd_pickup, 60)
+        message("Batteries. The flashlight brightens.", now)
+        return ""
+    end
+    if what == "fuse" then
+        thing_gone[i] = true
+        has_fuse = true
+        sfx(snd_pickup, 60)
+        message("A fuse, F2, with a red tag.", now)
+        set_goal("Fit the fuse in the generator.", now)
+        return ""
+    end
+    if what == "tape" then
+        thing_gone[i] = true
+        has_tape = true
+        plan_known = true
+        sfx(snd_pickup, 60)
+        message("Reel 0217: FOUR KNOCKS (ORIGINAL).", now)
+        b2_goal(now)
+        return ""
+    end
+    if what == "key" then
+        thing_gone[i] = true
+        has_key = true
+        plan_known = true
+        sfx(snd_pickup, 60)
+        message("A brass key with a red tag: CHARGES.", now)
+        b2_goal(now)
+        return ""
+    end
+    if what == "phone" then
+        phone = 2
+        ring_voice = stop_voice(ring_voice)
+        sfx(snd_click, 50)
+        let ends = time()
+        recording = loaded("call")
+        recording_voice = sfx(recording, 90)
+        for entry in CALL_LINES do
+            say(ends + entry[0], entry[1], entry[2], entry[3] * 1000)
+        end
+        set_goal("Take the lift down to him.", now)
+        return ""
+    end
+    if what == "recorder" then
+        if thing_number[i] == 1 then
+            play_recording("log", LOG_LINES, 0, 85)
+        else
+            heard_final = true
+            plan_known = true
+            play_recording("final", FINAL_LINES, 0, 90)
+            b2_goal(now)
+        end
+        thing_number[i] = 0     # played: once is enough
+        return ""
+    end
+    return ""
+end
+
+# Read note number n: the game stops while the page is in front of you
+func read_note(n)
+    let note = NOTES[n]
+    let lines = wrap_words(note[1], 58)
+    let w = 58 * 8 + 80
+    let h = len(lines) * 18 + 110
+    let x = (SCREEN_W - w) / 2
+    let y = (SCREEN_H - h) / 2
+    gtint(0, 0, SCREEN_W, SCREEN_H, 0, 0.75)
+    rect(x, y, w, h, PAPER)
+    gnoise(x, y, w, h, 14)
+    rect(x, y, w, 3, 0xB8AE96)
+    text(x + 40, y + 28, note[0], RED, 1)
+    for i = 0 to len(lines) - 1 do
+        text(x + 40, y + 60 + i * 18, lines[i], INK, 1)
+    end
+    text(x + w - 23 * 8, y + h - 26, "E / ESC  put it down", 0x6A6050, 1)
+    gshow()
+    wait_for_close(4000)
+    mousemove()
+end
+
+# Wait for E, Enter, Escape or a click (in the demo, just a moment)
+func wait_for_close(demo_ms)
+    if demo then
+        sleep(demo_ms)
+        return
+    end
+    sleep(250)
+    while haskey() do key() end
+    while true do
+        if haskey() then
+            let k = key()
+            if k == KEY_ESCAPE or k == KEY_ENTER or k == ord("e") or k == ord("E") or k == ord(" ") then return end
+        end
+        if mousedown(MOUSE_LEFT) then
+            while mousedown(MOUSE_LEFT) do sleep(20) end
+            return
+        end
+        sleep(20)
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Drawing the world
+# ---------------------------------------------------------------------------
+
+# The floor and ceiling (see maze3d's draw_dungeon_backdrop): a band of rows at a time,
+# outwards from the horizon, each row all one distance away
+func draw_backdrop()
+    let middle = horizon()
+    let half = PROJ / 2.0
+    let left_x = (dir_x - plane_x) * 64
+    let left_y = (dir_y - plane_y) * 64
+    let right_x = (dir_x + plane_x) * 64
+    let right_y = (dir_y + plane_y) * 64
+    let me_x = pos_x * 64
+    let me_y = pos_y * 64
+    let off = floor(half / FLASHLIGHT_FAR)
+    rect(0, middle - off, SCREEN_W, off * 2, 0)
+    let growth = 1.5 / (half * 64)
+    let floor_picture = floor_pictures[level]
+    let ceiling_picture = ceiling_pictures[level]
+    while middle + off < VIEW_BOTTOM or middle - off > VIEW_TOP do
+        let band = bigger(FLOOR_BAND, floor(off * off * growth))
+        let distance = half / (off + band / 2.0)
+        let light = REACH / (REACH + distance * distance)
+        let u0 = me_x + distance * left_x
+        let v0 = me_y + distance * left_y
+        let u1 = me_x + distance * right_x
+        let v1 = me_y + distance * right_y
+        if middle + off < VIEW_BOTTOM then
+            imgrow(floor_picture, 0, middle + off, SCREEN_W, band, u0, v0, u1, v1, light)
+        end
+        if middle - off > VIEW_TOP then
+            imgrow(ceiling_picture, 0, middle - off - band, SCREEN_W, band, u0, v0, u1, v1, light)
+        end
+        off = off + band
+    end
+end
+
+# The walls, a ray per strip (see maze3d's draw_walls). Each strip's distance goes in
+# `depths`, for the sprites
+func draw_walls(now, beam, lit)
+    let middle = horizon()
+    for column = 0 to RAYS - 1 do
+        let across = 2.0 * column / RAYS - 1.0
+        let ray_x = dir_x + plane_x * across
+        let ray_y = dir_y + plane_y * across
+        let square_x = floor(pos_x)
+        let square_y = floor(pos_y)
+        let cross_x = 1.0e30
+        if ray_x != 0 then cross_x = abs(1.0 / ray_x) end
+        let cross_y = 1.0e30
+        if ray_y != 0 then cross_y = abs(1.0 / ray_y) end
+        let step_x = 1
+        let next_x = (square_x + 1.0 - pos_x) * cross_x
+        if ray_x < 0 then
+            step_x = -1
+            next_x = (pos_x - square_x) * cross_x
+        end
+        let step_y = 1
+        let next_y = (square_y + 1.0 - pos_y) * cross_y
+        if ray_y < 0 then
+            step_y = -1
+            next_y = (pos_y - square_y) * cross_y
+        end
+        let wall = 0
+        let side = 0
+        while wall == 0 do
+            if next_x < next_y then
+                next_x = next_x + cross_x
+                square_x = square_x + step_x
+                side = 0
+            else
+                next_y = next_y + cross_y
+                square_y = square_y + step_y
+                side = 1
+            end
+            wall = grid[square_y][square_x]
+        end
+        let distance = next_x - cross_x
+        if side == 1 then distance = next_y - cross_y end
+        distance = bigger(distance, 0.05)
+        depths[column] = distance
+        let x = column * STRIP_WIDTH
+        # outside the beam, with no other light, it is black already (the backdrop made it so)
+        if lit and abs(x + STRIP_WIDTH / 2 - SCREEN_W / 2) <= beam then
+            let height = PROJ / distance
+            let along = pos_y + distance * ray_y
+            if side == 1 then along = pos_x + distance * ray_x end
+            along = along - floor(along)
+            # (lightning lights everything evenly, however far away)
+            let light = bigger(lamp_light(distance), flash_now)
+            let spread = 0.0
+            if side == 0 then
+                spread = distance * STRIP_SPREAD / ray_x
+            else
+                light = light * 0.8
+                spread = -distance * STRIP_SPREAD / ray_y
+            end
+            let u = along * 64
+            # Seen from some sides the picture runs right to left across the screen (spread is
+            # then negative): turn it round, so the words on walls (QUIET, STAIRS) read properly
+            if spread < 0 then
+                u = 64 - u
+                spread = -spread
+            end
+            imgcol(wall_pictures[wall], x, middle - height / 2, STRIP_WIDTH, height, u - spread / 2, u + spread / 2, light)
+        end
+    end
+end
+
+# Where a point appears from your eye: [across, depth] (see maze3d's to_view)
+func to_view(x, y)
+    let dx = x - pos_x
+    let dy = y - pos_y
+    let inverse = 1.0 / (plane_x * dir_y - dir_x * plane_y)
+    return [inverse * (dir_y * dx - dir_x * dy), inverse * (-plane_y * dx + plane_x * dy)]
+end
+
+# Every thing in view and the thing itself, furthest first. Each is [across, depth, kind,
+# number]: kind 0 a thing (number its place in the lists), 1 the beast
+func draw_sprites(now, beam, lit)
+    let visible = []
+    for i = 0 to len(level_things) - 1 do
+        let t = level_things[i]
+        if not thing_gone[t] then add_sprite(visible, thing_x[t], thing_y[t], 0, t) end
+    end
+    if beast != "gone" then add_sprite(visible, beast_x, beast_y, 1, 0) end
+    for s in visible do
+        if s[2] == 0 then
+            draw_thing(s[0], s[1], s[3], now, beam, lit)
+        else
+            draw_beast(s[0], s[1], now, beam, lit)
+        end
+    end
+end
+
+func add_sprite(visible, x, y, kind, number)
+    let dx = x - pos_x
+    let dy = y - pos_y
+    if dx * dx + dy * dy > 196 then return end
+    let view = to_view(x, y)
+    if view[1] > 0.2 and abs(view[0]) < view[1] * 1.6 then
+        push(view, kind)
+        push(view, number)
+        let place = 0
+        while place < len(visible) and visible[place][1] > view[1] do
+            place = place + 1
+        end
+        insert(visible, place, view)
+    end
+end
+
+# Draw a sprite: frame number `cell` of `picture` (each frame `frame_w` pixels wide in it), the
+# sprite `width` squares wide and one square tall, standing on the floor, a strip at a time
+# where it is nearer than the wall. `mirror` flips it left to right
+func draw_sprite(picture, cell, frame_w, width, across, depth, light, mirror)
+    let tall = PROJ / depth
+    let wide = tall * width
+    let centre_x = SCREEN_W / 2 * (1.0 + across / depth)
+    let left = centre_x - wide / 2
+    let top = horizon() + tall / 2 - tall
+    let first = bigger(floor(left / STRIP_WIDTH), 0)
+    let last = smaller(floor((left + wide) / STRIP_WIDTH), RAYS - 1)
+    let start = cell * frame_w
+    for column = first to last do
+        if depths[column] > depth then
+            let x = column * STRIP_WIDTH
+            let u0 = (x - left) / wide * frame_w
+            let u1 = (x + STRIP_WIDTH - left) / wide * frame_w
+            if mirror then
+                u0 = frame_w - u0
+                u1 = frame_w - u1
+            end
+            imgcol(picture, x, top, STRIP_WIDTH, tall, start + clamp(u0, 0, frame_w - 0.01), start + clamp(u1, 0, frame_w - 0.01), light, true)
+        end
+    end
+end
+
+func draw_thing(across, depth, t, now, beam, lit)
+    let screen_x = SCREEN_W / 2 * (1.0 + across / depth)
+    if lit then
+        draw_sprite(props_picture, thing_frame[t], 64, 1.0, across, depth, bigger(lamp_light(depth), flash_now), false)
+    end
+    # things to take, and notes, glint faintly in the dark, so they can be found
+    let what = thing_what[t]
+    let glints = what == "note" or what == "battery" or what == "fuse" or what == "tape" or what == "key" or what == "belongings"
+    if glints and depth < 6 and depths[clamp(floor(screen_x / STRIP_WIDTH), 0, RAYS - 1)] > depth then
+        let pulse = (sin(now / 400.0 + t) + 1) / 2
+        let size = clamp(floor(8 / depth), 1, 4)
+        let glow = rgb(90 + pulse * 120, 85 + pulse * 110, 70 + pulse * 80)
+        rect(screen_x - size / 2, horizon() + PROJ / depth * 0.35, size, size, glow)
+    end
+end
+
+# The thing: which of its 8 sides you see, and its walk (or, standing, its listening)
+func draw_beast(across, depth, now, beam, lit)
+    if not lit or beast_picture == nil then return end
+    # its heading against the way to you: 0 is facing you
+    let toward = wrap_angle(atan2(pos_y - beast_y, pos_x - beast_x) - beast_heading)
+    let side = floor(toward / (PI / 4) + 8.5) % 8
+    let mirror = false
+    if side > 4 then
+        side = 8 - side
+        mirror = true
+    end
+    let cell = side * 8 + floor(beast_frame) % 8
+    if beast == "search" then cell = 40 + side * 2 + floor(now / 1400) % 2 end
+    draw_sprite(beast_picture, cell, 72, 0.75, across, depth, lamp_light(depth) * 1.1, mirror)
+    # the first time your beam finds it
+    let screen_x = SCREEN_W / 2 * (1.0 + across / depth)
+    if not seen_it and not on_title and abs(screen_x - SCREEN_W / 2) < beam * 0.7 and depth < 11 then
+        seen_it = true
+        sfx(snd_sting, 85)
+        note_event("demo: it is in the beam")
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Drawing the rest: bars, words, effects
+# ---------------------------------------------------------------------------
+
+func draw_hud(now, fps)
+    # the bars above and below the picture
+    rect(0, 0, SCREEN_W, VIEW_TOP, 0)
+    rect(0, VIEW_BOTTOM, SCREEN_W, SCREEN_H - VIEW_BOTTOM, 0)
+    # the goal: for a while after it changes, and while Tab is held
+    let showing = now - goal_at < 7000 or keydown(KEY_TAB)
+    if showing and goal != "" then
+        let colour = TEXT
+        if now - goal_at > 5500 and not keydown(KEY_TAB) then colour = DIM end
+        text(24, VIEW_TOP / 2 - 8, goal, colour, 1)
+    end
+    if keydown(KEY_TAB) then
+        let carrying = "Carrying: your father's key"
+        if has_fuse and not power1 then carrying = carrying + ", a fuse" end
+        if has_tape then carrying = carrying + ", the tape of the knocks" end
+        if has_key then carrying = carrying + ", the arming key" end
+        text(24, VIEW_TOP / 2 + 12, carrying, DIM, 1)
+    end
+    # the flashlight's battery, top right, and your breath while you hold it
+    let bx = SCREEN_W - 150
+    text(bx - 56, VIEW_TOP / 2 - 8, "LIGHT", DIM, 1)
+    rect(bx, VIEW_TOP / 2 - 6, 102, 10, 0x302C28)
+    let colour = 0xA89C80
+    if battery < 20 then colour = RED end
+    rect(bx + 1, VIEW_TOP / 2 - 5, battery, 8, colour)
+    if breath < HOLD_BREATH then
+        text(bx - 56, VIEW_TOP / 2 + 12, "BREATH", DIM, 1)
+        rect(bx, VIEW_TOP / 2 + 14, 102, 10, 0x302C28)
+        rect(bx + 1, VIEW_TOP / 2 + 15, floor(breath * 100 / HOLD_BREATH), 8, 0x6080A0)
+    end
+    if armed then
+        let left = bigger(0, FUSE_SECONDS - (now - armed_at) / 1000)
+        centre(VIEW_TOP / 2 - 16, "CHARGES ARMED  " + str(left), BRIGHT_RED, 2)
+    end
+    if show_fps then text(SCREEN_W - 70, 8, str(fps) + " FPS", DIM, 1) end
+    # what E would do, under the middle of the picture
+    if prompt != "" then centre(VIEW_BOTTOM - 40, "E  " + prompt, TEXT, 1) end
+    draw_subtitles(now)
+end
+
+# The subtitles playing now, or else the last message, in the bar below the picture
+func draw_subtitles(now)
+    let y = VIEW_BOTTOM + 22
+    let shown = 0
+    let i = 0
+    while i < len(subtitles) do
+        let s = subtitles[i]
+        if now > s[1] then
+            remove(subtitles, i)
+        else
+            if now >= s[0] and shown < 2 then
+                let words = s[3]
+                if s[2] != "" then words = s[2] + ":  " + s[3] end
+                centre(y + shown * 22, words, SUBTITLE, 1)
+                shown = shown + 1
+            end
+            i = i + 1
+        end
+    end
+    if shown == 0 and now < hint_until then
+        for piece in wrap_words(hint, 100) do
+            centre(y + shown * 20, piece, TEXT, 1)
+            shown = shown + 1
+        end
+    end
+end
+
+# Effects over the picture: the static of the thing, the red of the alarm, and fading
+func draw_effects(now)
+    # the static round the thing: every other frame (it flickers, as static does), as grain
+    # on every pixel of the picture costs a few frames a second
+    if static_amount > 2 and frames_drawn % 2 == 0 then gnoise(0, VIEW_TOP, SCREEN_W, VIEW_H, static_amount) end
+    if armed and (now / 450) % 2 == 0 then
+        gtint(0, VIEW_TOP, SCREEN_W, VIEW_H, 0x900000, 0.18)
+    end
+    if fade > 0.01 then gtint(0, VIEW_TOP, SCREEN_W, VIEW_H, 0, fade) end
+end
+
+# One frame of the world
+func draw_world(now, fps)
+    let radius = flashlight_radius(now)
+    let extra = flash_light(now)
+    flash_now = extra
+    let light = bigger(ambient, extra)
+    let lit = radius > 0 or light > 0
+    let beam = SCREEN_W
+    if radius > 0 then
+        imglight(SCREEN_W / 2, horizon(), radius, light)
+        if light == 0 then beam = radius + STRIP_WIDTH / 2 end
+    else
+        # no flashlight: only the ambient light (a tiny spotlight, and the ambient everywhere)
+        imglight(SCREEN_W / 2, horizon(), 1, light)
+    end
+    if lit then
+        draw_backdrop()
+    else
+        rect(0, VIEW_TOP, SCREEN_W, VIEW_H, 0)
+    end
+    draw_walls(now, beam, lit)
+    draw_sprites(now, beam, lit)
+    imglight()
+    draw_effects(now)
+    draw_hud(now, fps)
+    frames_drawn = frames_drawn + 1
+end
+
+# ---------------------------------------------------------------------------
+# Levels, saving, and the demo
+# ---------------------------------------------------------------------------
+
+# Arrive on a level: put everything as it is when you first get there (also after dying)
+func enter_level(n, now)
+    level = n
+    read_map()
+    pos_x = ARRIVE[n][0]
+    pos_y = ARRIVE[n][1]
+    face(ARRIVE[n][2])
+    look = 0
+    level_things = []
+    for i = 0 to len(thing_what) - 1 do
+        if level_of(floor(thing_x[i]), floor(thing_y[i])) == n then push(level_things, i) end
+    end
+    beast_stop()
+    sstop()
+    background = -1
+    ring_voice = -1
+    gen_voice = -1
+    alarm_voice = -1
+    waiting_sounds = []
+    subtitles = []
+    level_sound(n)
+    steps_x = -1
+    armed = false
+    holding = false
+    breath = HOLD_BREATH
+    gasping = false
+    mimic_until = 0
+    static_amount = 0
+    ambient = 0.0
+    if n == 1 then
+        set_goal("Find Dad.", now)
+        thunder_at_start(now)
+    elif n == 2 then
+        sighting = false
+        whisper_done = false
+        mimic_done = false
+        seen_it = false
+        has_tape = false
+        has_key = false
+        power2 = false
+        plan_known = false
+        heard_final = false
+        set_goal("Find Dad.", now)
+    else
+        has_tape = true
+        has_key = true
+        power2 = true
+        set_goal("Find the charge console, by the casing.", now)
+        later(2500, snd_knocks, 38.5, 13.5, 50)
+    end
+    save_progress(n)
+end
+
+func thunder_at_start(now)
+    lightning_done = false
+    phone = 0
+    has_fuse = false
+    power1 = false
+    dorm_done = false
+    slam_done = false
+    shaft_knocks = false
+    flash_at = -100000
+    later(1500, snd_thunder, -1, 0, 60)
+end
+
+# Keep which level you have reached (and your battery), so Continue starts there. The first
+# time, AerOS asks if the game may write in its folder
+func save_progress(n)
+    if demo or n == saved_level or n < 2 then return end
+    saved_level = n
+    wrf(SAVE_FILE, str(n) + " " + str(battery) + "\n")
+end
+
+# The level saved last time (1 if none) and its battery: [level, battery]
+func load_progress()
+    let words = rdf(SAVE_FILE)
+    if words == nil then return [1, 100] end
+    let parts = split(words, " ")
+    let n = int(parts[0])
+    if n == nil or n < 1 or n > 3 then return [1, 100] end
+    let b = 100
+    if len(parts) > 1 and int(trim_line(parts[1])) != nil then b = int(trim_line(parts[1])) end
+    return [n, clamp(b, 10, 100)]
+end
+
+func trim_line(words)
+    let at = find(words, "\n")
+    if at >= 0 then return sub(words, 0, at) end
+    return words
+end
+
+# The demo's route, in turn: ["go", x, y, wait] walks onto that square; ["use", x, y, wait]
+# walks up beside it, faces it and uses what is there (a thing, or a wall), then waits that
+# many milliseconds (for the telephone call, the last tape). See demo_drive
+let DEMO_ROUTE = [["use", 19, 13, 0], ["go", 25, 12, 0], ["go", 25, 4, 0], ["go", 20, 1, 0],
+                  ["use", 12, 4, 17000], ["use", 6, 16, 0], ["use", 23, 4, 2000], ["use", 0, 5, 0],
+                  ["use", 3, 22, 0], ["use", 16, 29, 0], ["use", 11, 34, 0], ["use", 33, 31, 1000],
+                  ["use", 35, 32, 25000], ["use", 31, 34, 0],
+                  ["use", 38, 13, 0], ["use", 32, 3, 0]]
+# and "knocks demo 2 leave": on B2, the power on, then the lift up (the second ending)
+let DEMO_LEAVE = [["use", 3, 22, 0], ["use", 33, 31, 1000], ["use", 1, 23, 0]]
+
+# Drive yourself, in the demo: walk to the next square on the route along a step map, face
+# what is there, and use it. Gives what using it gave ("" usually)
+func demo_drive(seconds, now)
+    if demo_step >= len(demo_route) then return "" end
+    if now < demo_wait then return "" end
+    let goal_x = demo_route[demo_step][1]
+    let goal_y = demo_route[demo_step][2]
+    let x = floor(pos_x)
+    let y = floor(pos_y)
+    if demo_map_for != demo_step then
+        demo_map_for = demo_step
+        demo_next_to = demo_route[demo_step][0] == "use"
+        if demo_next_to then
+            demo_map = steps_from_around(goal_x, goal_y)
+        else
+            demo_map = steps_from(goal_x, goal_y, FAR, true)
+        end
+    end
+    let here = demo_map[y][x]
+    let aim_x = goal_x + 0.5
+    let aim_y = goal_y + 0.5
+    let arrived = here == 0
+    if not arrived then
+        for way = 0 to 3 do
+            if demo_map[y + STEP_Y[way]][x + STEP_X[way]] < here then
+                aim_x = x + STEP_X[way] + 0.5
+                aim_y = y + STEP_Y[way] + 0.5
+            end
+        end
+        # keep to the middle of the square until lined up with the next one
+        let off_x = abs(pos_x - (x + 0.5))
+        let off_y = abs(pos_y - (y + 0.5))
+        if (aim_x != x + 0.5 and off_y > 0.15) or (aim_y != y + 0.5 and off_x > 0.15) then
+            aim_x = x + 0.5
+            aim_y = y + 0.5
+        end
+    end
+    let want = atan2(aim_y - pos_y, aim_x - pos_x)
+    let turn = wrap_angle(want - angle)
+    face(angle + clamp(turn, -TURN_SPEED * seconds * 1.5, TURN_SPEED * seconds * 1.5))
+    if arrived and not demo_next_to then
+        demo_step = demo_step + 1
+        return ""
+    end
+    # beside it, but maybe at the far side of the square: step in close enough to reach it
+    let gap = sqrt((aim_x - pos_x) * (aim_x - pos_x) + (aim_y - pos_y) * (aim_y - pos_y))
+    if arrived and gap > 1.0 and abs(turn) < 0.3 then
+        let was_x = pos_x
+        let was_y = pos_y
+        move(dir_x * WALK_SPEED * seconds, dir_y * WALK_SPEED * seconds)
+        # (against a wall, it can't come closer: use it from there)
+        if abs(pos_x - was_x) + abs(pos_y - was_y) > 0.0001 then return "" end
+    end
+    if arrived then
+        if abs(turn) < 0.08 then
+            let target = in_front()
+            demo_step = demo_step + 1
+            demo_wait = now + 400 + demo_route[demo_step - 1][3]
+            # what it did, in the serial log, so a test can follow it
+            if target == nil then
+                note_event("demo: nothing to use at " + str(goal_x) + ", " + str(goal_y))
+            else
+                note_event("demo: " + use_words(target) + " at " + str(goal_x) + ", " + str(goal_y))
+                return use(target, now)
+            end
+        end
+        return ""
+    end
+    # a closed door in the way: open it
+    let ahead = grid[floor(aim_y)][floor(aim_x)]
+    if (ahead == W_DOOR or ahead == W_STEEL_DOOR) and abs(turn) < 0.1 then
+        return use(["wall", floor(aim_x), floor(aim_y)], now)
+    end
+    if abs(turn) < 0.5 then
+        let walk_len = WALK_SPEED * seconds
+        let was_x = pos_x
+        let was_y = pos_y
+        move(dir_x * walk_len, dir_y * walk_len)
+        gait = 2
+        footsteps(sqrt((pos_x - was_x) * (pos_x - was_x) + (pos_y - was_y) * (pos_y - was_y)), now)
+    end
+    return ""
+end
+
+# A step map to the open squares beside (x, y): for walking up to a wall or a solid thing
+func steps_from_around(x, y)
+    let best = []
+    for way = 0 to 3 do
+        let nx = x + STEP_X[way]
+        let ny = y + STEP_Y[way]
+        if ny >= 0 and nx >= 0 and ny < len(grid) and nx < len(grid[0]) and is_open(nx, ny) then
+            let map = steps_from(nx, ny, FAR, true)
+            if len(best) == 0 then
+                best = map
+            else
+                for yy = 0 to len(grid) - 1 do
+                    for xx = 0 to len(grid[0]) - 1 do
+                        if map[yy][xx] < best[yy][xx] then best[yy][xx] = map[yy][xx] end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+# ---------------------------------------------------------------------------
+# Screens
+# ---------------------------------------------------------------------------
+
+func warning_screen()
+    gclear(0)
+    let top = SCREEN_H / 2 - 150
+    centre(top, "CONTENT WARNING", RED, 3)
+    let lines = ["This game has darkness, sudden loud noises and frightening images,",
+                 "and deals with death and loss.",
+                 "",
+                 "It is best played with headphones, in the dark.",
+                 "What you hear tells you where things are."]
+    for i = 0 to len(lines) - 1 do
+        centre(top + 70 + i * 22, lines[i], TEXT, 1)
+    end
+    centre(top + 220, "Press any key", DIM, 1)
+    gshow()
+    if demo then
+        sleep(1500)
+    else
+        while haskey() do key() end
+        key()
+    end
+end
+
+# The title: the far end of a B2 corridor, the thing standing there in a flickering beam,
+# and the menu. Gives "new", "continue" or "quit"
+func title_screen()
+    on_title = true
+    let progress = load_progress()
+    let options = ["BEGIN", "QUIT"]
+    if progress[0] > 1 then options = ["CONTINUE (" + LEVEL_NAMES[progress[0]] + ")", "BEGIN AGAIN", "QUIT"] end
+    let chosen = 0
+    sstop()
+    let music = loaded("title")
+    if sound_card and music != nil then splay(music, true, 60) end
+    level = 2
+    read_map()
+    level_things = []
+    pos_x = 7.5
+    pos_y = 23.5
+    face(0.0)
+    look = 0
+    beast_start(16, 23, "search")
+    search_until = time() + 100000000
+    beast_heading = PI
+    breath_voice = stop_voice(breath_voice)
+    static_voice = stop_voice(static_voice)
+    let started = time()
+    while true do
+        let now = time()
+        let radius = SCREEN_W * 0.22
+        if random(14) == 0 then radius = 1 end
+        imglight(SCREEN_W / 2, horizon(), radius, 0)
+        draw_backdrop()
+        draw_walls(now, radius + STRIP_WIDTH, true)
+        draw_sprites(now, radius, true)
+        imglight()
+        rect(0, 0, SCREEN_W, VIEW_TOP, 0)
+        rect(0, VIEW_BOTTOM, SCREEN_W, SCREEN_H - VIEW_BOTTOM, 0)
+        centre(VIEW_TOP + 40, "FOUR KNOCKS", 0xD8D0C0, 6)
+        for i = 0 to len(options) - 1 do
+            let colour = DIM
+            let words = options[i]
+            if i == chosen then
+                colour = TEXT
+                words = "> " + words + " <"
+            end
+            centre(VIEW_BOTTOM + 20 + i * 22, words, colour, 1)
+        end
+        text(10, SCREEN_H - 20, "UP / DOWN, ENTER", 0x504A40, 1)
+        gshow()
+        if demo and now - started > 2500 then
+            beast_stop()
+            on_title = false
+            return "new"
+        end
+        while haskey() do
+            let k = key()
+            if k == KEY_UP or k == ord("w") then chosen = (chosen + len(options) - 1) % len(options) end
+            if k == KEY_DOWN or k == ord("s") then chosen = (chosen + 1) % len(options) end
+            if k == KEY_ESCAPE then
+                beast_stop()
+                on_title = false
+                return "quit"
+            end
+            if k == KEY_ENTER or k == ord(" ") or k == ord("e") then
+                beast_stop()
+                on_title = false
+                let picked = options[chosen]
+                if picked == "QUIT" then return "quit" end
+                if picked == "BEGIN" or picked == "BEGIN AGAIN" then return "new" end
+                return "continue"
+            end
+        end
+        frame(30)
+    end
+end
+
+# Words on black, one card after another, each until a key (or a few seconds in the demo)
+func cards(lines, colour)
+    for card in lines do
+        gclear(0)
+        let wrapped = wrap_words(card, 70)
+        let top = SCREEN_H / 2 - len(wrapped) * 12
+        for i = 0 to len(wrapped) - 1 do
+            centre(top + i * 24, wrapped[i], colour, 1)
+        end
+        gshow()
+        if demo then
+            sleep(1800)
+        else
+            sleep(600)
+            while haskey() do key() end
+            let wait_end = time() + 9000
+            while time() < wait_end and not haskey() do sleep(30) end
+            while haskey() do key() end
+        end
+    end
+end
+
+# The start: an answering machine in the dark, then what happened
+func intro()
+    sstop()
+    gclear(0)
+    centre(SCREEN_H / 2 - 40, "1 NEW MESSAGE", 0xC04030, 2)
+    centre(SCREEN_H / 2 + 10, "Tuesday, 3 October 1989, 2:14 a.m.", DIM, 1)
+    gshow()
+    sleep(1200)
+    let ends = play_recording("message", MESSAGE_LINES, 900, 90)
+    while time() < ends do
+        gclear(0)
+        centre(SCREEN_H / 2 - 40, "1 NEW MESSAGE", 0xC04030, 2)
+        draw_subtitles(time())
+        gshow()
+        if haskey() and key() == KEY_ESCAPE then break end
+        sleep(30)
+    end
+    sstop()
+    subtitles = []
+    cards(["Your father, Martin Venn, was the engineer at the Corvid Hill Deep Observatory, a station on a lonely hill, built over a borehole four kilometres deep, to listen to the earth.",
+           "In March 1986 he went missing, with the ten other people who worked there. The police found the doors chained from the inside, and nobody in the building.",
+           "That was three and a half years ago.",
+           "You still have his key."], TEXT)
+end
+
+# Caught: its face in yours, then the screen goes red, then black
+func caught_screen(now)
+    sstop()
+    sfx(snd_caught, 100)
+    note_event("Four Knocks: caught on level " + str(level))
+    let start = time()
+    while time() - start < 1100 do
+        let t = time() - start
+        let grow = 1.0 + t / 1100.0 * 0.6
+        let w = SCREEN_W * grow
+        let h = w * 3 / 4
+        gclear(0)
+        image(scare_picture, (SCREEN_W - w) / 2 + random(30) - 15, (SCREEN_H - h) / 2 + random(30) - 15, w, h)
+        gnoise(0, 0, SCREEN_W, SCREEN_H, 40)
+        if t > 500 then gtint(0, 0, SCREEN_W, SCREEN_H, 0x700000, (t - 500) / 600.0) end
+        gshow()
+    end
+    gclear(0)
+    centre(SCREEN_H / 2 - 30, "IT HEARD YOU", RED, 3)
+    centre(SCREEN_H / 2 + 30, "Press any key to try again", DIM, 1)
+    gshow()
+    sleep(1200)
+    while haskey() do key() end
+    if not demo then key() end
+end
+
+# The hill comes down with you still in it
+func buried_screen()
+    sstop()
+    sfx(loaded("collapse"), 100)
+    for i = 0 to 30 do
+        gtint(0, 0, SCREEN_W, SCREEN_H, 0, 0.15)
+        gnoise(0, 0, SCREEN_W, SCREEN_H, 30)
+        gshow()
+        sleep(40)
+    end
+    gclear(0)
+    centre(SCREEN_H / 2 - 30, "THE HILL CAME DOWN", RED, 3)
+    centre(SCREEN_H / 2 + 30, "You were still inside it. Press any key to try again.", DIM, 1)
+    gshow()
+    sleep(3000)
+    while haskey() do key() end
+    if not demo then key() end
+end
+
+# The first ending: up the ladder as the charges go off
+func ending_quiet()
+    let collapse = loaded("collapse")
+    sfx(collapse, 100)
+    for i = 0 to 60 do
+        shake_y = random(30) - 15
+        gtint(0, 0, SCREEN_W, SCREEN_H, 0, 0.08)
+        gnoise(0, VIEW_TOP, SCREEN_W, VIEW_H, 20 + i / 2)
+        gshow()
+        sleep(60)
+    end
+    shake_y = 0
+    sstop()
+    gclear(0)
+    gshow()
+    sleep(1500)
+    let music = loaded("end")
+    if sound_card and music != nil then splay(music, false, 70) end
+    cards(["The charges went off at 4:12 in the morning.",
+           "The hill shook once, and was still. By sunrise the borehole was a hundred metres of broken rock, and nothing was knocking at the bottom of it.",
+           "They never found Martin Venn. They never found any of them.",
+           "You kept his recorder. Some nights you play it, to hear a voice that really is his.",
+           "And some nights, when the house is very quiet, you listen.",
+           "There is nothing. There is nothing at all."], TEXT)
+    the_end("ENDING 1 OF 2:  THE QUIET")
+end
+
+# The second ending: up in the lift, leaving it open behind you
+func ending_open()
+    sfx(snd_lift, 80)
+    for i = 0 to 40 do
+        gtint(0, 0, SCREEN_W, SCREEN_H, 0, 0.12)
+        gshow()
+        sleep(60)
+    end
+    sstop()
+    cards(["The lift groaned all the way up. You didn't look back.",
+           "You drove until the sun came up, and didn't stop until the hills were gone.",
+           "Behind you, at the bottom of the hill, the lift's doors stood open on the dark. And down below, a motor whined into life.",
+           "Three nights later, the telephone rang. You let the machine take it."], TEXT)
+    gclear(0)
+    centre(SCREEN_H / 2 - 40, "1 NEW MESSAGE", 0xC04030, 2)
+    gshow()
+    sleep(800)
+    let ends = play_recording("home", [["YOUR OWN VOICE", "Kit. Come home. I'm already here.", 2.6]], 900, 95)
+    while time() < ends do
+        gclear(0)
+        centre(SCREEN_H / 2 - 40, "1 NEW MESSAGE", 0xC04030, 2)
+        draw_subtitles(time())
+        gshow()
+        sleep(30)
+    end
+    sleep(700)
+    sfx(snd_knockd, 100)
+    gclear(0)
+    centre(SCREEN_H / 2, "(four knocks, at the front door)", DIM, 1)
+    gshow()
+    sleep(4500)
+    the_end("ENDING 2 OF 2:  LEFT OPEN")
+end
+
+func the_end(which)
+    gclear(0)
+    centre(SCREEN_H / 2 - 50, "THE END", TEXT, 4)
+    centre(SCREEN_H / 2 + 20, which, DIM, 1)
+    centre(SCREEN_H / 2 + 60, "Press any key", 0x504A40, 1)
+    gshow()
+    note_event("Four Knocks: THE END, " + which)
+    sleep(2000)
+    while haskey() do key() end
+    if not demo then key() end
+    sstop()
+end
+
+# Paused: Escape again carries on, Q goes back to the title. Gives true to quit
+func pause_screen()
+    note_event("Four Knocks: paused")
+    gtint(0, 0, SCREEN_W, SCREEN_H, 0, 0.7)
+    centre(SCREEN_H / 2 - 40, "PAUSED", TEXT, 3)
+    centre(SCREEN_H / 2 + 20, "ESC  carry on        Q  back to the title", DIM, 1)
+    centre(SCREEN_H / 2 + 44, "(you will start this level again)", 0x504A40, 1)
+    gshow()
+    while true do
+        let k = key()
+        if k == KEY_ESCAPE then
+            mousemove()
+            return false
+        end
+        if k == ord("q") or k == ord("Q") then return true end
+    end
+end
+
+# ---------------------------------------------------------------------------
+# The game
+# ---------------------------------------------------------------------------
+
+# Play from level `start`. Gives when it's over: "title" or "quit"
+func play_game(start)
+    let now = time()
+    enter_level(start, now)
+    fade = 1.0
+    let last = now
+    let fps = 0
+    let frames = 0
+    let fps_since = now
+    while true do
+        now = time()
+        let seconds = smaller((now - last) / 1000.0, 0.1)
+        last = now
+        let next = ""
+        # single presses (at most a few a frame: key() gives 0 without taking the key if the
+        # keyboard can't be read just then, and haskey() would then say yes for ever)
+        let presses = 0
+        while haskey() and presses < 8 do
+            presses = presses + 1
+            let k = key()
+            if k == KEY_ESCAPE then
+                if pause_screen() then return "title" end
+                now = time()
+                last = now
+            end
+            if k == ord("f") or k == ord("F") then toggle_light(now) end
+            if k == ord("i") or k == ord("I") then show_fps = not show_fps end
+            if (k == ord("e") or k == ord("E") or k == KEY_ENTER) and not demo then
+                let target = in_front()
+                if target != nil then next = use(target, now) end
+            end
+        end
+        if mousedown(MOUSE_LEFT) and not click_held and not demo then
+            let target = in_front()
+            if target != nil then next = use(target, now) end
+        end
+        if mousedown(MOUSE_RIGHT) and not right_held then toggle_light(now) end
+        click_held = mousedown(MOUSE_LEFT)
+        right_held = mousedown(MOUSE_RIGHT)
+
+        if demo then
+            if next == "" then next = demo_drive(seconds, now) end
+        else
+            let moved = handle_movement(seconds)
+            footsteps(moved, now)
+        end
+        handle_breath(seconds, now)
+        handle_battery(now)
+
+        # the step map from you, for what can hear what (only when you change square)
+        if floor(pos_x) != steps_x or floor(pos_y) != steps_y then
+            steps_x = floor(pos_x)
+            steps_y = floor(pos_y)
+            sound_map = steps_from(steps_x, steps_y, HEAR_STEPS, true)
+        end
+
+        if level == 1 then events_ground(now) end
+        if level == 2 then events_b2(now) end
+        if level == 3 then
+            let result = events_casing(now)
+            if result == "buried" then
+                buried_screen()
+                now = time()
+                last = now
+                enter_level(3, now)
+                fade = 1.0
+            end
+        end
+        beast_listen(noise_now(now), now)
+        move_beast(seconds, now)
+        beast_sounds(now)
+        heartbeat(now)
+        play_waiting(now)
+        if gen_voice >= 0 and level == 1 then move_loop(gen_voice, 22.5, 4.5, 45, 14) end
+
+        # caught: start this level again
+        if beast_caught() then
+            caught_screen(now)
+            now = time()
+            last = now
+            enter_level(level, now)
+            fade = 1.0
+        end
+
+        # what E would do here
+        prompt = ""
+        let target = in_front()
+        if target != nil then prompt = use_words(target) end
+
+        # where to next
+        if next == "lift" then
+            ride_lift()
+            enter_level(2, time())
+            fade = 1.0
+        elif next == "stairs" then
+            go_down_stairs()
+            enter_level(3, time())
+            fade = 1.0
+        elif next == "leave" then
+            if demo or confirm_leave() then
+                ending_open()
+                return "title"
+            end
+        elif next == "ladder" then
+            ending_quiet()
+            return "title"
+        end
+
+        fade = bigger(0.0, fade - seconds * 0.6)
+        draw_world(now, fps)
+        gshow()
+        frames = frames + 1
+        if now - fps_since >= 1000 then
+            fps = frames
+            frames = 0
+            fps_since = now
+        end
+        frame(60)
+    end
+end
+
+func toggle_light(now)
+    light_on = not light_on
+    sfx(snd_click, 45)
+end
+
+func ride_lift()
+    sfx(snd_lift, 85)
+    background = stop_voice(background)
+    for i = 0 to 25 do
+        gtint(0, 0, SCREEN_W, SCREEN_H, 0, 0.15)
+        gshow()
+        sleep(40)
+    end
+    gclear(0)
+    centre(SCREEN_H / 2, "The key turns. The lift shudders, and sinks into the hill.", DIM, 1)
+    gshow()
+    sleep(5500)
+    sstop()
+    sfx(snd_slam, 70)
+    gclear(0)
+    centre(SCREEN_H / 2, "Then, with a bang, every light in it dies.", DIM, 1)
+    gshow()
+    sleep(2000)
+end
+
+func go_down_stairs()
+    background = stop_voice(background)
+    sstop()
+    for i = 0 to 20 do
+        gtint(0, 0, SCREEN_W, SCREEN_H, 0, 0.15)
+        gshow()
+        sleep(40)
+    end
+    cards(["The stairs go down a long way. The air gets colder, and wet, and at the bottom there is a sound like breathing: the borehole."], DIM)
+end
+
+# The lift up, on B2: really leave?
+func confirm_leave()
+    gtint(0, 0, SCREEN_W, SCREEN_H, 0, 0.7)
+    centre(SCREEN_H / 2 - 30, "Take the lift up, and leave it all behind?", TEXT, 2)
+    centre(SCREEN_H / 2 + 30, "Y  leave        N  stay", DIM, 1)
+    gshow()
+    while true do
+        let k = key()
+        if k == ord("y") or k == ord("Y") then return true end
+        if k == ord("n") or k == ord("N") or k == KEY_ESCAPE then
+            mousemove()
+            return false
+        end
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Start
+# ---------------------------------------------------------------------------
+
+if not gopen() then
+    print("Four Knocks needs a graphics screen.")
+    exit()
+end
+gbuf(true)
+
+let SCREEN_W = gw()
+let SCREEN_H = gh()
+# the picture is letterboxed: 16 by 9, with black bars above and below for the words
+let VIEW_H = SCREEN_W * 9 / 16
+if VIEW_H > SCREEN_H - 120 then VIEW_H = SCREEN_H - 120 end
+let VIEW_TOP = (SCREEN_H - VIEW_H) / 2
+let VIEW_BOTTOM = VIEW_TOP + VIEW_H
+# pixels for one square at one square away, across and up (see "How it works")
+let PROJ = SCREEN_W / (2.0 * VIEW_WIDTH)
+let RAYS = SCREEN_W / STRIP_WIDTH
+let depths = list(RAYS, 0.0)
+let STRIP_SPREAD = 2.0 * VIEW_WIDTH * 64 / RAYS
+
+# Everything the functions share (AerLang needs each made with let first)
+let demo = len(args) > 0 and args[0] == "demo"
+let testing = demo or (len(args) > 0 and args[0] == "start")
+let harmless = demo or (len(args) > 0 and args[0] == "safe")
+let start_at = 0
+if len(args) > 1 and (args[0] == "start" or demo) and int(args[1]) != nil then start_at = clamp(int(args[1]), 1, 3) end
+let level = 1
+let grid = []
+let blocked = []
+let thing_what = []
+let thing_x = []
+let thing_y = []
+let thing_frame = []
+let thing_number = []
+let thing_gone = []
+let level_things = []
+let pos_x = 0.0
+let pos_y = 0.0
+let angle = 0.0
+let dir_x = 1.0
+let dir_y = 0.0
+let plane_x = 0.0
+let plane_y = VIEW_WIDTH
+let look = 0
+let shake_y = 0
+let gait = 0
+let stride = 0.0
+let breath = HOLD_BREATH
+let holding = false
+let gasping = false
+let loud_noise = 0
+let loud_until = 0
+let light_on = true
+let battery = 100
+let drained_at = 0
+let flicker_until = 0
+let ambient = 0.0
+let fade = 0.0
+let static_amount = 0
+let frames_drawn = 0
+let show_fps = testing
+let click_held = false
+let right_held = false
+let prompt = ""
+let goal = ""
+let goal_at = 0
+let hint = ""
+let hint_until = 0
+let subtitles = []
+let waiting_sounds = []
+let steps_x = -1
+let steps_y = -1
+let sound_map = []
+let saved_level = 0
+# the story so far (see the events_ functions)
+let lightning_done = false
+let next_lightning = 0
+let flash_at = -100000
+let long_flash = false
+let phone = 0               # 0 silent, 1 ringing, 2 answered
+let has_fuse = false
+let power1 = false
+let power1_at = 0
+let dorm_done = false
+let slam_done = false
+let shaft_knocks = false
+let sighting = false
+let seen_it = false
+let on_title = false        # the title screen is showing (it draws the thing too)
+let flash_now = 0.0         # how much lightning lights everything this frame (see flash_light)
+let whisper_done = false
+let mimic_done = false
+let mimic_until = 0
+let has_tape = false
+let has_key = false
+let power2 = false
+let plan_known = false
+let heard_final = false
+let armed = false
+let armed_at = 0
+let next_pa = 0
+# the thing (see beast_start)
+let beast = "gone"
+let beast_x = 0.0
+let beast_y = 0.0
+let beast_to_x = 0.0
+let beast_to_y = 0.0
+let beast_heading = 0.0
+let beast_goal_x = 0
+let beast_goal_y = 0
+let beast_map = []
+let beast_frame = 0.0
+let beast_stride = 0.0
+let beast_path = []
+let search_until = 0
+let shrieked_at = -100000
+let heart_at = 0
+# the demo
+let demo_step = 0
+let demo_route = DEMO_ROUTE
+if demo and len(args) > 2 and args[2] == "leave" then demo_route = DEMO_LEAVE end
+let demo_wait = 0
+let demo_map = []
+let demo_map_for = -1
+let demo_next_to = false
+# the sounds and what is playing
+let sound_card = false
+let snd_step1 = nil
+let snd_step2 = nil
+let snd_bstep = nil
+let snd_breath = nil
+let snd_shriek = nil
+let snd_sting = nil
+let snd_heart = nil
+let snd_knocks = nil
+let snd_knockd = nil
+let snd_creak = nil
+let snd_slam = nil
+let snd_ring = nil
+let snd_lift = nil
+let snd_click = nil
+let snd_buzz = nil
+let snd_paper = nil
+let snd_pickup = nil
+let snd_thunder = nil
+let snd_alarm = nil
+let snd_caught = nil
+let snd_gasp = nil
+let snd_static = nil
+let snd_genstart = nil
+let snd_genloop = nil
+let snd_switch = nil
+let snd_whisper = nil
+let background = -1
+let kept_names = []
+let kept_sounds = []
+let recording = nil
+let recording_voice = -1
+let ring_voice = -1
+let gen_voice = -1
+let alarm_voice = -1
+let breath_voice = -1
+let static_voice = -1
+# the pictures
+let wall_pictures = []
+let floor_pictures = []
+let ceiling_pictures = []
+let beast_picture = nil
+let lunge_picture = nil
+let props_picture = nil
+let scare_picture = nil
+let pictures_ok = false
+
+gclear(0)
+centre(SCREEN_H / 2, "Loading...", DIM, 1)
+gshow()
+load_sounds()
+load_pictures()
+if not pictures_ok then
+    gclose()
+    print("Four Knocks can't find its pictures in " + FOLDER + ": install it with pkg install knocks.")
+    exit()
+end
+
+warning_screen()
+let running = true
+while running do
+    let start = start_at
+    if start == 0 then
+        let choice = title_screen()
+        if choice == "quit" then
+            running = false
+        elif choice == "new" then
+            saved_level = 0
+            intro()
+            start = 1
+        else
+            let progress = load_progress()
+            start = progress[0]
+            battery = progress[1]
+        end
+    end
+    if running then
+        light_on = true
+        if demo then
+            while demo_step < len(demo_route) and level_of(demo_route[demo_step][1], demo_route[demo_step][2]) < start do
+                demo_step = demo_step + 1
+            end
+            show_fps = true
+        end
+        if start_at != 0 then start_at = 0 end
+        if play_game(start) == "quit" then running = false end
+        if demo then running = false end
+    end
+end
+
+sstop()
+gclose()
+print("Thanks for playing Four Knocks.")

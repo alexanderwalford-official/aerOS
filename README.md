@@ -81,6 +81,7 @@ I've decided to use inline assmembly in C with the GCC GNU99 standard for the mo
 - [x] RT mode, experimental. (boot option 6: real-time tasks from the timer, a schedulability check and a watchdog; RT lists them)
 - [x] Decimal numbers in AerLang. (3.14, 7 / 2.0, sqrt, sin, cos, atan2, floor, round, PI, on the x87 FPU)
 - [x] A 3D game demo. (MAZE3D, a first-person maze drawn with ray casting, with mouse look, a pitch black dungeon of textured stone walls, flagstone floors and cobbled ceilings seen by the beam of your flashlight, ghosts that chase you, made-up mazes up to 55 x 55, and its own chiptune music and sound effects, written in AerLang to show what it can do)
+- [x] A horror game. (FOUR KNOCKS, a story told in a pitch black observatory over a borehole: a thing that hunts you by ear, heard on your left or right as it moves (stereo panning), seen only in your flashlight's beam, pre-rendered 3D models, lightning, static and fades drawn by new AerLang built-ins, and every sound, voice and picture made by scripts in tools/; `pkg install knocks`)
 - [x] A database. (AerDB: tables of rows in one file, a little SQL, the SQL command and dbopen / dbrun / dbquery in AerLang)
 - [x] Ethernet network driver. (Intel e1000, sealed messages only, and a firewall that blocks everything until FW ALLOW; see docs/NETWORK.md)
 - [ ] More in the pipeline coming soon..

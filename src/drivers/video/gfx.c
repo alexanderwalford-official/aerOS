@@ -50,11 +50,17 @@ static uint8_t* back = NULL;   // the back buffer, NULL when drawing straight to
 // the spotlight textures are lit by (see gfx_texture_light): off (spot_r2 is 0), or a circle
 // round spot_x, spot_y, spot_r2 being its radius squared. A pixel's distance from its middle,
 // squared, times spot_scale and >> 16, goes from 0 in the middle up to 255 at the edge, and
-// spot_table[] has how much light (0 to 256) there is at each
+// spot_table[] has how much light (0 to 256) there is at each. spot_outside is the light
+// outside the circle (0, pitch black, unless an ambient light was asked for), and no entry of
+// spot_table[] is darker than it. The table is only worked out again when the radius or the
+// ambient light changes (table_radius, table_ambient)
 static uint32_t spot_r2 = 0;
 static uint32_t spot_scale;
 static uint16_t spot_table[256];
+static uint32_t spot_outside = 0;
 static int spot_x, spot_y;
+static int table_radius = 0;
+static uint32_t table_ambient = 0;
 
 // take the screen over from the text console (false in VGA text mode, there are no pixels)
 bool gfx_begin(void) {
@@ -807,7 +813,7 @@ static uint32_t spot_level(int x, int y, uint32_t level) {
     }
     int dx = x - spot_x, dy = y - spot_y;
     uint32_t d2 = (uint32_t)(dx * dx) + (uint32_t)(dy * dy);
-    return d2 < spot_r2 ? (level * spot_table[(d2 * spot_scale) >> 16]) >> 8 : 0;
+    return (level * (d2 < spot_r2 ? spot_table[(d2 * spot_scale) >> 16] : spot_outside)) >> 8;
 }
 
 // put the first `count` of colours[] on the screen from x, y (all on the screen), each darkened
@@ -846,7 +852,7 @@ static void light_row(int x, int y, int count, uint32_t level, int lit_y, bool a
     int dx = x - spot_x, dy = lit_y - spot_y;
     uint32_t d2 = (uint32_t)(dx * dx) + (uint32_t)(dy * dy);
     for (int i = 0; i < count; i++, d2 += (uint32_t)(2 * dx + 1), dx++) {
-        uint32_t lit = d2 < spot_r2 ? (level * spot_table[(d2 * spot_scale) >> 16]) >> 8 : 0;
+        uint32_t lit = (level * (d2 < spot_r2 ? spot_table[(d2 * spot_scale) >> 16] : spot_outside)) >> 8;
         uint32_t c = colours[i];
         out[i] = (((c & 0xFF00FF) * lit >> 8) & 0xFF00FF) | (((c & 0x00FF00) * lit >> 8) & 0x00FF00);
     }
@@ -867,7 +873,7 @@ static void straight_line(const texture_t* t, uint32_t u, uint32_t v, uint32_t u
         uint32_t c = *(const uint32_t*)(t->top + (int32_t)(v >> 16) * t->row_step + (u >> 16) * 4);
         uint32_t lit = level;
         if (spot_r2 != 0) {
-            lit = d2 < spot_r2 ? (level * spot_table[(d2 * spot_scale) >> 16]) >> 8 : 0;
+            lit = (level * (d2 < spot_r2 ? spot_table[(d2 * spot_scale) >> 16] : spot_outside)) >> 8;
             d2 += (uint32_t)(2 * dx + 1);
             dx++;
         }
@@ -884,9 +890,11 @@ static void straight_line(const texture_t* t, uint32_t u, uint32_t v, uint32_t u
 }
 
 // shine a spotlight on textures: a circle round x, y on the screen. It is fully lit out to a
-// third of the radius, then fades smoothly to black at its edge. A radius of 0 or less turns it
-// off. (The sums in light_row stay within 32 bits for any radius up to 16384)
-void gfx_texture_light(int x, int y, int radius) {
+// third of the radius, then fades smoothly to `ambient` (0 to 1: 0 is black) at its edge, and
+// everything outside it is lit by `ambient` too, like the faint light of a room you can just
+// make things out in. A radius of 0 or less turns it off. (The sums in light_row stay within
+// 32 bits for any radius up to 16384)
+void gfx_texture_light(int x, int y, int radius, double ambient) {
     spot_r2 = 0;
     if (radius <= 0) {
         return;
@@ -899,6 +907,14 @@ void gfx_texture_light(int x, int y, int radius) {
     spot_r2 = (uint32_t)radius * (uint32_t)radius;
     // any distance squared under spot_r2, times this, is under 256 << 16
     spot_scale = (256u << 16) / spot_r2;
+    spot_outside = light_level(ambient);
+    // a game usually moves its spotlight every frame, but seldom changes its size: the table
+    // only depends on the size and the ambient light, so it is kept until one of them changes
+    if (radius == table_radius && spot_outside == table_ambient) {
+        return;
+    }
+    table_radius = radius;
+    table_ambient = spot_outside;
     for (int i = 0; i < 256; i++) {
         // how far out entry i is, from 0 in the middle to 1 at the edge
         double out = sqrt((i + 0.5) / 256);
@@ -908,12 +924,36 @@ void gfx_texture_light(int x, int y, int radius) {
             double s = (out - 1.0 / 3) * 1.5;
             light = 1 - s * s * (3 - 2 * s);
         }
-        spot_table[i] = (uint16_t)(light * 256);
+        uint32_t level = (uint32_t)(light * 256);
+        spot_table[i] = (uint16_t)(level > spot_outside ? level : spot_outside);
     }
 }
 
-// a strip of wall: a picture stretched over w x h at x, y (see the top of this part)
-bool gfx_texture_column(const uint8_t* data, uint32_t length, int x, int y, int w, int h, double u0, double u1, double light) {
+// light_row for a see-through picture (a sprite): the same, but a pixel whose alpha (the top
+// byte of its colour in colours[]) is under 128 is left as it is, so what was drawn behind it
+// shows through. Only for strips, so the spotlight is worked out once, at the strip's middle
+static void light_row_see_through(int x, int y, int count, uint32_t level, int lit_y) {
+    level = spot_level(x + count / 2, lit_y, level);
+    // on the usual screen (0x00RRGGBB) straight into the row, as in light_row
+    uint32_t* out = screen_is_xrgb() ? (uint32_t*)(target + (uint32_t)y * target_pitch) + x : NULL;
+    for (int i = 0; i < count; i++) {
+        uint32_t c = colours[i];
+        if ((c >> 24) < 128) {
+            continue;
+        }
+        uint32_t lit = (((c & 0xFF00FF) * level >> 8) & 0xFF00FF) | (((c & 0x00FF00) * level >> 8) & 0x00FF00);
+        if (out != NULL) {
+            out[i] = lit;
+        } else {
+            put((uint32_t)(x + i), (uint32_t)y, pack(lit));
+        }
+    }
+}
+
+// a strip of wall: a picture stretched over w x h at x, y (see the top of this part). With
+// see_through, the picture's see-through pixels are skipped, for a sprite drawn a strip at a time
+// (only pictures with an alpha byte have any: 32 bit BMPs, and PNGs and GIFs)
+bool gfx_texture_column(const uint8_t* data, uint32_t length, int x, int y, int w, int h, double u0, double u1, double light, bool see_through) {
     if (!active) {
         return false;
     }
@@ -963,6 +1003,8 @@ bool gfx_texture_column(const uint8_t* data, uint32_t length, int x, int y, int 
     texture_open(&s, &texture);
     uint32_t row_bytes = (uint32_t)count * fb_bytes;
     uint32_t black = pack(0);
+    // a picture with an alpha byte (see texture_t: 4 bytes a pixel). Others are solid all over
+    bool has_alpha = texture.top != NULL && texture.bytes == 4;
     int previous_source_row = -1;
     uint8_t* previous_row = NULL;
     for (int row = first_row; row < last_row; row++, v += v_fixed_step) {
@@ -972,13 +1014,17 @@ bool gfx_texture_column(const uint8_t* data, uint32_t length, int x, int y, int 
         }
         int screen_y = y + row;
         uint8_t* screen_row = target + (uint32_t)screen_y * target_pitch + (uint32_t)left * fb_bytes;
-        // a row wholly above or below the spotlight is black
-        if (spot_r2 != 0 && (uint32_t)((screen_y - spot_y) * (screen_y - spot_y)) >= spot_r2) {
+        // a row of wall wholly above or below the spotlight is black (unless there is an
+        // ambient light). A sprite's row is drawn anyway: its solid parts black, its see-through
+        // parts not at all, so it hides what is behind it as a dark shape
+        if (spot_r2 != 0 && spot_outside == 0 && !see_through &&
+            (uint32_t)((screen_y - spot_y) * (screen_y - spot_y)) >= spot_r2) {
             fill_row((uint32_t)left, (uint32_t)screen_y, (uint32_t)count, black);
             continue;
         }
         // a wall nearer than the picture is tall shows each picture row on several screen rows:
-        // the same colours again, or (without the spotlight) a copy of the row above
+        // the same colours again, or (without the spotlight, and for a solid picture) a copy of
+        // the row above. A sprite's row can't be copied, as what shows through it differs
         if (source_row != previous_source_row) {
             if (texture.top != NULL) {
                 // the usual kind of picture, with texel() written out
@@ -988,15 +1034,26 @@ bool gfx_texture_column(const uint8_t* data, uint32_t length, int x, int y, int 
                     colours[i] = texture.bytes == 4 ? *(const uint32_t*)p : (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16);
                 }
             } else {
+                // texel() drops the alpha byte: these pictures are solid
                 for (int i = 0; i < count; i++) {
-                    colours[i] = texel(&texture, source_column[i], (uint32_t)source_row);
+                    colours[i] = texel(&texture, source_column[i], (uint32_t)source_row) | 0xFF000000u;
                 }
             }
-        } else if (spot_r2 == 0) {
+            if (see_through && !has_alpha) {
+                // a 24 bit picture has no alpha byte, so it is solid all over
+                for (int i = 0; i < count; i++) {
+                    colours[i] |= 0xFF000000u;
+                }
+            }
+        } else if (spot_r2 == 0 && !see_through) {
             memcpy(screen_row, previous_row, row_bytes);
             continue;
         }
-        light_row(left, screen_y, count, level, screen_y, false);
+        if (see_through) {
+            light_row_see_through(left, screen_y, count, level, screen_y);
+        } else {
+            light_row(left, screen_y, count, level, screen_y, false);
+        }
         previous_source_row = source_row;
         previous_row = screen_row;
     }
@@ -1030,7 +1087,7 @@ bool gfx_texture_row(const uint8_t* data, uint32_t length, int x, int y, int w, 
     // those within its half width at the band's row nearest its middle (the circle is widest
     // there). Everything else is black
     int lit_first = first_column, lit_last = last_column;
-    if (spot_r2 != 0) {
+    if (spot_r2 != 0 && spot_outside == 0) {
         int nearest = spot_y;
         if (nearest < y + first_row) {
             nearest = y + first_row;
@@ -1050,7 +1107,7 @@ bool gfx_texture_row(const uint8_t* data, uint32_t length, int x, int y, int w, 
     // little over a few rows), then the rest of the band is copies of it. Along the row, a step
     // along the line for each screen pixel, starting from the middle of the first one lit
     uint32_t top = (uint32_t)(y + first_row);
-    if (spot_r2 != 0) {
+    if (spot_r2 != 0 && spot_outside == 0) {
         fill_row((uint32_t)(x + first_column), top, (uint32_t)(last_column - first_column), pack(0));
     }
     if (lit_first < lit_last) {
@@ -1073,6 +1130,112 @@ bool gfx_texture_row(const uint8_t* data, uint32_t length, int x, int y, int w, 
         memcpy(first + (uint32_t)(row - first_row) * target_pitch, first, row_bytes);
     }
     return true;
+}
+
+// ---- effects over what is drawn: a tint, and noise ----------------------------------------------
+//
+// Both change pixels already drawn, for effects a game puts over its whole picture: fading to
+// black (a tint of black, a little more each frame), a red flash when something hurts you, or
+// the grainy "static" of a picture seen in the dark. Each works on a rectangle, cut to fit on
+// the screen first (as gfx_rect does).
+
+// cut a rectangle to fit on the screen, false if none of it is on it
+static bool clip_area(int* x, int* y, int* w, int* h) {
+    if (*x < 0) {
+        *w += *x;
+        *x = 0;
+    }
+    if (*y < 0) {
+        *h += *y;
+        *y = 0;
+    }
+    if (*x + *w > (int)fb.width) {
+        *w = (int)fb.width - *x;
+    }
+    if (*y + *h > (int)fb.height) {
+        *h = (int)fb.height - *y;
+    }
+    return *w > 0 && *h > 0;
+}
+
+// mix every pixel of a w x h area at x, y with the colour 0xRRGGBB: `amount` of the way
+// there (0 leaves it as it is, 1 is all that colour)
+void gfx_tint(int x, int y, int w, int h, uint32_t rgb, double amount) {
+    if (!active || !clip_area(&x, &y, &w, &h)) {
+        return;
+    }
+    // how much of the colour (a) and of the pixel (256 - a), out of 256. Red and blue are
+    // worked out together, as in light_row: the two weights add up to 256, so neither can
+    // spill into the colour above it
+    uint32_t a = light_level(amount);
+    uint32_t keep = 256 - a;
+    uint32_t add_rb = (rgb & 0xFF00FF) * a, add_g = (rgb & 0x00FF00) * a;
+    for (int row = 0; row < h; row++) {
+        if (screen_is_xrgb()) {
+            uint32_t* out = (uint32_t*)(target + (uint32_t)(y + row) * target_pitch) + x;
+            for (int i = 0; i < w; i++) {
+                uint32_t c = out[i];
+                out[i] = ((((c & 0xFF00FF) * keep + add_rb) >> 8) & 0xFF00FF) | ((((c & 0x00FF00) * keep + add_g) >> 8) & 0x00FF00);
+            }
+        } else {
+            for (int i = 0; i < w; i++) {
+                uint32_t c = get((uint32_t)(x + i), (uint32_t)(y + row));
+                put((uint32_t)(x + i), (uint32_t)(y + row),
+                    pack(((((c & 0xFF00FF) * keep + add_rb) >> 8) & 0xFF00FF) | ((((c & 0x00FF00) * keep + add_g) >> 8) & 0x00FF00)));
+            }
+        }
+    }
+}
+
+// a byte of red, green or blue moved by `by` (which may be negative), kept between 0 and 255
+static uint32_t nudge(uint32_t byte, int by) {
+    int moved = (int)byte + by;
+    return moved < 0 ? 0 : moved > 255 ? 255 : (uint32_t)moved;
+}
+
+// the last of a run of random looking numbers, for gfx_noise (see next_noise)
+static uint32_t noise_seed = 2463534242u;
+
+// the next of that run: "xorshift", which mixes the bits of the last number with shifted copies
+// of itself. Quick, and plenty random for grain
+static uint32_t next_noise(void) {
+    noise_seed ^= noise_seed << 13;
+    noise_seed ^= noise_seed >> 17;
+    noise_seed ^= noise_seed << 5;
+    return noise_seed;
+}
+
+// grain over a w x h area at x, y: every pixel made lighter or darker by a random amount, up to
+// `amount` (0 to 255) either way, the same for red, green and blue, so it looks like the
+// static of a picture seen in the dark. Different every time, so over several frames it seethes
+void gfx_noise(int x, int y, int w, int h, int amount) {
+    if (!active || amount <= 0 || !clip_area(&x, &y, &w, &h)) {
+        return;
+    }
+    if (amount > 255) {
+        amount = 255;
+    }
+    // a random byte (0 to 255) times `spread`, >> 8, is 0 to 2 * amount: less `amount`, it is
+    // from -amount to amount
+    int spread = 2 * amount + 1;
+    for (int row = 0; row < h; row++) {
+        if (screen_is_xrgb()) {
+            // the usual screen (0x00RRGGBB): straight at the pixels, no packing and unpacking
+            uint32_t* out = (uint32_t*)(target + (uint32_t)(y + row) * target_pitch) + x;
+            for (int i = 0; i < w; i++) {
+                int by = (int)(((next_noise() & 0xFF) * (uint32_t)spread) >> 8) - amount;
+                uint32_t c = out[i];
+                out[i] = (nudge(c >> 16 & 0xFF, by) << 16) | (nudge((c >> 8) & 0xFF, by) << 8) | nudge(c & 0xFF, by);
+            }
+            continue;
+        }
+        for (int i = 0; i < w; i++) {
+            int by = (int)(((next_noise() & 0xFF) * (uint32_t)spread) >> 8) - amount;
+            uint32_t c = get((uint32_t)(x + i), (uint32_t)(y + row));
+            uint32_t r = nudge(c >> 16, by), g = nudge((c >> 8) & 0xFF, by), b = nudge(c & 0xFF, by);
+            put((uint32_t)(x + i), (uint32_t)(y + row), pack((r << 16) | (g << 8) | b));
+        }
+    }
 }
 
 // ---- overlays (see gfx_overlay_begin in gfx.h) --------------------------------------------------

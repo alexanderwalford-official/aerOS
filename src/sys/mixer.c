@@ -26,6 +26,13 @@
         counter % size   = where in the buffer that frame is (size is a power of two, so this is
                            just counter & (size - 1))
 
+    LEFT AND RIGHT
+
+    Each voice has a volume for the left speaker and one for the right. They start out the same
+    (mixer_play's volume), and mixer_set_volume can change them while the sound plays: a game
+    turns a sound down as its maker walks away, and moves it between the speakers to say where it
+    is ("panning"). A sound right of you is loud on the right and quieter on the left.
+
     VOICE NUMBERS
 
     A voice number is the voice's slot (0 to 7) plus 8 times a "generation" that counts up each
@@ -44,7 +51,8 @@
 typedef struct {
     bool active;
     bool paused;            // keeps its place but plays nothing
-    int volume;             // 0 to MIXER_FULL_VOLUME
+    int left;               // the volume on the left speaker, 0 to MIXER_FULL_VOLUME
+    int right;              // and on the right (see "left and right" at the top)
     uint32_t generation;    // counts up each time the slot is reused (see the top of the file)
     volatile uint32_t played; // frames played so far (for mixer_played)
 
@@ -71,11 +79,11 @@ static int32_t sums[MOST_FRAMES * 2]; // the voices added up, before clipping to
 
 // ---- the interrupt side -----------------------------------------------------------------------
 
-// add one stereo frame to sums[] at position i, at the voice's volume. Multiplying by the
-// volume and dividing by 256 (>> 8) leaves it as it was at full volume
-static void add_frame (uint32_t i, const int16_t* frame, int volume) {
-    sums[i * 2] += (frame[0] * volume) >> 8;
-    sums[i * 2 + 1] += (frame[1] * volume) >> 8;
+// add one stereo frame to sums[] at position i, at the voice's left and right volumes.
+// Multiplying by a volume and dividing by 256 (>> 8) leaves it as it was at full volume
+static void add_frame (uint32_t i, const int16_t* frame, const voice_t* voice) {
+    sums[i * 2] += (frame[0] * voice->left) >> 8;
+    sums[i * 2 + 1] += (frame[1] * voice->right) >> 8;
 }
 
 // add `count` frames of a sound voice into sums[]. A sound that isn't looped and runs out part
@@ -90,7 +98,7 @@ static void add_sound (voice_t* voice, uint32_t count) {
             }
             voice->position = 0;
         }
-        add_frame(i, voice->frames + voice->position * 2, voice->volume);
+        add_frame(i, voice->frames + voice->position * 2, voice);
         voice->position++;
         voice->played++;
     }
@@ -109,7 +117,7 @@ static void add_stream (voice_t* voice, uint32_t count) {
     uint32_t mask = voice->ring_frames - 1;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t slot = (voice->read + i) & mask;
-        add_frame(i, voice->ring + slot * 2, voice->volume);
+        add_frame(i, voice->ring + slot * 2, voice);
     }
     // only the interrupt side moves `read`, and only after the frames have been used, so the
     // program can't write over them while they are still being read
@@ -245,7 +253,8 @@ int mixer_play (const int16_t* frames, uint32_t count, bool loop, int volume) {
     if (voice != NULL) {
         voice->frames = frames;
         voice->count = count;
-        voice->volume = clamp_volume(volume);
+        voice->left = clamp_volume(volume);
+        voice->right = voice->left;
         voice->loop = loop;
         voice->active = true; // last, so the interrupt never sees a half set up voice
     }
@@ -278,7 +287,8 @@ int mixer_stream_open (uint32_t buffer_frames, int volume) {
         voice->stream = true;
         voice->ring = ring;
         voice->ring_frames = frames;
-        voice->volume = clamp_volume(volume);
+        voice->left = clamp_volume(volume);
+        voice->right = voice->left;
         voice->active = true; // last, as in mixer_play
     }
     release_interrupts(were_on);
@@ -368,6 +378,17 @@ void mixer_pause (int number, bool paused) {
     voice_t* voice = find_voice(number);
     if (voice != NULL) {
         voice->paused = paused;
+    }
+    release_interrupts(were_on);
+}
+
+// change a voice's volume on each speaker while it plays (see "left and right" at the top)
+void mixer_set_volume (int number, int left, int right) {
+    bool were_on = hold_interrupts();
+    voice_t* voice = find_voice(number);
+    if (voice != NULL) {
+        voice->left = clamp_volume(left);
+        voice->right = clamp_volume(right);
     }
     release_interrupts(were_on);
 }

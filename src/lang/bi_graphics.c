@@ -2,7 +2,8 @@
     bi_graphics.c
     AerLang's built-in functions for graphics: taking the screen over (gopen, gclose), its size,
     colours (rgb), drawing (gclear, pixel, rect, line, text) and pictures: BMP, PNG, GIF and JPEG (image, imgsz),
-    and pictures as textures for ray casting games (imgcol, imgrow, imglight).
+    and pictures as textures for ray casting games (imgcol, imgrow, imglight), and effects over
+    the picture drawn (gtint, gnoise).
     Then what games need: drawing out of sight and showing the finished frame (gbuf, gshow),
     keys held down (keydown) and the mouse.
 
@@ -143,16 +144,16 @@ value_t bi_image (int argc, value_t* argv, int line) {
                               int_arg(argv, 2, line, "image"), max_w, max_h));
 }
 
-// imgcol(data, x, y, w, h, u0, u1, light): a strip of wall for a ray caster: the picture's columns from u0 to u1 stretched over w x h, darkened by light (0 to 1)
+// imgcol(data, x, y, w, h, u0, u1, light, see_through): a strip of wall for a ray caster: the picture's columns from u0 to u1 stretched over w x h, darkened by light (0 to 1). With see_through true, see-through pixels are skipped (a strip of a sprite)
 value_t bi_image_column (int argc, value_t* argv, int line) {
-    (void)argc;
     need_graphics(line, "imgcol");
     uint32_t length;
     const uint8_t* data = picture_arg(argv, 0, line, "imgcol", &length);
+    bool see_through = argc > 8 && aer_truthy(argv[8]);
     return aer_bool(gfx_texture_column(data, length, int_arg(argv, 1, line, "imgcol"), int_arg(argv, 2, line, "imgcol"),
                                        int_arg(argv, 3, line, "imgcol"), int_arg(argv, 4, line, "imgcol"),
                                        real_arg(argv, 5, line, "imgcol"), real_arg(argv, 6, line, "imgcol"),
-                                       real_arg(argv, 7, line, "imgcol")));
+                                       real_arg(argv, 7, line, "imgcol"), see_through));
 }
 
 // imgrow(data, x, y, w, h, u0, v0, u1, v1, light): a band of floor for a ray caster: every row the picture read from (u0, v0) to (u1, v1), darkened by light (0 to 1)
@@ -168,17 +169,36 @@ value_t bi_image_row (int argc, value_t* argv, int line) {
                                     real_arg(argv, 9, line, "imgrow")));
 }
 
-// imglight(x, y, radius): from now on imgcol and imgrow light their pictures only inside a circle round x, y, like a flashlight (imglight() turns it off)
+// imglight(x, y, radius, ambient): from now on imgcol and imgrow light their pictures only inside a circle round x, y, like a flashlight, and by ambient (0 to 1, 0 if left out) outside it (imglight() turns it off)
 value_t bi_image_light (int argc, value_t* argv, int line) {
     need_graphics(line, "imglight");
     if (argc == 0) {
-        gfx_texture_light(0, 0, 0);
-    } else if (argc != 3) {
-        aer_error(line, "imglight() needs x, y and a radius, or nothing to turn the light off");
+        gfx_texture_light(0, 0, 0, 0);
+    } else if (argc < 3) {
+        aer_error(line, "imglight() needs x, y and a radius (and an ambient light if you like), or nothing to turn the light off");
     } else {
+        double ambient = argc > 3 ? real_arg(argv, 3, line, "imglight") : 0;
         gfx_texture_light(int_arg(argv, 0, line, "imglight"), int_arg(argv, 1, line, "imglight"),
-                          int_arg(argv, 2, line, "imglight"));
+                          int_arg(argv, 2, line, "imglight"), ambient);
     }
+    return aer_nil();
+}
+
+// gtint(x, y, w, h, colour, amount): mix what is drawn in that area with a colour, amount of the way (0 to 1): to fade to black, or flash red
+value_t bi_gtint (int argc, value_t* argv, int line) {
+    (void)argc;
+    need_graphics(line, "gtint");
+    gfx_tint(int_arg(argv, 0, line, "gtint"), int_arg(argv, 1, line, "gtint"), int_arg(argv, 2, line, "gtint"),
+             int_arg(argv, 3, line, "gtint"), (uint32_t)int_arg(argv, 4, line, "gtint"), real_arg(argv, 5, line, "gtint"));
+    return aer_nil();
+}
+
+// gnoise(x, y, w, h, amount): grain over what is drawn in that area: each pixel lighter or darker by a random amount up to amount (0 to 255), like static
+value_t bi_gnoise (int argc, value_t* argv, int line) {
+    (void)argc;
+    need_graphics(line, "gnoise");
+    gfx_noise(int_arg(argv, 0, line, "gnoise"), int_arg(argv, 1, line, "gnoise"), int_arg(argv, 2, line, "gnoise"),
+              int_arg(argv, 3, line, "gnoise"), int_arg(argv, 4, line, "gnoise"));
     return aer_nil();
 }
 

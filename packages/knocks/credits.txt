@@ -1,0 +1,30 @@
+FOUR KNOCKS - where everything in it comes from
+
+Everything in this game was made for it, from nothing, by the scripts below, which are in
+the AerOS repository and can be run again to make exactly the same files. No sound, picture,
+model, music or words were recorded, photographed, downloaded or copied from anywhere else, and
+nothing here comes from any other game, film or book.
+
+All of it is under the same licence as AerOS itself: the Apache License 2.0 (LICENSE.md in the
+repository).
+
+  The game (knocks.aer)             written in AerLang for AerOS
+
+  Pictures of walls, floors and     tools/make_knocks_textures.py
+  ceilings (26 .bmp files)          noise, blocks, bevels and a small hand-drawn 5 x 7 alphabet,
+                                    worked out pixel by pixel
+
+  The thing, the furniture and      tools/make_knocks_sprites.py
+  the close-up (beast.bmp,          3D models built from "signed distance functions" (capsules,
+  lunge.bmp, props.bmp, scare.bmp)  spheres, boxes, blended and cut), posed for each frame of
+                                    the walk, rendered by ray marching from 5 sides
+
+  Every sound, the music and the    tools/make_knocks_sounds.py
+  voices (37 .wav files)            filtered noise, resonators, sine and sawtooth waves, simple
+                                    reverb, and formant synthesis for the voices (the words
+                                    are shown as subtitles; the voices only sound like speech
+                                    down a bad line)
+
+  The story and every word of it    written for this game
+
+The letters on the screen are AerOS's own 8 x 16 font.

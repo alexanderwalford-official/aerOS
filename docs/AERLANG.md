@@ -360,15 +360,20 @@ Two more draw a picture as a "texture", for ray casting games like `maze3d`, whe
 loop in AerLang would be far too slow. Both repeat the picture past its edges (so it tiles),
 darken it by `light` (1 is the picture as it is, 0 black, so far walls can be dark), take
 positions in the picture's pixels (decimals allowed), and give false if it isn't a picture.
-See-through parts are drawn solid ·
-`imgcol(bytes, x, y, w, h, u0, u1, light)` a strip of wall: `w` x `h` at `x`, `y`, showing the
-picture's columns from `u0` at its left to `u1` at its right, each its whole height stretched
-to `h` (taller than the screen is fine) · `imgrow(bytes, x, y, w, h, u0, v0, u1, v1, light)` a
+See-through parts are drawn solid, except by `imgcol`'s `see_through` ·
+`imgcol(bytes, x, y, w, h, u0, u1, light, see_through)` a strip of wall: `w` x `h` at `x`, `y`,
+showing the picture's columns from `u0` at its left to `u1` at its right, each its whole height
+stretched to `h` (taller than the screen is fine). With `see_through` true it is a strip of a
+sprite: the picture's see-through pixels are left out, so what is behind shows (a 32 bit BMP's
+4th byte counts as how solid a pixel is: under 128 is see-through; a 24 bit BMP is solid), and
+it is lit like a wall, so a monster in the dark only shows in your flashlight's beam · `imgrow(bytes, x, y, w, h, u0, v0, u1, v1, light)` a
 band of floor or ceiling: `w` x `h` at `x`, `y`, every row the picture read along the straight
 line from (`u0`, `v0`) at the left to (`u1`, `v1`) at the right ·
-`imglight(x, y, radius)` a spotlight, like a flashlight, on everything `imgcol` and `imgrow` draw
-from then on: they are lit only inside a circle round `x`, `y` on the screen (fully out to a
-third of the radius, then fading) and black outside it. `imglight()` turns it off (it is off
+`imglight(x, y, radius, ambient)` a spotlight, like a flashlight, on everything `imgcol` and
+`imgrow` draw from then on: they are lit only inside a circle round `x`, `y` on the screen (fully
+out to a third of the radius, then fading) and outside it only by `ambient` (0 to 1, 0 if left
+out: pitch black), the faint light of a room you can just make things out in, or for a moment
+the whole room, in a flash of lightning. `imglight()` turns it off (it is off
 when a program starts); other drawing (`rect`, `text`, `image`) is never dimmed by it, so
 glowing things can be drawn in the dark. Use BMPs for these (32 bit are quickest): they are drawn straight from their bytes, while only the last PNG, GIF or JPEG
 decoded is kept, so drawing several in turn decodes them again and again (in `maze3d`, 3
@@ -383,6 +388,14 @@ text(10, 320, "Press a key", 0xFFFFFF, 2)
 key()
 ```
 
+Two more change what is already drawn, for effects over a whole picture:
+`gtint(x, y, w, h, colour, amount)` mixes every pixel of that area with `colour`, `amount` of the
+way (0 to 1): a little black more each frame fades out, a moment of red is a hurt ·
+`gnoise(x, y, w, h, amount)` makes every pixel lighter or darker by a random amount up to
+`amount` (0 to 255), like the grain of a picture seen in the dark, or static; it is different
+each time, so it seethes. Both work on every pixel, so on a slow computer use them on part of
+the screen, or now and then. How they work is in `src/drivers/video/gfx.c`.
+
 **For games** (smooth movement, keys held down, sounds that overlap)
 `gbuf(on)` with `true`, draw into a back buffer (a copy of the screen in memory) instead of
 the screen, so nothing shows until `gshow()` · `gshow()` put the finished frame on the screen
@@ -390,9 +403,13 @@ in one go, so it never flickers · `keydown(key)` is the key held down right now
 (`"a"`, `" "`) or `KEY_LEFT`, `KEY_SPACE`, `KEY_SHIFT`, `KEY_CTRL`, `KEY_ALT`... It doesn't wait
 (unlike `key()`) and any number of keys can be down at once ·
 `sload(path)` load a WAV or MP3 into memory, ready to play (nil if it can't) ·
-`splay(sound, loop, volume)` start it and carry on straight away; `loop` plays it round and round,
-`volume` is 0 to 100. Up to 8 sounds play at once, mixed together. Returns a number for:
-`sstop(n)` stop it (`sstop()` stops every sound) · `isply(n)` is it still playing?
+`splay(sound, loop, volume, pan)` start it and carry on straight away; `loop` plays it round and
+round, `volume` is 0 to 100, and `pan` puts it on the left (-100) or the right (100), or
+anywhere between (0, the middle, if left out). Up to 8 sounds play at once, mixed together.
+Returns a number for:
+`svol(n, volume, pan)` change its volume and pan while it plays, to fade it or to move it round
+you as whatever makes it moves (or as you turn) · `sstop(n)` stop it (`sstop()` stops every
+sound) · `isply(n)` is it still playing?
 Sounds stop when the program ends.
 
 Two ways to read keys, for two jobs: `keydown()` for things that last while a key is held
@@ -471,6 +488,19 @@ computer (in QEMU, the flashlight runs at about 21 frames a second on the classi
 decimals, `sin` / `cos`, `keydown`, `mousemove` (for looking around), `gbuf` and `frame`,
 and its comments explain each step, so it is meant to be read and changed: draw your own maze
 in `MAP`, add wall colours, or widen `STRIP_WIDTH` for more speed on a slow computer.
+
+The `knocks` package (Four Knocks, `pkg install knocks`) builds a horror game on Maze 3D's ray
+caster. Its levels are letterboxed like a film, the thing that hunts you and the furniture are
+sprites drawn with `imgcol(..., true)`, lit only by your flashlight, and every sound has a
+place: `splay`'s pan and `svol` put the thing's footsteps on your left or right as you turn,
+quieter the further away it is, counted along the corridors with a step map so you hear it
+round corners. It hunts by ear: each frame you make a noise that carries a number of steps
+(none standing still, a few walking, more running), and if it is that close, it hears you.
+Lightning is `imglight`'s ambient light for a moment, the static round the thing is `gnoise`,
+and fades and the red of the alarm are `gtint`. Its pictures are 3D models rendered from five
+sides by `tools/make_knocks_sprites.py` (ray marching "signed distance functions" with numpy),
+and its sounds, music and voices are made by `tools/make_knocks_sounds.py`. "knocks demo"
+plays it by itself, start to end.
 
 The `viewer` package is a complete app built from these: a picture picker and viewer that
 zooms (`+` / `-`, `0` to fit) by drawing the picture bigger than the screen and moving it

@@ -201,12 +201,16 @@ Colours are numbers like `0xFF7F00` or `rgb(255, 127, 0)`.
 `line(x1, y1, x2, y2, c)`, `text(x, y, s, c, size)`, `image(bytes, x, y, w, h)` (a BMP,
 PNG, GIF or JPEG picture, from `rdb` or `httpget`), `imgsz(bytes)`. `w` x `h` can be bigger than the screen and `x`, `y`
 negative: only the part on the screen is drawn, which is how the viewer zooms in.
-For ray casting games, `imgcol(bytes, x, y, w, h, u0, u1, light)` stretches a picture over a
-w x h strip of wall (its columns from `u0` to `u1`, its whole height), and
+For ray casting games, `imgcol(bytes, x, y, w, h, u0, u1, light, see_through)` stretches a
+picture over a w x h strip of wall (its columns from `u0` to `u1`, its whole height; with
+`see_through` true its see-through pixels are left out, for a strip of a sprite), and
 `imgrow(bytes, x, y, w, h, u0, v0, u1, v1, light)` fills a band of floor, each row read along
 the line from (`u0`, `v0`) to (`u1`, `v1`). Both repeat the picture past its edges and darken
-it by `light` (1 as it is, 0 black). `imglight(x, y, radius)` then lights only a circle round
-`x`, `y`, like a flashlight, black outside it (`imglight()` turns it off). Use BMPs for these: they are drawn straight from their
+it by `light` (1 as it is, 0 black). `imglight(x, y, radius, ambient)` then lights only a
+circle round `x`, `y`, like a flashlight, and outside it only `ambient` (0 to 1, 0 if left out:
+black; `imglight()` turns it off). Over what is drawn, `gtint(x, y, w, h, c, amount)` mixes in
+a colour (0 to 1 of the way: to fade, or flash red) and `gnoise(x, y, w, h, amount)` adds
+grain, each pixel up to `amount` (0 to 255) lighter or darker. Use BMPs for these: they are drawn straight from their
 bytes, while a PNG, GIF or JPEG is decoded again whenever a different one was drawn last.
 
 ```
@@ -219,9 +223,10 @@ key()
 **For games:** `gbuf(true)` draws into a back buffer out of sight and `gshow()` puts
 each finished frame on the screen, so moving things don't flicker. `keydown(k)` says if a
 key is held right now (`"a"`, `KEY_LEFT`, `KEY_SPACE`, `KEY_SHIFT`...), without waiting.
-`sload(path)` loads a WAV or MP3, and `splay(sound, loop, volume)` starts it and carries on
-at once: up to 8 sounds play together. `sstop(n)` stops one, `isply(n)` asks if it still
-plays. Use `keydown` for things that last (moving) and `haskey()` / `key()` for single
+`sload(path)` loads a WAV or MP3, and `splay(sound, loop, volume, pan)` starts it and carries
+on at once (pan -100 is the left speaker, 100 the right): up to 8 sounds play together.
+`svol(n, volume, pan)` changes one as it plays, `sstop(n)` stops one, `isply(n)` asks if it
+still plays. Use `keydown` for things that last (moving) and `haskey()` / `key()` for single
 presses (jumping): every press waits there until it is read, so a quick tap is never missed.
 The `move` package (`pkg install move`) uses them all.
 
@@ -267,5 +272,6 @@ And these [packages](commands.md), once installed (`pkg install guess`), are in 
 | `/apps/move.aer` | smooth movement, held keys and mixed sounds |
 | `/apps/snake.aer` | a whole game: graphics, a back buffer, held keys, lists, and high scores in a database |
 | `/apps/maze3d.aer` | a 3D maze drawn with ray casting: decimals, sin / cos, textured stone walls and floors lit by a flashlight (imgcol / imgrow / imglight), sprites, mouse look, ghosts that find their way to you, made-up mazes, and sound effects and music mixed with sload / splay |
+| `/apps/knocks.aer` | a horror game on the same ray caster: sprites lit by the flashlight (imgcol's see_through), sounds placed left and right (splay's pan, svol), lightning (imglight's ambient), static and fades (gnoise, gtint), and a monster that hunts by ear along a step map |
 | `/apps/anim.aer` | spinners, progress bars and moving text |
 | `/apps/webserve.aer` | a web server: TCP, and serving files |
