@@ -4,6 +4,9 @@
 #     browser                 ask for an address
 #     browser frogfind.com    open that address straight away
 #
+# pictures are numbered like links: type a picture's number to see it on the graphics screen
+# (BMP, PNG, GIF and JPEG)
+#
 # then underneath each page: a link's number to follow it, Enter for more of the page, u to go
 # back up, b for the page before, g and an address to go there, s and some words to search
 # the web (with FrogFind), and q to quit
@@ -286,9 +289,17 @@ func do_tag(tag, name, action, closing)
         new_line()
         push(lines, [DARK_GRAY, "----------------------------------------"])
     elif action == "image" then
-        # pictures can't be shown, but what they're of can
+        # pictures get a number like links do, and typing it shows the picture. what it's of
+        # (its alt text) goes in the page too, if it says
         let alt = squash(attribute(tag, "alt"))
-        if alt != "" and alt != " " then add_words(" [picture: " + alt + "] ") end
+        let label = "[picture]"
+        if alt != "" and alt != " " then label = "[picture: " + join(split(alt), " ") + "]" end
+        let url = resolve(attribute(tag, "src"))
+        if url != "" then
+            push(links, url)
+            label = label + " [" + len(links) + "]"
+        end
+        add_words(" " + label + " ")
     elif action == "link" then
         if closing then
             # the link's number goes after its words, so you can type it to follow the link
@@ -358,6 +369,73 @@ func convert_html(html)
 end
 
 
+# ---- pictures --------------------------------------------------------------------------------
+
+func starts_with_bytes(data, codes)
+    # do the first bytes of data match these numbers? (for spotting the kind of picture)
+    if len(data) < len(codes) then return false end
+    let i = 0
+    while i < len(codes) do
+        if ord(data[i]) != codes[i] then return false end
+        i = i + 1
+    end
+    return true
+end
+
+func picture_kind(data)
+    # what kind of picture the data is, from the bytes it starts with, or "" if it isn't one
+    if starts_with_bytes(data, [66, 77]) then return "BMP" end                 # "BM"
+    if starts_with_bytes(data, [137, 80, 78, 71]) then return "PNG" end        # 137 "PNG"
+    if starts_with_bytes(data, [255, 216, 255]) then return "JPEG" end
+    if starts_with_bytes(data, [71, 73, 70, 56]) then return "GIF" end         # "GIF8"
+    if starts_with_bytes(data, [82, 73, 70, 70]) then return "WebP" end        # "RIFF"
+    return ""
+end
+
+func is_picture(data)
+    # is what came back a picture rather than a page?
+    return picture_kind(data) != ""
+end
+
+func show_picture(data, url)
+    # show a picture on the graphics screen, as big as fits, until a key is pressed
+    let kind = picture_kind(data)
+    let size = imgsz(data)
+    if size == nil then
+        # aerOS shows BMP, PNG, GIF and JPEG pictures, so this is a WebP, or a damaged one
+        message = "Can't show that picture (" + kind + "): aerOS shows BMP, PNG, GIF and JPEG."
+        return
+    end
+    if not gopen() then
+        message = "Pictures need a graphics screen, and this one is text only."
+        return
+    end
+
+    # shrink it to fit (keeping its shape), with room for a line of text at the bottom.
+    # small pictures stay their own size, so they stay sharp
+    let w = gw()
+    let h = gh() - 24
+    let pw = size[0]
+    let ph = size[1]
+    if pw > w or ph > h then
+        let scale = w * 1.0 / pw
+        if h * 1.0 / ph < scale then scale = h * 1.0 / ph end
+        pw = floor(pw * scale)
+        ph = floor(ph * scale)
+        if pw < 1 then pw = 1 end
+        if ph < 1 then ph = 1 end
+    end
+
+    gclear(BLACK)
+    image(data, (w - pw) / 2, (h - ph) / 2, pw, ph)
+    let caption = size[0] + " x " + size[1] + "  " + url
+    text(8, gh() - 18, sub(caption, 0, (w - 16) / 8 - 30), rgb(200, 200, 200))
+    text(w - 8 - 25 * 8, gh() - 18, "any key: back to the page", rgb(255, 127, 0))
+    key()
+    gclose()
+end
+
+
 # ---- showing it ------------------------------------------------------------------------------
 
 func open(url)
@@ -370,6 +448,12 @@ func open(url)
     print("Loading " + url + "...")
     color(BRIGHT, BLACK)
     let page = httpget(url)
+    if page != nil and is_picture(page) then
+        # a picture, not a page: show it, then go back to the page you were on (so it isn't
+        # added to the history either, which is why this gives back false)
+        show_picture(page, url)
+        return false
+    end
     if page == nil then
         # the site's name, for the fw web command, without http:// or a :port
         let name = sub(site(url), find(url, "://") + 3)

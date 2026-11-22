@@ -260,6 +260,11 @@ Pages are limited to 16 MB (`HTTP_BODY_MAX`). The answer is read into a buffer t
 it fills, and the body is then moved to its start and the buffer shrunk to fit, so a big page
 never needs room for two copies of itself.
 
+`httpget(url)` gives AerLang the body as a string, which holds any bytes, so a picture fetched
+this way can be saved with `wrf` or drawn straight away with `image`. The `browser` package
+(`packages/browser.aer`) is a text web browser built on it: it reads the HTML itself, a tag at
+a time, and shows pictures (BMP, PNG, GIF and JPEG) on the graphics screen.
+
 There is no TLS, so `https://` is turned away with a clear message, and a page can be read or
 changed on the way. That is the right trade for things that are checked once they arrive (a
 package with a signature, for example), and the wrong one for anything private.

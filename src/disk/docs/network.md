@@ -88,6 +88,22 @@ public pages, and for files that are checked once they arrive, but don't fetch a
 this way. A web rule only allows fetching pages, never sealed messages, and a rule with a
 password never allows web pages: the two kinds don't stand in for each other.
 
+### Browsing
+
+The `browser` package (`pkg install browser`) shows web pages as text, a screen at a time:
+
+```
+fw web frogfind.com                    once, to allow it
+browser frogfind.com                   open a page
+```
+
+Under each page, type a link's number to follow it, Enter for more of the page, `u` to go
+back up, `b` for the page before, `g` and an address to go there, `s` and some words to search
+the web, and `q` to quit. Pictures are numbered too: typing one's number shows it on the
+graphics screen (BMP, PNG, GIF and JPEG). It can only open `http://` pages, and each site
+needs its own web rule. FrogFind is a good start: it turns modern `https://` sites into simple
+pages on its own `http://` address, so they need no rules of their own.
+
 ## A web server
 
 AerOS can serve web pages too: other computers connect to it. Nothing can, until you allow it

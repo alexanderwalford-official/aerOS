@@ -109,6 +109,7 @@ description:
 | `viewer` | a picture viewer (BMP) that zooms | `aeros.bmp`, `colours.bmp` |
 | `clip` | plays a 6 second video, to try the video player on | `sample.mpg` |
 | `webserve` | a small web server, in AerLang (see [the network](NETWORK.md)) | |
+| `browser` | a text web browser for plain `http://` pages: numbered links, back, paging, `s` to search with FrogFind, and pictures (BMP, PNG, GIF, JPEG) on a graphics screen | |
 | `bench` | how fast AerOS reads and writes its disk | |
 | `anim` | spinners, progress bars and moving text | |
 | `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, System and About, by mouse or keyboard | |

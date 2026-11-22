@@ -18,4 +18,4 @@ move 1.0 Move a square with the arrow keys: a small example of a game
 snake 1.0 Snake, with high scores
 viewer 1.0 A picture viewer (BMP), with two pictures to try it on
 webserve 1.0 A small web server: shows a folder of files to web browsers
-browser 1.0 A basic text based web browser
+browser 1.1 A basic text based web browser
