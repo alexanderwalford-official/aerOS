@@ -103,7 +103,7 @@ description:
 | Package | What it is | Comes with |
 | --- | --- | --- |
 | `snake` | Snake, with high scores | |
-| `maze3d` | a maze in 3D, seen from inside, with ray casting: the classic maze or a made-up one up to 55 x 55 squares, with as many crystals and ghosts as you choose (your light sends the ghosts away), with music and sound effects | the sounds and music (WAV files made by `tools/make_maze3d_sounds.py`) |
+| `maze3d` | a maze in 3D, seen from inside, with ray casting: a dungeon of stone and brick walls, flagstone floors and cobbled ceilings, pitch black but for your flashlight's beam (or lit all round by a lantern, or plain colours, quicker on a slow computer), the classic maze or a made-up one up to 55 x 55 squares, with as many crystals and ghosts as you choose (your light sends the ghosts away), with music and sound effects | the sounds and music (WAV files made by `tools/make_maze3d_sounds.py`) and the dungeon's pictures (BMP files made by `tools/make_maze3d_textures.py`) |
 | `move` | a square moved with the arrow keys: a small example of a game | |
 | `guess` | guess the number from 1 to 100 | |
 | `viewer` | a picture viewer (BMP) that zooms | `aeros.bmp`, `colours.bmp` |

@@ -16,8 +16,11 @@
 # the game is over.
 #
 # The menu at the start chooses the maze: the classic one drawn below, or a new one made up
-# for each game in three bigger sizes, how many crystals, ghosts and lives there are, and
-# whether there is music and sound (with no sound card, the important sounds are beeps).
+# for each game in three bigger sizes, how many crystals, ghosts and lives there are,
+# whether there is music and sound (with no sound card, the important sounds are beeps), and
+# the look: a dungeon of stone walls, flagstones and cobbles, pitch black but for the beam of
+# your flashlight, or lit all round by a lantern; stone walls only; or the plain flat colours,
+# which are quickest on a slow computer.
 #
 # How it works, for anyone who wants to build on it:
 #
@@ -54,6 +57,23 @@
 #   and splay() plays it while the game carries on: AerOS mixes up to 8 at once, so the music
 #   (looped, and quiet) goes on under the footsteps, the crystals and the ghosts.
 #
+#   The dungeon look covers the walls, floor and ceiling with pictures ("textures") of stone,
+#   brick, moss, flagstones and cobbles, 64 pixels to a square, made by
+#   tools/make_maze3d_textures.py. Working out every pixel in AerLang would be far too slow, so
+#   two built-ins do a whole piece at once:
+#     - imgcol() draws one strip of wall: which part of the picture it shows comes from where
+#       the ray hit the wall (how far `along` the square it is), and how far along the next
+#       strip's ray would hit, so a near wall shows every column of its picture.
+#     - imgrow() draws a band of floor (or ceiling) rows. All of one row is the same distance
+#       away: SCREEN_H / 2 / (rows below the horizon), the walls' sum backwards. So the floor
+#       under that row runs in a straight line from where the screen's left edge ray meets it
+#       to where the right edge ray does, and imgrow() reads the picture along that line.
+#   Both darken the picture with distance, like the light of a lamp you carry. With the
+#   FLASHLIGHT look, imglight() shines a spotlight on everything they draw: a circle in the
+#   middle of the view, bright in the middle and fading to pitch black at its edge. The ghosts
+#   and crystals glow, so they show in the dark (a ghost's red eyes are the first you see of
+#   it), and so does the gold door once it is open.
+#
 #   Looking up and down is a trick too: rays can only go across the grid, so instead the whole
 #   picture is drawn higher or lower on the screen. The horizon (where the walls' middles line up)
 #   moves down when you look up, which shows more ceiling, and up when you look down. It isn't
@@ -67,8 +87,12 @@
 #       ones in the map first), and missing ones are put in at random.
 #     - The ghosts' speed, how close they must be to chase you, and how long your light keeps
 #       them away are all in the settings below, and so are the menu's sizes and numbers.
-#     - New wall colours go in WALL_COLOURS, with a letter for them in read_map().
-#     - STRIP_WIDTH trades detail for speed: wider strips mean fewer rays and more frames a second.
+#     - New kinds of wall go in WALL_COLOURS and WALL_PICTURES, with a letter for them in
+#       read_map(). Change the pictures by changing tools/make_maze3d_textures.py and running it.
+#     - STRIP_WIDTH trades detail for speed: wider strips mean fewer rays and more frames a
+#       second, and so does FLOOR_BAND for the floor. On a slow computer, the menu's LOOK can
+#       be WALLS ONLY (plain floor) or PLAIN (no pictures at all). FLASHLIGHT_SIZE and
+#       FLASHLIGHT_REACH change how wide and how far the flashlight shines.
 
 # ---------------------------------------------------------------------------
 # The maze
@@ -118,12 +142,30 @@ let LIVES_FOR = [1, 3, 5]
 let SOUND_NAMES = ["ON", "EFFECTS ONLY", "OFF"]
 let SOUND_ON = 0            # music and sound effects
 let SOUND_OFF = 2           # (1 is the effects without the music)
-let SETTING_NAMES = ["MAZE", "CRYSTALS", "GHOSTS", "LIVES", "SOUND"]
+let LOOK_NAMES = ["FLASHLIGHT", "LANTERN", "WALLS ONLY", "PLAIN"]
+let FLASHLIGHT = 0          # stone pictures everywhere, pitch black but for your flashlight's beam
+let LANTERN = 1             # stone pictures everywhere, lit all round you
+let PLAIN = 3               # flat colours, the quickest (2 is pictures on the walls only)
+let SETTING_NAMES = ["MAZE", "CRYSTALS", "GHOSTS", "LIVES", "SOUND", "LOOK"]
 let LOOPS = 40              # a made-up maze gets an extra gap in a wall for every this many squares
 let SPRITE_DISTANCE = 14.0  # crystals and ghosts further away than this aren't drawn
 
-# Sound. The sounds are WAV files in the game's own folder, made by tools/make_maze3d_sounds.py
-let SOUND_FOLDER = "/apps/maze3d/"
+# The game's own folder, with its sounds (WAV files, made by tools/make_maze3d_sounds.py) and
+# pictures (BMP files, made by tools/make_maze3d_textures.py)
+let FOLDER = "/apps/maze3d/"
+
+# The dungeon look (see the notes at the top)
+let TEXTURE_SIZE = 64       # the pictures' pixels across one square
+let LANTERN_REACH = 20.0    # how far the lantern reaches: things are half as bright at sqrt(this) squares
+let FLASHLIGHT_REACH = 30.0 # the same for the flashlight, which shines further
+let FLASHLIGHT_SIZE = 0.38  # the flashlight's circle of light: its radius, as a share of the screen's width
+let FLOOR_BAND = 3          # rows of floor and ceiling drawn at once, at least (more is quicker but coarser)
+let FAR_FLOOR = 8.0         # with the lantern, floor and ceiling further away than this are just darkness
+let FAR_FLOOR_COLOUR = [92, 86, 78]     # roughly the flagstones' and cobbles' own colours,
+let FAR_CEILING_COLOUR = [60, 57, 58]   # darkened by the lantern for that far-off darkness
+let FLASHLIGHT_FAR = 11.0   # and with the flashlight, further than this they are black
+
+# Sound
 let MUSIC_VOLUME = 30       # the music, quietly under the effects (volumes go from 0 to 100)
 let STEP_VOLUME = 25        # footsteps, quieter still
 let STEP_LENGTH = 0.75      # squares walked between footsteps
@@ -154,6 +196,8 @@ let WALL_COLOURS = [
     [235, 185, 60]          # 4 'E' the door
 ]
 let DOOR = 4
+# and the dungeon look's picture for each kind, in the game's folder
+let WALL_PICTURES = [nil, "stone", "brick", "moss", "door"]
 
 let CEILING = [40, 46, 64]
 let FLOOR = [70, 60, 52]
@@ -204,7 +248,7 @@ end
 
 # One sound from the game's folder, or nil if it isn't there (it then just isn't played)
 func load_sound(name)
-    return sload(SOUND_FOLDER + name + ".wav")
+    return sload(FOLDER + name + ".wav")
 end
 
 # Load every sound once, at the start, so playing one later costs almost nothing
@@ -254,6 +298,47 @@ func music(name)
     if name == "menu" then track = snd_music_menu end
     if name == "game" then track = snd_music_game end
     if track != nil then music_voice = splay(track, true, MUSIC_VOLUME) end
+end
+
+# ---------------------------------------------------------------------------
+# Pictures
+# ---------------------------------------------------------------------------
+
+# Read the dungeon look's pictures from the game's folder, once at the start: the walls into
+# `wall_pictures` (in the same order as WALL_COLOURS), the floor and the ceiling. If any is
+# missing, `pictures_ok` is false and the game is drawn PLAIN
+func load_pictures()
+    pictures_ok = true
+    wall_pictures = [nil]
+    for i = 1 to len(WALL_PICTURES) - 1 do
+        let picture = rdb(FOLDER + WALL_PICTURES[i] + ".bmp")
+        if picture == nil then pictures_ok = false end
+        push(wall_pictures, picture)
+    end
+    floor_picture = rdb(FOLDER + "floor.bmp")
+    ceiling_picture = rdb(FOLDER + "ceiling.bmp")
+    if floor_picture == nil or ceiling_picture == nil then pictures_ok = false end
+end
+
+# How bright the lamp you carry (the lantern or the flashlight) makes something `distance`
+# squares away: 1 right beside you, fading the further it is, but never quite to nothing.
+# `reach` is LANTERN_REACH or FLASHLIGHT_REACH (see play)
+func lamp_light(distance)
+    return reach / (reach + distance * distance)
+end
+
+# How wide the flashlight's circle of light is (its radius, in pixels): wider for a moment
+# after Space shines your light at a ghost
+func flashlight_radius(now)
+    let radius = SCREEN_W * FLASHLIGHT_SIZE
+    if now - light_at < 120 then radius = radius * 1.5 end
+    return radius
+end
+
+# Shine the flashlight on the pictures drawn from now on (see the notes at the top): a circle
+# round the middle of the view
+func flashlight_on(now)
+    imglight(SCREEN_W / 2, horizon(), flashlight_radius(now))
 end
 
 # ---------------------------------------------------------------------------
@@ -849,14 +934,82 @@ func draw_backdrop()
     end
 end
 
+# The dungeon's flagstone floor and cobbled ceiling (see the notes at the top): a band of rows
+# at a time (FLOOR_BAND or more), outwards from the horizon. A row `off` rows below the horizon shows the floor
+# SCREEN_H / 2 / off squares away, and the row as far above it shows the ceiling that far
+# away, so each step does one band of each.
+func draw_dungeon_backdrop()
+    let middle = horizon()
+    let half = SCREEN_H / 2.0
+    # the rays through the screen's left and right edges (see face())
+    let left_x = dir_x - plane_x
+    let left_y = dir_y - plane_y
+    let right_x = dir_x + plane_x
+    let right_y = dir_y + plane_y
+
+    # Near the horizon the floor and ceiling are so far off that your lamp hardly reaches them:
+    # one dark rectangle each, instead of dozens of thin bands of stone. (The flashlight reaches
+    # further, but its rectangles are black: rect() isn't lit by its spotlight, so anything but
+    # black would show outside the beam)
+    let off = floor(half / FAR_FLOOR)
+    let dark = lamp_light(FAR_FLOOR)
+    if look_style == FLASHLIGHT then
+        off = floor(half / FLASHLIGHT_FAR)
+        dark = 0
+    end
+    rect(0, middle - off, SCREEN_W, off, shade(FAR_CEILING_COLOUR, dark))
+    rect(0, middle, SCREEN_W, off, shade(FAR_FLOOR_COLOUR, dark))
+
+    # Then a band of each at a time, until both reach the edge of the screen (looking up or
+    # down, one gets there first). Near the horizon each row shows a long stretch of floor, but
+    # nearer you one pixel of the picture covers several rows, so the bands can be taller there
+    # without looking any different: about one and a half of the picture's pixels deep. That
+    # is (off * off) / (half * TEXTURE_SIZE) rows (how fast the distance changes from one row
+    # to the next is half / (off * off), the sum above's slope), times 1.5. Fewer, taller bands
+    # are quicker.
+    let growth = 1.5 / (half * TEXTURE_SIZE)
+    # (the player and the edge rays in the pictures' pixels, so the loop has fewer sums to do)
+    let me_x = pos_x * TEXTURE_SIZE
+    let me_y = pos_y * TEXTURE_SIZE
+    left_x = left_x * TEXTURE_SIZE
+    left_y = left_y * TEXTURE_SIZE
+    right_x = right_x * TEXTURE_SIZE
+    right_y = right_y * TEXTURE_SIZE
+    while middle + off < SCREEN_H or middle - off > 0 do
+        let band = bigger(FLOOR_BAND, floor(off * off * growth))
+        # how far away this band is, at its middle row, how much light reaches it (as
+        # lamp_light() works it out, written out here as this runs for every band), and where
+        # its row meets the floor under the left and right edge rays
+        let distance = half / (off + band / 2.0)
+        let light = reach / (reach + distance * distance)
+        let u0 = me_x + distance * left_x
+        let v0 = me_y + distance * left_y
+        let u1 = me_x + distance * right_x
+        let v1 = me_y + distance * right_y
+        if middle + off < SCREEN_H then
+            imgrow(floor_picture, 0, middle + off, SCREEN_W, band, u0, v0, u1, v1, light)
+        end
+        if middle - off > 0 then
+            imgrow(ceiling_picture, 0, middle - off - band, SCREEN_W, band, u0, v0, u1, v1, light)
+        end
+        off = off + band
+    end
+end
+
 # Send one ray per strip of the screen and draw the wall it hits. Each ray's distance is kept
 # in `depths`, so draw_sprites() knows which walls are in front of a crystal or a ghost.
 func draw_walls(now)
     # The door glows once every crystal has been picked up (sin swings from -1 to 1)
     let door_light = 0.75
+    let door_open = taken == len(crystals)
     # worked out once here rather than for every ray
     let middle = horizon()
-    if taken == len(crystals) then
+    # With the flashlight, strips whose middle is further than this from the middle of the
+    # screen are outside its beam (with half a strip to spare)
+    let flashlight = look_style == FLASHLIGHT
+    let beam = 0
+    if flashlight then beam = flashlight_radius(now) + STRIP_WIDTH / 2 end
+    if door_open then
         door_light = 0.85 + sin(now / 150.0) * 0.15
     end
 
@@ -924,25 +1077,55 @@ func draw_walls(now)
         # (its middle is on the horizon)
         let top = middle - height / 2
 
-        # Further walls are darker, and north-south faces are a little darker than east-west
-        # ones, which is what makes corners easy to see
-        let light = bigger(1.0 - distance / FOG_DISTANCE, 0.15)
-        if side == 1 then light = light * 0.7 end
-        if wall == DOOR then light = light * door_light / 0.75 end
-
         # Where along the wall's face the ray hit, from 0 to 1 across one square: the point it
-        # hit is the player's position plus `distance` times the ray. Strips near either edge
-        # of a square are drawn darker, so each block of wall stands out from the next.
+        # hit is the player's position plus `distance` times the ray
         let along = pos_y + distance * ray_y
         if side == 1 then along = pos_x + distance * ray_x end
         along = along - floor(along)
-        if along < 0.025 or along > 0.975 then light = light * 0.75 end
-
-        # The wall, then a darker band along its foot where it meets the floor
-        let colour = WALL_COLOURS[wall]
         let x = column * STRIP_WIDTH
-        rect(x, top, STRIP_WIDTH, height, shade(colour, light))
-        rect(x, top + height * 0.93, STRIP_WIDTH, height * 0.07, shade(colour, light * 0.55))
+
+        if flashlight and abs(x + STRIP_WIDTH / 2 - SCREEN_W / 2) > beam and not (wall == DOOR and door_open) then
+            # outside the flashlight's beam: left black (draw_dungeon_backdrop has made it so),
+            # unless it is the open door, which glows
+        elif look_style != PLAIN then
+            # The wall's picture, lit by your lamp (north-south faces a little darker, so
+            # corners show). The strip shows the picture from where this ray hit to where the
+            # next one would: `spread` is how far that is, in the picture's pixels. On an
+            # east-west face (side 0) `along` is a y, which changes across the screen by
+            # distance * VIEW_WIDTH / ray_x for each step of `across` (a strip is 2 / RAYS of
+            # those); on a north-south face, by -distance * VIEW_WIDTH / ray_y. A wall seen
+            # side on spreads a lot of the picture over each strip.
+            let light = lamp_light(distance)
+            let spread = 0.0
+            if side == 0 then
+                spread = distance * STRIP_SPREAD / ray_x
+            else
+                light = light * 0.8
+                spread = -distance * STRIP_SPREAD / ray_y
+            end
+            let u = along * TEXTURE_SIZE
+            if wall == DOOR and door_open and flashlight then
+                # the open door glows in the dark: drawn without the flashlight's spotlight
+                imglight()
+                imgcol(wall_pictures[wall], x, top, STRIP_WIDTH, height, u - spread / 2, u + spread / 2, door_light)
+                flashlight_on(now)
+            else
+                if wall == DOOR then light = light * door_light / 0.75 end
+                imgcol(wall_pictures[wall], x, top, STRIP_WIDTH, height, u - spread / 2, u + spread / 2, light)
+            end
+        else
+            # Flat colours. Further walls are darker, and north-south faces are a little darker
+            # than east-west ones, which is what makes corners easy to see. Strips near either
+            # edge of a square are darker too, so each block of wall stands out from the next
+            let light = bigger(1.0 - distance / FOG_DISTANCE, 0.15)
+            if side == 1 then light = light * 0.7 end
+            if wall == DOOR then light = light * door_light / 0.75 end
+            if along < 0.025 or along > 0.975 then light = light * 0.75 end
+            # the wall, then a darker band along its foot where it meets the floor
+            let colour = WALL_COLOURS[wall]
+            rect(x, top, STRIP_WIDTH, height, shade(colour, light))
+            rect(x, top + height * 0.93, STRIP_WIDTH, height * 0.07, shade(colour, light * 0.55))
+        end
     end
 end
 
@@ -1188,13 +1371,14 @@ end
 # ---------------------------------------------------------------------------
 
 # The names of the choices for menu row `row` (0 the maze, 1 crystals, 2 ghosts, 3 lives,
-# 4 sound)
+# 4 sound, 5 the look)
 func choice_names(row)
     if row == 0 then return MAZE_NAMES end
     if row == 1 then return CRYSTAL_NAMES end
     if row == 2 then return GHOST_NAMES end
     if row == 3 then return ["1", "3", "5"] end
-    return SOUND_NAMES
+    if row == 4 then return SOUND_NAMES end
+    return LOOK_NAMES
 end
 
 # What menu row `row` shows for its choice, e.g. "LARGE  39 x 39" or "NORMAL  (20)"
@@ -1212,6 +1396,9 @@ func choice_text(row)
     elif row == 4 and not sound_card and choice[4] != SOUND_OFF then
         # without a sound card there are only the PC speaker's beeps
         return name + "  (BEEPS)"
+    elif row == 5 and not pictures_ok and choice[5] != PLAIN then
+        # the pictures weren't in the game's folder, so it can only be drawn plain
+        return name + "  (NO PICTURES)"
     end
     return name
 end
@@ -1242,13 +1429,15 @@ func draw_menu()
     # line on its own would make the columns wander, so the block is centred as a whole
     let keys = ["UP / DOWN or W / S", "LEFT / RIGHT", "MOUSE", "A / D", "SPACE / CLICK", "M", "ESC"]
     let actions = ["walk", "turn", "look around", "step sideways", "shine your light at a ghost", "show or hide the map", "back to this menu"]
+    # (below the last of the choices)
+    let below = top + 150 + len(SETTING_NAMES) * 28
     left = (SCREEN_W - 49 * 8) / 2
     for i = 0 to len(keys) - 1 do
-        text(left, top + 290 + i * 18, keys[i], TEXT, 1)
-        text(left + 22 * 8, top + 290 + i * 18, actions[i], DIM_TEXT, 1)
+        text(left, below + i * 18, keys[i], TEXT, 1)
+        text(left + 22 * 8, below + i * 18, actions[i], DIM_TEXT, 1)
     end
-    centre(top + 432, "UP / DOWN to choose, LEFT / RIGHT to change, ESC to quit", DIM_TEXT, 1)
-    centre(top + 456, "ENTER OR SPACE TO START", CRYSTAL, 2)
+    centre(below + 142, "UP / DOWN to choose, LEFT / RIGHT to change, ESC to quit", DIM_TEXT, 1)
+    centre(below + 166, "ENTER OR SPACE TO START", CRYSTAL, 2)
     gshow()
 end
 
@@ -1321,6 +1510,11 @@ func play()
     stride = 0.0
     against_wall = false
     spotted_at = -100000
+    # the menu's LOOK, or PLAIN if the pictures couldn't be read, and how far its lamp reaches
+    look_style = choice[5]
+    if not pictures_ok then look_style = PLAIN end
+    reach = LANTERN_REACH
+    if look_style == FLASHLIGHT then reach = FLASHLIGHT_REACH end
     music("game")
     started = time()
     # look straight ahead, and forget any mouse movement from before the game started
@@ -1354,8 +1548,15 @@ func play()
         move_ghosts(seconds, now)
         if check_ghosts(now) then return "caught" end
 
-        draw_backdrop()
+        # the floor, ceiling and walls (by the flashlight's beam, with that look), then the rest
+        if look_style == FLASHLIGHT then flashlight_on(now) end
+        if look_style == FLASHLIGHT or look_style == LANTERN then
+            draw_dungeon_backdrop()
+        else
+            draw_backdrop()
+        end
         draw_walls(now)
+        imglight()
         draw_sprites(now)
         draw_light_and_hurt(now)
         if show_map then draw_map() end
@@ -1420,10 +1621,13 @@ let SCREEN_H = gh()
 # One ray per strip: about 128 across a 1024 pixel screen
 let RAYS = SCREEN_W / STRIP_WIDTH
 let depths = list(RAYS, 0.0)
+# How much of a wall's picture one strip shows, for each square the wall is away (see
+# draw_walls): one strip is 2 / RAYS of the view's width, in the picture's pixels
+let STRIP_SPREAD = 2.0 * VIEW_WIDTH * TEXTURE_SIZE / RAYS
 
 # Everything the functions above share. AerLang needs a variable made (with let) before a
 # function can change it.
-let choice = [0, 1, 1, 1, 0]   # the menu's choices: maze, crystals, ghosts, lives, sound
+let choice = [0, 1, 1, 1, 0, 0]   # the menu's choices: maze, crystals, ghosts, lives, sound, look
 let menu_row = 0            # which of them Left / Right changes
 let grid = []
 let crystals = []
@@ -1483,8 +1687,16 @@ let music_name = ""         # which music that is (see music)
 let stride = 0.0            # squares walked since the last footstep
 let against_wall = false    # walking into a wall (see footsteps)
 let spotted_at = 0          # when a ghost was last heard starting to chase you
+# the pictures (see load_pictures), and how this game is drawn
+let wall_pictures = []
+let floor_picture = nil
+let ceiling_picture = nil
+let pictures_ok = false
+let look_style = FLASHLIGHT # the menu's LOOK, or PLAIN without the pictures (see play)
+let reach = LANTERN_REACH   # how far the lamp reaches with that look (see lamp_light)
 
 load_sounds()
+load_pictures()
 
 # The menu, then a game, then the menu again, until Escape on the menu (or on the screen at
 # the end of a game)

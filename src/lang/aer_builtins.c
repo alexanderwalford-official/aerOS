@@ -146,6 +146,9 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("text", bi_text, 4, 5),
     BUILTIN("image", bi_image, 3, 5),
     BUILTIN("imgsz", bi_image_size, 1, 1),
+    BUILTIN("imgcol", bi_image_column, 8, 8),
+    BUILTIN("imgrow", bi_image_row, 10, 10),
+    BUILTIN("imglight", bi_image_light, 0, 3),
     // for games, and video
     BUILTIN("gbuf", bi_gbuf, 1, 1),
     BUILTIN("gshow", bi_gshow, 0, 0),
@@ -165,14 +168,14 @@ const int aer_builtin_count = sizeof(aer_builtins) / sizeof(aer_builtins[0]);
 // ---- app mode: which built-ins belong to which part of AerOS (sys/appmode.h) ---------------------
 
 // for each part of AerOS that app mode can put away, the built-ins that need it. While a program
-// that names none of a part's built-ins runs, that part can be put away. The longest list (graphics) has
-// 14 names, so 16 leaves room for the NULL and one more
+// that names none of a part's built-ins runs, that part can be put away. The longest list (files) has
+// 26 names, so 28 leaves room for the NULL and one more
 static const struct {
     uint32_t part;
     const char* names[28];   // ends with NULL
 } parts[] = {
     { APP_GRAPHICS, { "gopen", "gclose", "gw", "gh", "gclear", "rgb", "pixel", "rect", "line",
-                      "text", "image", "imgsz", "gbuf", "gshow", NULL } },
+                      "text", "image", "imgsz", "imgcol", "imgrow", "imglight", "gbuf", "gshow", NULL } },
     { APP_SOUND,    { "beep", "play", "sload", "splay", "sstop", "isply", NULL } },
     { APP_VIDEO,    { "video", NULL } },
     { APP_FILES,    { "rdf", "rdb", "wrf", "apf", "isf", "delf", "la", "cwd", "enc", "dec",

@@ -162,6 +162,56 @@ def test_maze3d_huge(t):
     quit_maze(aeros)
 
 
+def colours_in(shot, left, top, right, bottom):
+    """How many different colours there are in a box of a screenshot (every pixel of it)."""
+    width, height, pixels = shot
+    return len({pixels[(y * width + x) * 3:(y * width + x) * 3 + 3]
+                for y in range(top, bottom) for x in range(left, right)})
+
+
+def test_maze3d_dungeon(t):
+    # The dungeon looks: the pictures the game comes with are read and drawn on the walls
+    # (imgcol) and the floor (imgrow). On the PLAIN look the floor is a few flat bands and each
+    # strip of wall one colour; with the pictures (LANTERN), both are full of different colours.
+    # The FLASHLIGHT look (the first) lights them only in a circle in the middle of the view
+    # (imglight): the wall ahead is stone, and the screen's left edge pitch black. The ghosts
+    # stand still, so nothing moves between the pictures but the look.
+    aeros = boot_with_maze(t, [('let GHOST_SPEED = 1.2 ', 'let GHOST_SPEED = 0.0 '),
+                               ('let CHASE_SPEED = 1.9 ', 'let CHASE_SPEED = 0.0 ')])
+    aeros.run('maze3d', 5)
+    aeros.key('spc')
+    time.sleep(4)
+    flashlight = aeros.screenshot('flashlight')
+    # Escape to the menu, up (round from MAZE) to LOOK, right to LANTERN, and start again;
+    # then back, left twice (round from FLASHLIGHT) to PLAIN, and start
+    looks = {}
+    for name, keys in (('lantern', ['up', 'right', 'spc']), ('plain', ['left', 'left', 'spc'])):
+        aeros.key('esc')
+        time.sleep(1)
+        choose(aeros, keys)
+        time.sleep(4)
+        looks[name] = aeros.screenshot(name)
+    width, height, _ = flashlight
+    # the floor at the bottom middle of the screen, the wall straight ahead at the horizon (a
+    # strip just right of the middle, clear of the cross the light shines at), and the left
+    # edge, out of the flashlight's beam (and clear of the words in the corners)
+    floor_box = (width // 2 - 100, height - 60, width // 2 + 100, height - 10)
+    wall_box = (width // 2 + 20, height // 2 - 30, width // 2 + 28, height // 2 + 30)
+    edge_box = (0, height // 2 - 50, 60, height // 2 + 50)
+    for name, box in (('floor', floor_box), ('wall', wall_box)):
+        with_pictures, without = colours_in(looks['lantern'], *box), colours_in(looks['plain'], *box)
+        if with_pictures < 12 or with_pictures < without * 3:
+            aeros.fail(f'the {name} does not look like stone: {with_pictures} colours with the '
+                       f'pictures, {without} without')
+    if colours_in(flashlight, *wall_box) < 12:
+        aeros.fail('the flashlight does not light the wall ahead')
+    if colours_in(flashlight, *edge_box) != 1 or not has_colour(flashlight, 0x000000):
+        aeros.fail("outside the flashlight's beam is not pitch black")
+    if colours_in(looks['lantern'], *edge_box) < 6:
+        aeros.fail('the lantern does not light the edge of the view')
+    quit_maze(aeros)
+
+
 def loud_quarters(path):
     """For each quarter second of a recording QEMU made: None if it is quiet, or else its pitch
     in Hz, from how often the wave crosses zero. (Like notes_in in test_media.py, but keeping

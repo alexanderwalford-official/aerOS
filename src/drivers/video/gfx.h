@@ -58,6 +58,21 @@ bool gfx_image_size(const uint8_t* data, uint32_t length, int* w, int* h);
 // parts of a PNG or GIF let what's already there show through. False if it isn't one we can show.
 bool gfx_image(const uint8_t* data, uint32_t length, int x, int y, int max_w, int max_h);
 
+// Textures, for ray casting games (see the notes in gfx.c): a picture stretched over a strip of
+// wall or a band of floor, darkened by light (1 as it is, 0 black), repeating past its edges.
+// Positions in the picture (u across, v down) are in pixels, and may be decimals.
+//   column: a w x h strip at x, y showing the picture's columns from u0 at its left to u1 at
+//           its right, each the picture's whole height stretched to h
+//   row:    a w x h band at x, y whose every row reads the picture along the line from
+//           (u0, v0) at the left to (u1, v1) at the right
+// See-through parts of a PNG or GIF are drawn solid. False if the data isn't a picture.
+bool gfx_texture_column(const uint8_t* data, uint32_t length, int x, int y, int w, int h, double u0, double u1, double light);
+bool gfx_texture_row(const uint8_t* data, uint32_t length, int x, int y, int w, int h, double u0, double v0, double u1, double v1, double light);
+// A spotlight on the textures drawn from now on, like a flashlight: they are lit only inside a
+// circle round x, y on the screen (fully out to a third of the radius, then fading), and are
+// black outside it. A radius of 0 or less turns it off, and gfx_begin starts with it off
+void gfx_texture_light(int x, int y, int radius);
+
 // Draw over the screen for a moment, without spoiling what a program has drawn:
 //
 //     gfx_overlay_t* overlay = gfx_overlay_begin(x, y, w, h);  // keeps what is under it

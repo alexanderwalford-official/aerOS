@@ -1,7 +1,8 @@
 /*
     bi_graphics.c
     AerLang's built-in functions for graphics: taking the screen over (gopen, gclose), its size,
-    colours (rgb), drawing (gclear, pixel, rect, line, text) and pictures: BMP, PNG, GIF and JPEG (image, imgsz).
+    colours (rgb), drawing (gclear, pixel, rect, line, text) and pictures: BMP, PNG, GIF and JPEG (image, imgsz),
+    and pictures as textures for ray casting games (imgcol, imgrow, imglight).
     Then what games need: drawing out of sight and showing the finished frame (gbuf, gshow),
     keys held down (keydown) and the mouse.
 
@@ -140,6 +141,45 @@ value_t bi_image (int argc, value_t* argv, int line) {
     int max_h = argc > 4 ? int_arg(argv, 4, line, "image") : 0;
     return aer_bool(gfx_image(data, length, int_arg(argv, 1, line, "image"),
                               int_arg(argv, 2, line, "image"), max_w, max_h));
+}
+
+// imgcol(data, x, y, w, h, u0, u1, light): a strip of wall for a ray caster: the picture's columns from u0 to u1 stretched over w x h, darkened by light (0 to 1)
+value_t bi_image_column (int argc, value_t* argv, int line) {
+    (void)argc;
+    need_graphics(line, "imgcol");
+    uint32_t length;
+    const uint8_t* data = picture_arg(argv, 0, line, "imgcol", &length);
+    return aer_bool(gfx_texture_column(data, length, int_arg(argv, 1, line, "imgcol"), int_arg(argv, 2, line, "imgcol"),
+                                       int_arg(argv, 3, line, "imgcol"), int_arg(argv, 4, line, "imgcol"),
+                                       real_arg(argv, 5, line, "imgcol"), real_arg(argv, 6, line, "imgcol"),
+                                       real_arg(argv, 7, line, "imgcol")));
+}
+
+// imgrow(data, x, y, w, h, u0, v0, u1, v1, light): a band of floor for a ray caster: every row the picture read from (u0, v0) to (u1, v1), darkened by light (0 to 1)
+value_t bi_image_row (int argc, value_t* argv, int line) {
+    (void)argc;
+    need_graphics(line, "imgrow");
+    uint32_t length;
+    const uint8_t* data = picture_arg(argv, 0, line, "imgrow", &length);
+    return aer_bool(gfx_texture_row(data, length, int_arg(argv, 1, line, "imgrow"), int_arg(argv, 2, line, "imgrow"),
+                                    int_arg(argv, 3, line, "imgrow"), int_arg(argv, 4, line, "imgrow"),
+                                    real_arg(argv, 5, line, "imgrow"), real_arg(argv, 6, line, "imgrow"),
+                                    real_arg(argv, 7, line, "imgrow"), real_arg(argv, 8, line, "imgrow"),
+                                    real_arg(argv, 9, line, "imgrow")));
+}
+
+// imglight(x, y, radius): from now on imgcol and imgrow light their pictures only inside a circle round x, y, like a flashlight (imglight() turns it off)
+value_t bi_image_light (int argc, value_t* argv, int line) {
+    need_graphics(line, "imglight");
+    if (argc == 0) {
+        gfx_texture_light(0, 0, 0);
+    } else if (argc != 3) {
+        aer_error(line, "imglight() needs x, y and a radius, or nothing to turn the light off");
+    } else {
+        gfx_texture_light(int_arg(argv, 0, line, "imglight"), int_arg(argv, 1, line, "imglight"),
+                          int_arg(argv, 2, line, "imglight"));
+    }
+    return aer_nil();
 }
 
 // imgsz(data): a picture's size (BMP, PNG, GIF or JPEG, from rdb or httpget) as [width, height], nil if it isn't one

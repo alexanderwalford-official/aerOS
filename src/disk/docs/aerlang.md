@@ -201,6 +201,13 @@ Colours are numbers like `0xFF7F00` or `rgb(255, 127, 0)`.
 `line(x1, y1, x2, y2, c)`, `text(x, y, s, c, size)`, `image(bytes, x, y, w, h)` (a BMP,
 PNG, GIF or JPEG picture, from `rdb` or `httpget`), `imgsz(bytes)`. `w` x `h` can be bigger than the screen and `x`, `y`
 negative: only the part on the screen is drawn, which is how the viewer zooms in.
+For ray casting games, `imgcol(bytes, x, y, w, h, u0, u1, light)` stretches a picture over a
+w x h strip of wall (its columns from `u0` to `u1`, its whole height), and
+`imgrow(bytes, x, y, w, h, u0, v0, u1, v1, light)` fills a band of floor, each row read along
+the line from (`u0`, `v0`) to (`u1`, `v1`). Both repeat the picture past its edges and darken
+it by `light` (1 as it is, 0 black). `imglight(x, y, radius)` then lights only a circle round
+`x`, `y`, like a flashlight, black outside it (`imglight()` turns it off). Use BMPs for these: they are drawn straight from their
+bytes, while a PNG, GIF or JPEG is decoded again whenever a different one was drawn last.
 
 ```
 gopen()
@@ -259,6 +266,6 @@ And these [packages](commands.md), once installed (`pkg install guess`), are in 
 | `/apps/viewer.aer` | graphics, pictures and a menu |
 | `/apps/move.aer` | smooth movement, held keys and mixed sounds |
 | `/apps/snake.aer` | a whole game: graphics, a back buffer, held keys, lists, and high scores in a database |
-| `/apps/maze3d.aer` | a 3D maze drawn with ray casting: decimals, sin / cos, sprites, mouse look, ghosts that find their way to you, made-up mazes, and sound effects and music mixed with sload / splay |
+| `/apps/maze3d.aer` | a 3D maze drawn with ray casting: decimals, sin / cos, textured stone walls and floors lit by a flashlight (imgcol / imgrow / imglight), sprites, mouse look, ghosts that find their way to you, made-up mazes, and sound effects and music mixed with sload / splay |
 | `/apps/anim.aer` | spinners, progress bars and moving text |
 | `/apps/webserve.aer` | a web server: TCP, and serving files |

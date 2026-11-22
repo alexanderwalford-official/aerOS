@@ -356,6 +356,25 @@ isn't one of those. Both take the picture as bytes from `rdb`, or as fetched by 
 `browser` package shows web pictures this way). A PNG, GIF or JPEG is decoded the first time
 it is drawn and kept, so drawing the same one again (every frame of a game) is quick
 
+Two more draw a picture as a "texture", for ray casting games like `maze3d`, where a per-pixel
+loop in AerLang would be far too slow. Both repeat the picture past its edges (so it tiles),
+darken it by `light` (1 is the picture as it is, 0 black, so far walls can be dark), take
+positions in the picture's pixels (decimals allowed), and give false if it isn't a picture.
+See-through parts are drawn solid ·
+`imgcol(bytes, x, y, w, h, u0, u1, light)` a strip of wall: `w` x `h` at `x`, `y`, showing the
+picture's columns from `u0` at its left to `u1` at its right, each its whole height stretched
+to `h` (taller than the screen is fine) · `imgrow(bytes, x, y, w, h, u0, v0, u1, v1, light)` a
+band of floor or ceiling: `w` x `h` at `x`, `y`, every row the picture read along the straight
+line from (`u0`, `v0`) at the left to (`u1`, `v1`) at the right ·
+`imglight(x, y, radius)` a spotlight, like a flashlight, on everything `imgcol` and `imgrow` draw
+from then on: they are lit only inside a circle round `x`, `y` on the screen (fully out to a
+third of the radius, then fading) and black outside it. `imglight()` turns it off (it is off
+when a program starts); other drawing (`rect`, `text`, `image`) is never dimmed by it, so
+glowing things can be drawn in the dark. Use BMPs for these (32 bit are quickest): they are drawn straight from their bytes, while only the last PNG, GIF or JPEG
+decoded is kept, so drawing several in turn decodes them again and again (in `maze3d`, 3
+frames a second with PNGs against 25 with BMPs). How they work is in
+`src/drivers/video/gfx.c`
+
 ```
 gopen()
 let picture = rdb("/apps/viewer/aeros.bmp")      # a picture the viewer package comes with
@@ -439,7 +458,16 @@ sound effects are WAV files it comes with, loaded once with `sload` and started 
 so the quiet looped music plays on under footsteps, crystals and ghosts (the menu turns the
 music, or all sound, off; with no sound card the important sounds are `beep`s). They are
 made from plain waves, the way old game chips made them, by `tools/make_maze3d_sounds.py`,
-which can be changed and run again. It uses
+which can be changed and run again. It looks like a dungeon: stone, brick and mossy walls, a
+flagstone floor and a cobbled ceiling, pitch black but for the beam of your flashlight
+(`imglight`), in which the ghosts and crystals glow. They are 64 x 64 BMPs worked out pixel
+by pixel (blocks, bevels, noise and a Voronoi pattern for the cobbles) by
+`tools/make_maze3d_textures.py`, and drawn with `imgcol` (each wall strip, picked by where its
+ray hit the wall) and `imgrow` (the floor and ceiling a band of rows at a time, each row being
+all one distance away), darker the further away they are. The menu's LOOK can instead light
+it all round with a LANTERN, or be WALLS ONLY or PLAIN, the old flat colours, for a slow
+computer (in QEMU, the flashlight runs at about 21 frames a second on the classic maze and
+17 on the huge one, and PLAIN at about 30 and 21). It uses
 decimals, `sin` / `cos`, `keydown`, `mousemove` (for looking around), `gbuf` and `frame`,
 and its comments explain each step, so it is meant to be read and changed: draw your own maze
 in `MAP`, add wall colours, or widen `STRIP_WIDTH` for more speed on a slow computer.
