@@ -373,9 +373,11 @@ void e1000_mac (uint8_t out[6]) {
     memcpy(out, mac, 6);
 }
 
-// is a cable plugged in (the link up)? The registers are only read while the card is running
+// is a cable plugged in (the link up)? The registers can be read once the card has been found,
+// even while it rests: e1000_stop only stops sending and receiving, and the link stays up. So
+// the desktop's network light can look without starting it (net_glance, sys/net.c)
 bool e1000_link_up (void) {
-    return ready && (read_register(REG_STATUS) & STATUS_LU);
+    return found && (read_register(REG_STATUS) & STATUS_LU);
 }
 
 // hand one whole Ethernet frame to the card to send. True once the card has it, not once sent

@@ -10,24 +10,55 @@
 #     Notes        a notepad, saved as notes.txt in the folder you started it in
 #     Calculator   + - * / with decimals
 #     System       what aerOS knows about the computer (the same as sysinfo)
+#     Settings     the colours, the background picture and where the taskbar goes
 #     About        what this is
+# and, after those, every app installed: the ones that come with aerOS (/bin/) and the
+# packages from pkg install (/apps/), found each time the desktop starts.
 #
 # The mouse: click an icon or the start button (bottom left) to open something, drag a window
-# by its title bar, and click its buttons to shrink it to the taskbar (_) or close it (x).
+# by its title bar, and click its buttons to shrink it to the taskbar (_) or close it (x). The
+# power button (bottom right) has Sleep, Restart and Shut down; the start menu has them too.
 # Without a mouse: Tab opens the start menu, the arrows choose, Enter opens. The arrows move
 # the pointer too, and Enter clicks, so everything can be reached from the keyboard.
+#
+# The system monitor: little graphics by the clock show what aerOS is doing, live: the
+# network's signal bars, how busy the processor is, the threads running, and gauges for the
+# memory and the disk cache. Click them (or press Home) for a panel with graphs and numbers.
+# See "the system monitor" below.
 #
 # How it works: everything on the screen is drawn again, back to front (the wallpaper, the
 # icons, each window, the taskbar, the menu, then the pointer), into the back buffer (gbuf),
 # and shown at once (gshow), so nothing flickers. It is only drawn again when something has
-# changed: the mouse moved, a key was pressed, or the clock ticked.
+# changed: the mouse moved, a key was pressed, the clock ticked, or the system monitor took
+# its look, once a second.
 #
 # The windows are lists: windows holds them back to front, so the last one is in front. Each
 # is [kind, title, x, y, w, h, shrunk, scroll, data], and W_KIND... below say which is which.
+#
+# Opening an app: aerOS runs one program at a time, so the desktop can't run an app in a
+# window of its own. It asks aerOS to launch() the app instead: the desktop closes, the app has
+# the screen, and when the app ends aerOS starts the desktop again, with the same windows open
+# (their names are handed back to it as its args, "back clock notes"). Notes is saved first.
+#
+# The settings are kept in desktop.cfg in your home folder, one a line (see save_settings), and
+# read each time the desktop starts. aerOS asks before the desktop reads or changes it, as it
+# is in your home folder: say A (always) and it won't ask again.
 
 
 # ---- what the screen looks like -------------------------------------------------------------
 
+# the colour themes, as [name, the wallpaper's top, its bottom, the taskbar, the taskbar's
+# buttons, the accent (the start button, today in the calendar), the front window's title bar,
+# the others', a chosen row, the start menu, the windows' shadow, the "aerOS" on the wallpaper].
+# Ocean is the first, and the one the desktop starts with
+let THEMES = [
+    ["Ocean",    0x1B3A5C, 0x3E7CB1, 0x1E1E24, 0x34343E, 0xFF7F00, 0x2B5D8C, 0x5A6470, 0xCFE3F7, 0x26262E, 0x0E1A28, 0x5D8FBF],
+    ["Forest",   0x1E3B2A, 0x4F8A5B, 0x1B231D, 0x2F3B31, 0xE8B04A, 0x2F6B45, 0x5E6B60, 0xD3EBD5, 0x232B25, 0x0F1E14, 0x7FB38A],
+    ["Sunset",   0x3B1E4A, 0xE0784A, 0x24161F, 0x3E2735, 0xFF9E3D, 0x8C3B5E, 0x6E5A66, 0xF7D9E3, 0x2E1C28, 0x1E0E18, 0xF0A070],
+    ["Graphite", 0x202226, 0x50545C, 0x141416, 0x2C2C30, 0x4DA3FF, 0x3A3F48, 0x6A6E75, 0xDDE3EA, 0x1E1E22, 0x0A0A0C, 0x80858E]]
+
+# the theme's colours, set by use_theme (these are Ocean's)
+let THEME = 0                    # which of THEMES
 let SKY_TOP = 0x1B3A5C           # the wallpaper, from the top...
 let SKY_BOTTOM = 0x3E7CB1        # ...to the bottom
 let TASKBAR = 0x1E1E24
@@ -35,18 +66,45 @@ let TASKBAR_LIGHT = 0x34343E
 let ACCENT = 0xFF7F00            # aerOS orange
 let TITLE_ON = 0x2B5D8C          # the front window's title bar
 let TITLE_OFF = 0x5A6470         # the others'
+let SELECT = 0xCFE3F7            # a chosen row
+let MENU = 0x26262E              # the start menu
+let SHADOW = 0x0E1A28
+let MARK = 0x5D8FBF              # "aerOS", quietly in the corner of the wallpaper
+
+# the colours every theme shares
 let BODY = 0xF2F2EE              # inside a window
 let INK = 0x1D1D1B               # text inside a window
 let FAINT = 0x8A8A84             # quieter text
-let SELECT = 0xCFE3F7            # a chosen row
+let BUTTON_FACE = 0xDCDCD6       # a button in a window
 let WHITE_INK = 0xFFFFFF
-let SHADOW = 0x0E1A28
 
-let TASKBAR_H = 34               # pixels
+# the system monitor's colours (see "the system monitor"), the same in every theme: how things
+# are going (fine, getting busy, wrong), the network's link, and the dark little screens the
+# graphs are drawn on
+let GOOD = 0x6BCB77
+let BUSY = 0xF2C25C
+let BAD = 0xE5534B
+let LINK_UP = 0x4FD18B           # the network's signal bars, while the link is up
+let SCREEN_BACK = 0x0A0D12       # behind a graph
+let MONITOR_EDGE = 0x3C4654      # round the system monitor's panel
+let SOFT_INK = 0xA8AEB8          # quieter text on the dark panel
+
+let TASKBAR_H = 34               # pixels: the taskbar along the top or the bottom...
+let TASKBAR_SIDE_W = 132         # ...or down the left or the right
 let TITLE_H = 24
 let BUTTON = 18                  # the _ and x buttons
 let ROW = 18                     # one row of text in a list
+let MENU_ROW = 28                # one entry of the start menu
+let MENU_COLUMN = 200            # the start menu's width (more columns if it doesn't fit)
 let CHAR_W = 8                   # text(..., 1) is 8 x 16 pixels a character
+let TRAY_W = 124                 # the system monitor's indicators along the taskbar...
+let TRAY_UPRIGHT_H = 46          # ...or their height, down a taskbar on the left or the right
+let MONITOR_W = 340              # the panel they open
+let MONITOR_H = 500
+
+# where the taskbar can go
+let SIDES = ["bottom", "top", "left", "right"]
+let SIDE_NAMES = ["Bottom", "Top", "Left", "Right"]
 
 # the parts of a window (see the top of this file)
 let W_KIND = 0
@@ -59,9 +117,14 @@ let W_SHRUNK = 6
 let W_SCROLL = 7
 let W_DATA = 8
 
-# the apps, as [kind, name], in the order the icons and the menu show them
-let APPS = [["clock", "Clock"], ["files", "Files"], ["notes", "Notes"], ["calc", "Calculator"],
-            ["system", "System"], ["about", "About"]]
+# the desktop's own windows, as [kind, name], in the order the icons and the menu show them.
+# The apps found on the disk come after them (find_apps)
+let OWN_APPS = [["clock", "Clock"], ["files", "Files"], ["notes", "Notes"], ["calc", "Calculator"],
+                ["system", "System"], ["settings", "Settings"], ["about", "About"]]
+
+# where installed apps are, in the order aerOS looks for one typed at the prompt: the ones that
+# come with aerOS, games from an older aerOS, then the packages pkg install puts in /apps/
+let APP_FOLDERS = ["/bin/", "/bin/games/", "/apps/"]
 
 let MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
               "September", "October", "November", "December"]
@@ -72,9 +135,11 @@ let DAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
 
 let SW = 0                       # the screen's size, once it is open
 let SH = 0
+let APPS = []                    # every icon: [kind, name], and [kind, name, path] for an app
 let windows = []
 let running = true
-let menu_open = false
+let launching = ""               # the app the desktop is closing for, if it is (see the top)
+let menu_open = ""               # "start", "power", "monitor" (the system monitor) or "" for none
 let menu_choice = 0              # the menu entry the keyboard is on
 let dragging = nil               # the window being dragged by its title bar, or nil
 let drag_dx = 0                  # where in the title bar it was taken hold of
@@ -87,6 +152,26 @@ let mouse_x_before = -1          # where the mouse was last time round: the poin
 let mouse_y_before = -1          # it when it moves, so the arrow keys can move the pointer too
 let opened = 0                   # windows opened so far, to place each new one a little further on
 
+# where the taskbar is (set by layout), and the rest of the screen, the desk, where the icons
+# and the windows go
+let TASKBAR_SIDE = "bottom"
+let BAR_X = 0
+let BAR_Y = 0
+let BAR_W = 0
+let BAR_H = 0
+let DESK_X = 0
+let DESK_Y = 0
+let DESK_W = 0
+let DESK_H = 0
+
+# the background: a BMP picture (its path, and its bytes from rdb), or the theme's colours if ""
+let PICTURE = ""
+let picture_bytes = nil
+
+# the settings file, in the home folder, and what Settings last said about saving it
+let SETTINGS_FILE = ""
+let settings_message = ""
+
 # the clock: sysinfo() has the computer's clock as "DD-MM-YY--HH:MM:SS". It is slow to ask
 # (it looks at every disk), so it is read once, and time() counts on from there
 let clock_known = false
@@ -98,6 +183,38 @@ let year = 2026
 
 # what System shows, kept from the same sysinfo()
 let system_rows = []
+
+# The system monitor: what aerOS is doing, from telemetry() once a second (it is quick: it only
+# reads counters aerOS keeps anyway). It gives back [ms, idle ms, threads, memory, disk cache,
+# network], and T_MS... say which is which; the network's part is [card, running, link,
+# address, sent, received, blocked, firewall rules], N_CARD... below (docs/AERLANG.md has it all)
+let T_MS = 0
+let T_IDLE = 1
+let T_THREADS = 2
+let T_MEMORY = 3
+let T_CACHE = 4
+let T_NET = 5
+let N_CARD = 0
+let N_RUNNING = 1
+let N_LINK = 2
+let N_ADDRESS = 3
+let N_SENT = 4
+let N_RECEIVED = 5
+let N_BLOCKED = 6
+let N_RULES = 7
+let THREADS_MAX = 16             # aerOS runs at most 16 threads (src/sys/thread.h)
+let LOOK_EVERY = 1000            # milliseconds between looks
+let HISTORY = 60                 # looks kept for the graphs: the last minute
+
+let reading = nil                # what telemetry() said last time
+let looked_at = 0                # time() then
+let cpu_load = 0                 # how busy the processor was since the look before, 0 to 100 (%)
+# The graphs' readings, as rings: the newest goes in at history_next, over the oldest, and
+# history_next moves on one (back to 0 after the end). So the oldest is always at history_next
+let cpu_history = list(HISTORY, 0)
+let memory_history = list(HISTORY, 0)
+let history_next = 0
+let readings = 0                 # how many of the rings' places have a reading yet
 
 # Notes: what has been typed, kept while its window is closed too
 let NOTES_FILE = ""
@@ -114,6 +231,11 @@ func inside(x, y, rx, ry, rw, rh)
     return x >= rx and x < rx + rw and y >= ry and y < ry + rh
 end
 
+func inside_box(x, y, box)
+    # the same, for a rectangle as a list [x, y, w, h]
+    return inside(x, y, box[0], box[1], box[2], box[3])
+end
+
 func fit(s, columns)
     # s cut to fit in this many characters
     if columns <= 0 then
@@ -123,6 +245,29 @@ func fit(s, columns)
         return sub(s, 0, columns)
     end
     return s
+end
+
+func ends_with(s, ending)
+    # does s end with ending, in capitals or not? ("SNAKE.AER" ends with ".aer")
+    if len(s) < len(ending) then
+        return false
+    end
+    return lower(sub(s, len(s) - len(ending), len(ending))) == lower(ending)
+end
+
+func is_folder(name)
+    # la() gives folders with a "/" on the end
+    return len(name) > 0 and sub(name, len(name) - 1, 1) == "/"
+end
+
+func has(items, x)
+    # is x one of the items?
+    for item in items do
+        if item == x then
+            return true
+        end
+    end
+    return false
 end
 
 func whole(s)
@@ -269,6 +414,366 @@ func weekday(d, m, y)
 end
 
 
+# ---- the apps on the disk -------------------------------------------------------------------
+
+func is_app(name)
+    # is this file in an app folder an app? A program (.aer), and not the desktop itself.
+    # Anything else there (folders, /apps/packages.txt, a package's pictures) isn't. Nor is
+    # aerOS's sleep command (/bin/sleep.aer) shown with the apps: Sleep is with the power
+    # entries, and does the same without closing the desktop (see go_to_sleep)
+    let lowered = lower(name)
+    return not is_folder(name) and ends_with(name, ".aer") and lowered != "desktop.aer" and lowered != "sleep.aer"
+end
+
+func app_name(file)
+    # the name an app is shown with: "maze3d.aer" -> "Maze3d"
+    let name = sub(file, 0, len(file) - 4)
+    return upper(sub(name, 0, 1)) + lower(sub(name, 1, len(name) - 1))
+end
+
+func find_apps()
+    # APPS: the desktop's own windows, then every app installed, in the order of their names.
+    # The desktop is in /apps/ itself, so it may look in there without asking, and /bin/ is
+    # aerOS's own. An app in two folders is the one typing its name would run: the first
+    let found = []
+    let seen = []
+    for folder in APP_FOLDERS do
+        let names = la(folder)
+        if names != nil then
+            for file in names do
+                if is_app(file) and not has(seen, lower(file)) then
+                    push(seen, lower(file))
+                    push(found, ["app", app_name(file), folder + file])
+                end
+            end
+        end
+    end
+    # in order of their names: each one moves back past the ones after it in the alphabet
+    for i = 1 to len(found) - 1 do
+        let j = i
+        while j > 0 and lower(found[j - 1][1]) > lower(found[j][1]) do
+            let swap = found[j]
+            found[j] = found[j - 1]
+            found[j - 1] = swap
+            j = j - 1
+        end
+    end
+    APPS = []
+    for app in OWN_APPS do
+        push(APPS, app)
+    end
+    for app in found do
+        push(APPS, app)
+    end
+end
+
+func open_app(app)
+    # an icon or a menu entry was picked: the desktop's own window, or an app from the disk
+    if app[0] == "app" then
+        launch_app(app)
+    else
+        start_app(app[0])
+    end
+end
+
+func launch_app(app)
+    # close the desktop for an app, coming back to it afterwards (see "Opening an app" at the
+    # top). The windows open now are named in what the desktop gets back as its args
+    if notes_changed then
+        save_notes()
+    end
+    let back = "back"
+    for win in windows do
+        if own_kind(win[W_KIND]) then
+            back = back + " " + win[W_KIND]
+        end
+    end
+    if launch(app[2], back) then
+        launching = app[1]
+        running = false
+    else
+        message("Can't open " + app[1], ["aerOS won't start " + app[2] + ".",
+                "Only an app in /bin/ or /apps/ can be opened from here."])
+    end
+end
+
+func own_kind(kind)
+    # is this one of the desktop's own windows (not a viewer, a message or the picture chooser)?
+    for app in OWN_APPS do
+        if app[0] == kind then
+            return true
+        end
+    end
+    return false
+end
+
+
+# ---- turning off, restarting and sleeping ---------------------------------------------------
+
+func power_off(what)
+    # "off" or "restart": what OFF and RBT do at the prompt. aerOS asks first itself (power()
+    # shows its question over the desktop), and with a yes it never comes back. Notes is saved
+    # before it asks, so nothing typed is lost
+    if notes_changed then
+        save_notes()
+    end
+    # the desktop without the menu, under aerOS's question
+    draw_all()
+    power(what)
+end
+
+func go_to_sleep()
+    # Sleep mode, as aerOS's own sleep command (/bin/sleep.aer) has it: a dark screen, with the
+    # processor resting until it is woken. It is done here instead of by launching sleep.aer, so
+    # the windows are all still there on waking. sleep() rests the processor between looks at
+    # the keyboard and the mouse, ten times a second: a key, a click or moving the mouse wakes it
+    let words = "Sleeping. Press a key or move the mouse to wake up."
+    rect(0, 0, SW, SH, 0x000000)
+    text(SW / 2 - len(words) * CHAR_W / 2, SH / 2 - 8, words, 0x3A3A3A, 1)
+    gshow()
+    let was = mouse()
+    let awake = false
+    while not awake do
+        sleep(100)
+        while haskey() do
+            key()
+            awake = true
+        end
+        let now = mouse()
+        if now != nil and was != nil then
+            if now[0] != was[0] or now[1] != was[1] or now[2] != was[2] then
+                awake = true
+            end
+        end
+    end
+    # the click that woke it mustn't also click whatever is under the pointer
+    let after = mouse()
+    if after != nil then
+        buttons_before = after[2]
+    end
+end
+
+
+# ---- the settings ---------------------------------------------------------------------------
+
+func home_folder()
+    # the home folder of whoever is logged in: "/home/tester/" (sysinfo() says who). Without
+    # one (aerOS started without its disk), the folder the desktop was started in
+    for row in system_rows do
+        if row[1] == "User" and row[2] != "" then
+            return "/home/" + row[2] + "/"
+        end
+    end
+    return cwd()
+end
+
+func use_theme(name)
+    # use the colour theme called name; false if there is none
+    for i = 0 to len(THEMES) - 1 do
+        let t = THEMES[i]
+        if lower(t[0]) == lower(name) then
+            THEME = i
+            SKY_TOP = t[1]
+            SKY_BOTTOM = t[2]
+            TASKBAR = t[3]
+            TASKBAR_LIGHT = t[4]
+            ACCENT = t[5]
+            TITLE_ON = t[6]
+            TITLE_OFF = t[7]
+            SELECT = t[8]
+            MENU = t[9]
+            SHADOW = t[10]
+            MARK = t[11]
+            return true
+        end
+    end
+    return false
+end
+
+func use_picture(path)
+    # a BMP for the background, read now and drawn each time (image() takes its bytes).
+    # "" for the theme's colours again. False if it isn't a picture aerOS can show
+    if path == "" then
+        PICTURE = ""
+        picture_bytes = nil
+        return true
+    end
+    let bytes = rdb(path)
+    if bytes == nil or imgsz(bytes) == nil then
+        return false
+    end
+    PICTURE = path
+    picture_bytes = bytes
+    return true
+end
+
+func load_settings()
+    # read desktop.cfg (see save_settings), if there is one. A line it doesn't know is left
+    # alone, so a file from a newer desktop still works
+    let saved = rdf(SETTINGS_FILE)
+    if saved == nil then
+        return
+    end
+    for entry in split(saved, chr(10)) do
+        if len(entry) > 0 and sub(entry, len(entry) - 1, 1) == chr(13) then
+            entry = sub(entry, 0, len(entry) - 1)
+        end
+        let equals = find(entry, "=")
+        if equals > 0 and sub(entry, 0, 1) != "#" then
+            let name = sub(entry, 0, equals)
+            let value = sub(entry, equals + 1, len(entry) - equals - 1)
+            if name == "theme" then
+                use_theme(value)
+            elif name == "taskbar" and has(SIDES, value) then
+                TASKBAR_SIDE = value
+            elif name == "picture" then
+                use_picture(value)
+            end
+        end
+    end
+end
+
+func save_settings()
+    # write desktop.cfg: a line for each setting, name=value. aerOS asks first, the first time
+    let nl = chr(10)
+    let lines = "# the desktop's settings (desktop.aer): Settings on the desktop changes them" + nl
+    lines = lines + "theme=" + THEMES[THEME][0] + nl
+    lines = lines + "picture=" + PICTURE + nl
+    lines = lines + "taskbar=" + TASKBAR_SIDE + nl
+    if wrf(SETTINGS_FILE, lines) then
+        settings_message = "Saved in " + SETTINGS_FILE
+    else
+        settings_message = "Couldn't save " + SETTINGS_FILE
+    end
+end
+
+func move_taskbar(side)
+    # put the taskbar along another side, and keep every window on the desk that is left
+    TASKBAR_SIDE = side
+    layout()
+    for win in windows do
+        keep_on_desk(win)
+    end
+end
+
+
+# ---- where things go ------------------------------------------------------------------------
+
+func layout()
+    # where the taskbar is, along TASKBAR_SIDE, and the desk: the rest of the screen
+    if TASKBAR_SIDE == "top" then
+        BAR_X = 0
+        BAR_Y = 0
+        BAR_W = SW
+        BAR_H = TASKBAR_H
+    elif TASKBAR_SIDE == "left" then
+        BAR_X = 0
+        BAR_Y = 0
+        BAR_W = TASKBAR_SIDE_W
+        BAR_H = SH
+    elif TASKBAR_SIDE == "right" then
+        BAR_X = SW - TASKBAR_SIDE_W
+        BAR_Y = 0
+        BAR_W = TASKBAR_SIDE_W
+        BAR_H = SH
+    else
+        BAR_X = 0
+        BAR_Y = SH - TASKBAR_H
+        BAR_W = SW
+        BAR_H = TASKBAR_H
+    end
+    DESK_X = 0
+    DESK_Y = 0
+    DESK_W = SW
+    DESK_H = SH
+    if TASKBAR_SIDE == "top" then
+        DESK_Y = TASKBAR_H
+        DESK_H = SH - TASKBAR_H
+    elif TASKBAR_SIDE == "left" then
+        DESK_X = TASKBAR_SIDE_W
+        DESK_W = SW - TASKBAR_SIDE_W
+    elif TASKBAR_SIDE == "right" then
+        DESK_W = SW - TASKBAR_SIDE_W
+    else
+        DESK_H = SH - TASKBAR_H
+    end
+end
+
+func upright()
+    # is the taskbar down one side (left or right), rather than along the top or the bottom?
+    return TASKBAR_SIDE == "left" or TASKBAR_SIDE == "right"
+end
+
+func start_button()
+    # the start button: at the left end of the taskbar, or at the top of it
+    if upright() then
+        return [BAR_X + 6, BAR_Y + 6, BAR_W - 12, 26]
+    end
+    return [BAR_X + 6, BAR_Y + 5, 84, BAR_H - 10]
+end
+
+func power_button()
+    # the power button: at the right end of the taskbar, or at the bottom of it
+    if upright() then
+        return [BAR_X + 6, BAR_Y + BAR_H - 32, BAR_W - 12, 26]
+    end
+    return [BAR_X + BAR_W - 36, BAR_Y + 5, 30, BAR_H - 10]
+end
+
+func clock_spot()
+    # where the time is written on the taskbar: next to the power button
+    if upright() then
+        return [BAR_X + BAR_W / 2 - 20, BAR_Y + BAR_H - 58]
+    end
+    return [BAR_X + BAR_W - 96, BAR_Y + 9]
+end
+
+func tray_box()
+    # the system monitor's indicators, as [x, y, w, h]: just before the clock along the taskbar,
+    # or above it down one side
+    if upright() then
+        return [BAR_X + 6, clock_spot()[1] - 8 - TRAY_UPRIGHT_H, BAR_W - 12, TRAY_UPRIGHT_H]
+    end
+    return [clock_spot()[0] - 10 - TRAY_W, BAR_Y + 5, TRAY_W, BAR_H - 10]
+end
+
+func window_button(i)
+    # window i's button on the taskbar, as [x, y, w, h]: 150 pixels apart along the taskbar, or
+    # 30 down it, or closer with many windows, so they all fit between the start button and
+    # the system monitor's indicators
+    let count = len(windows)
+    let room = tray_box()[0] - 10 - 100
+    let gap = 150
+    if upright() then
+        room = tray_box()[1] - 6 - (BAR_Y + 40)
+        gap = 30
+    end
+    if count > 0 and room / count < gap then
+        gap = room / count
+    end
+    if upright() then
+        return [BAR_X + 6, BAR_Y + 40 + i * gap, BAR_W - 12, gap - 4]
+    end
+    return [BAR_X + 100 + i * gap, BAR_Y + 5, gap - 6, BAR_H - 10]
+end
+
+func keep_on_desk(win)
+    # move a window so its title bar is on the desk, where it can be taken hold of
+    if win[W_Y] < DESK_Y then
+        win[W_Y] = DESK_Y
+    end
+    if win[W_Y] > DESK_Y + DESK_H - TITLE_H then
+        win[W_Y] = DESK_Y + DESK_H - TITLE_H
+    end
+    if win[W_X] < DESK_X + 60 - win[W_W] then
+        win[W_X] = DESK_X + 60 - win[W_W]
+    end
+    if win[W_X] > DESK_X + DESK_W - 60 then
+        win[W_X] = DESK_X + DESK_W - 60
+    end
+end
+
+
 # ---- the windows ----------------------------------------------------------------------------
 
 func front()
@@ -326,30 +831,37 @@ func find_window(kind)
 end
 
 func open(kind, title, w, h, data)
-    # open a new window, a little further on from the last one, in front
-    let x = 150 + (opened % 8) * 34
-    let y = 30 + (opened % 8) * 28
+    # open a new window on the desk, right of the icons, a little further on from the last
+    # one, in front
+    let icon_columns = (len(APPS) + icon_rows() - 1) / icon_rows()
+    let x = DESK_X + 30 + icon_columns * 92 + (opened % 8) * 34
+    let y = DESK_Y + 30 + (opened % 8) * 28
     opened = opened + 1
-    # keep it on the screen
-    if x + w > SW then
-        x = SW - w - 10
+    # keep it on the desk
+    if x + w > DESK_X + DESK_W then
+        x = DESK_X + DESK_W - w - 10
     end
-    if y + h > SH - TASKBAR_H then
-        y = SH - TASKBAR_H - h - 10
+    if y + h > DESK_Y + DESK_H then
+        y = DESK_Y + DESK_H - h - 10
     end
-    if x < 0 then
-        x = 0
+    if x < DESK_X then
+        x = DESK_X
     end
-    if y < 0 then
-        y = 0
+    if y < DESK_Y then
+        y = DESK_Y
     end
     let win = [kind, title, x, y, w, h, false, 0, data]
     push(windows, win)
     return win
 end
 
+func message(title, lines)
+    # a small window saying something, such as why an app couldn't be opened
+    open("message", title, 480, 110, lines)
+end
+
 func start_app(kind)
-    # open an app's window, or bring it to the front if it is open already
+    # open one of the desktop's own windows, or bring it to the front if it is open already
     let have = find_window(kind)
     if have != nil then
         to_front(have)
@@ -359,7 +871,7 @@ func start_app(kind)
         open("clock", "Clock", 460, 330, [])
     elif kind == "files" then
         # [the folder, what is in it, the row chosen with the keyboard]
-        open("files", "Files", 420, 400, [cwd(), list_folder(cwd()), 0])
+        open("files", "Files", 420, 400, [cwd(), list_folder(cwd(), false), 0])
     elif kind == "notes" then
         load_notes()
         open("notes", "Notes - " + NOTES_FILE, 460, 340, [])
@@ -370,17 +882,22 @@ func start_app(kind)
         # read it again, so it is as things are now (and the clock with it)
         read_clock()
         open("system", "System", 520, 400, [])
+    elif kind == "settings" then
+        # [the row chosen with the keyboard]
+        settings_message = ""
+        open("settings", "Settings", 490, 290, [0])
     elif kind == "about" then
         open("about", "About", 380, 230, [])
     end
 end
 
 
-# ---- Files and the viewer -------------------------------------------------------------------
+# ---- Files, the viewer and the picture chooser ----------------------------------------------
 
-func list_folder(folder)
+func list_folder(folder, pictures)
     # what is in a folder, folders first (they end in "/"), with "../" to go up unless it is "/".
-    # nil if it can't be read (aerOS asks first, for a folder that isn't its own: a no is nil)
+    # pictures: only the BMP pictures, for choosing a background. nil if it can't be read
+    # (aerOS asks first, for a folder that isn't its own: a no is nil)
     let names = la(folder)
     if names == nil then
         return nil
@@ -391,9 +908,9 @@ func list_folder(folder)
         push(folders, "../")
     end
     for name in names do
-        if sub(name, len(name) - 1, 1) == "/" then
+        if is_folder(name) then
             push(folders, name)
-        else
+        elif not pictures or ends_with(name, ".bmp") then
             push(files, name)
         end
     end
@@ -412,24 +929,44 @@ func parent(folder)
 end
 
 func open_entry(win, name)
-    # a row of Files was clicked: go into a folder, or open a file in a viewer
+    # a row of Files (or the picture chooser) was clicked: go into a folder, or open the file:
+    # in a viewer, or as the background
     let folder = win[W_DATA][0]
+    let pictures = win[W_KIND] == "pick"
     if name == "../" then
         let up = parent(folder)
-        let names = list_folder(up)
+        let names = list_folder(up, pictures)
         if names != nil then
             win[W_DATA] = [up, names, 0]
             win[W_SCROLL] = 0
         end
-    elif sub(name, len(name) - 1, 1) == "/" then
-        let names = list_folder(folder + name)
+    elif is_folder(name) then
+        let names = list_folder(folder + name, pictures)
         if names != nil then
             win[W_DATA] = [folder + name, names, 0]
             win[W_SCROLL] = 0
         end
+    elif pictures then
+        if use_picture(folder + name) then
+            save_settings()
+            close(win)
+        else
+            message("Not a picture", [name + " isn't a BMP picture aerOS can show."])
+        end
     else
         open_viewer(folder + name)
     end
+end
+
+func choose_picture()
+    # the picture chooser: Files, showing only folders and BMP pictures, from the home folder
+    let have = find_window("pick")
+    if have != nil then
+        to_front(have)
+        return
+    end
+    let folder = home_folder()
+    open("pick", "Choose a background picture", 420, 400, [folder, list_folder(folder, true), 0])
 end
 
 func open_viewer(path)
@@ -576,21 +1113,170 @@ func calc_key(win, k)
 end
 
 
+# ---- Settings -------------------------------------------------------------------------------
+
+# Settings has three rows of buttons: the colours (a button for each theme), the background
+# (the theme's colours, or a picture) and where the taskbar goes. Clicking a button changes it
+# and saves it straight away. From the keyboard: Up and Down choose a row, Left and Right
+# change it, and Enter opens the picture chooser
+
+func settings_buttons(x, y)
+    # every button in Settings, as [row, which, label, x, y, w, h], for the window's inside
+    # at x, y
+    let buttons = []
+    for i = 0 to len(THEMES) - 1 do
+        push(buttons, [0, i, THEMES[i][0], x + 120 + i * 88, y + 16, 82, 24])
+    end
+    push(buttons, [1, 0, "Colours", x + 120, y + 66, 82, 24])
+    push(buttons, [1, 1, "Picture...", x + 208, y + 66, 104, 24])
+    for i = 0 to len(SIDES) - 1 do
+        push(buttons, [2, i, SIDE_NAMES[i], x + 120 + i * 76, y + 136, 70, 24])
+    end
+    return buttons
+end
+
+func setting_is(row, which)
+    # is this button the setting as it is now? (it is drawn pressed in)
+    if row == 0 then
+        return which == THEME
+    elif row == 1 then
+        return (which == 1) == (PICTURE != "")
+    end
+    return SIDES[which] == TASKBAR_SIDE
+end
+
+func change_setting(row, which)
+    # a button in Settings was pressed: change that setting, and save them all
+    if row == 0 then
+        use_theme(THEMES[which][0])
+    elif row == 1 and which == 0 then
+        use_picture("")
+    elif row == 1 then
+        # the picture is saved once one has been chosen
+        choose_picture()
+        return
+    else
+        move_taskbar(SIDES[which])
+    end
+    save_settings()
+end
+
+func settings_key(win, k)
+    # Up and Down choose a row, Left and Right change it, Enter opens the picture chooser.
+    # True if the key was one of those
+    let row = win[W_DATA][0]
+    if k == KEY_UP then
+        win[W_DATA][0] = (row + 2) % 3
+    elif k == KEY_DOWN then
+        win[W_DATA][0] = (row + 1) % 3
+    elif k == KEY_LEFT or k == KEY_RIGHT then
+        let by = 1
+        if k == KEY_LEFT then
+            by = -1
+        end
+        if row == 0 then
+            change_setting(0, (THEME + by + len(THEMES)) % len(THEMES))
+        elif row == 1 then
+            change_setting(1, (by + 1) / 2)
+        else
+            let side = 0
+            for i = 0 to len(SIDES) - 1 do
+                if SIDES[i] == TASKBAR_SIDE then
+                    side = i
+                end
+            end
+            change_setting(2, (side + by + len(SIDES)) % len(SIDES))
+        end
+    elif k == KEY_ENTER and row == 1 then
+        choose_picture()
+    else
+        return false
+    end
+    return true
+end
+
+func draw_settings(win, x, y, w, h)
+    # the three rows of buttons, what the background is, and whether it was saved
+    let labels = ["Colours", "Background", "Taskbar"]
+    let row_y = [y + 20, y + 70, y + 140]
+    for r = 0 to 2 do
+        let colour = INK
+        if r == win[W_DATA][0] and win == front() then
+            colour = TITLE_ON
+            text(x + 6, row_y[r], ">", colour, 1)
+        end
+        text(x + 18, row_y[r], labels[r], colour, 1)
+    end
+    for b in settings_buttons(x, y) do
+        let face = BUTTON_FACE
+        let ink = INK
+        if setting_is(b[0], b[1]) then
+            face = TITLE_ON
+            ink = WHITE_INK
+        elif inside(pointer_x, pointer_y, b[3], b[4], b[5], b[6]) then
+            face = 0xFFFFFF
+        end
+        rect(b[3], b[4], b[5], b[6], face)
+        # each theme's button has a strip of its own wallpaper colour along the bottom
+        if b[0] == 0 then
+            rect(b[3], b[4] + b[6] - 4, b[5], 4, THEMES[b[1]][2])
+        end
+        text(b[3] + b[5] / 2 - len(b[2]) * CHAR_W / 2, b[4] + 4, b[2], ink, 1)
+    end
+    let showing = "The theme's colours"
+    if PICTURE != "" then
+        showing = PICTURE
+    end
+    text(x + 120, y + 98, fit(showing, (w - 130) / CHAR_W), FAINT, 1)
+    text(x + 18, y + 184, fit(settings_message, (w - 28) / CHAR_W), INK, 1)
+    text(x + 18, y + 214, "Up and Down choose a row, Left and Right change it.", FAINT, 1)
+    text(x + 18, y + 232, "They are kept in " + fit(SETTINGS_FILE, (w - 180) / CHAR_W), FAINT, 1)
+end
+
+func click_settings(win, px, py)
+    # a click inside Settings: on one of its buttons?
+    let buttons = settings_buttons(win[W_X], win[W_Y] + TITLE_H)
+    for b in buttons do
+        if inside(px, py, b[3], b[4], b[5], b[6]) then
+            win[W_DATA][0] = b[0]
+            change_setting(b[0], b[1])
+            return
+        end
+    end
+end
+
+
 # ---- drawing --------------------------------------------------------------------------------
 
 func draw_wallpaper()
-    # the sky, darker at the top, in bands
+    # the theme's sky over the desk, darker at the top, in bands, and the picture over it if
+    # there is one: as big as fits on the desk, keeping its shape, in the middle
     let bands = 24
-    let band = (SH - TASKBAR_H) / bands + 1
+    let band = DESK_H / bands + 1
     for i = 0 to bands - 1 do
-        rect(0, i * band, SW, band, blend(SKY_TOP, SKY_BOTTOM, i, bands - 1))
+        rect(DESK_X, DESK_Y + i * band, DESK_W, band, blend(SKY_TOP, SKY_BOTTOM, i, bands - 1))
     end
-    # the name, quietly, in the corner
-    text(SW - 150, SH - TASKBAR_H - 40, "aerOS", 0x5D8FBF, 3)
+    if picture_bytes == nil then
+        # the name, quietly, in the corner
+        text(DESK_X + DESK_W - 150, DESK_Y + DESK_H - 40, "aerOS", MARK, 3)
+        return
+    end
+    # the size image() will draw it at (it fits it in the box the same way), to put it in the
+    # middle: the narrower shape fills the height, the wider the width
+    let size = imgsz(picture_bytes)
+    let w = DESK_W
+    let h = DESK_H
+    if size[0] * DESK_H <= size[1] * DESK_W then
+        w = size[0] * DESK_H / size[1]
+    else
+        h = size[1] * DESK_W / size[0]
+    end
+    image(picture_bytes, DESK_X + (DESK_W - w) / 2, DESK_Y + (DESK_H - h) / 2, w, h)
 end
 
-func draw_icon(kind, x, y)
+func draw_icon(app, x, y)
     # a small picture for each app, 48 x 40, drawn with rectangles and lines
+    let kind = app[0]
     if kind == "clock" then
         rect(x + 8, y, 32, 32, 0xEDEDED)
         rect(x + 10, y + 2, 28, 28, 0xFFFFFF)
@@ -617,23 +1303,55 @@ func draw_icon(kind, x, y)
         rect(x + 7, y + 5, 34, 20, 0x4DA3FF)
         rect(x + 18, y + 28, 12, 4, 0x2A2F38)
         rect(x + 12, y + 32, 24, 3, 0x2A2F38)
+    elif kind == "settings" then
+        # three sliders
+        rect(x + 8, y + 2, 32, 32, 0x3A3F48)
+        for i = 0 to 2 do
+            rect(x + 12, y + 8 + i * 9, 24, 2, 0xBFC5CC)
+            rect(x + 14 + ((i * 9 + 5) % 18), y + 5 + i * 9, 6, 8, ACCENT)
+        end
     elif kind == "about" then
         rect(x + 8, y, 32, 32, ACCENT)
         text(x + 20, y + 8, "i", WHITE_INK, 1)
+    elif kind == "app" then
+        # an app from the disk: a little window with its first letter, its title bar orange for
+        # a package (/apps/) and grey for one that comes with aerOS (/bin/)
+        rect(x + 6, y + 2, 36, 30, 0x2A2F38)
+        rect(x + 6, y + 2, 36, 8, app_colour(app))
+        text(x + 20, y + 13, upper(sub(app[1], 0, 1)), WHITE_INK, 1)
     end
 end
 
+func app_colour(app)
+    # the colour an app from the disk is marked with: a package's, or one of aerOS's own
+    if sub(app[2], 0, 6) == "/apps/" then
+        return ACCENT
+    end
+    return 0x8A96A3
+end
+
+func icon_rows()
+    # how many icons fit down the desk, before they start another column
+    let rows = (DESK_H - 24) / 78
+    if rows < 1 then
+        rows = 1
+    end
+    return rows
+end
+
 func icon_at(i)
-    # where icon i is: [x, y] of its top left
-    return [26, 24 + i * 78]
+    # where icon i is: [x, y] of its top left. They go down the left of the desk, and on into
+    # more columns when there are more than fit
+    let rows = icon_rows()
+    return [DESK_X + 26 + (i / rows) * 92, DESK_Y + 24 + (i % rows) * 78]
 end
 
 func draw_icons()
-    # the apps down the left of the desktop, each with its name under it
+    # the apps down the left of the desk, each with its name under it
     for i = 0 to len(APPS) - 1 do
         let spot = icon_at(i)
-        draw_icon(APPS[i][0], spot[0], spot[1])
-        let name = APPS[i][1]
+        draw_icon(APPS[i], spot[0], spot[1])
+        let name = fit(APPS[i][1], 11)
         text(spot[0] + 24 - len(name) * 4, spot[1] + 42, name, WHITE_INK, 1)
     end
 end
@@ -666,9 +1384,9 @@ func draw_content(win, x, y, w, h)
     let kind = win[W_KIND]
     if kind == "clock" then
         draw_clock(x, y, w, h)
-    elif kind == "files" then
+    elif kind == "files" or kind == "pick" then
         draw_files(win, x, y, w, h)
-    elif kind == "view" then
+    elif kind == "view" or kind == "message" then
         draw_lines(win[W_DATA], win[W_SCROLL], x, y, w, h)
     elif kind == "notes" then
         draw_notes(x, y, w, h)
@@ -676,6 +1394,8 @@ func draw_content(win, x, y, w, h)
         draw_calc(win, x, y, w, h)
     elif kind == "system" then
         draw_system(win, x, y, w, h)
+    elif kind == "settings" then
+        draw_settings(win, x, y, w, h)
     elif kind == "about" then
         draw_about(x, y)
     end
@@ -735,7 +1455,7 @@ func draw_files(win, x, y, w, h)
                 rect(x + 4, row_y - 1, w - 18, ROW, SELECT)
             end
             # a folder gets a little yellow tab, a file a white page
-            if sub(name, len(name) - 1, 1) == "/" then
+            if is_folder(name) then
                 rect(x + 10, row_y + 2, 14, 11, 0xF2C25C)
             else
                 rect(x + 12, row_y + 1, 10, 13, 0xFFFFFF)
@@ -843,7 +1563,7 @@ func draw_calc(win, x, y, w, h)
             if len(keys) == 1 then
                 kw = w - 20     # C is the whole row
             end
-            let colour = 0xDCDCD6
+            let colour = BUTTON_FACE
             if find("/*-+=", keys[c]) >= 0 then
                 colour = 0xF3C27A
             end
@@ -900,78 +1620,573 @@ func draw_about(x, y)
     text(x + 20, y + 76, "It is a package: pkg install desktop", INK, 1)
     text(x + 20, y + 106, "Drag a window by its title bar.", FAINT, 1)
     text(x + 20, y + 124, "Tab opens the menu, Esc closes the front window.", FAINT, 1)
-    text(x + 20, y + 142, "Read it: /apps/desktop.aer", FAINT, 1)
+    text(x + 20, y + 142, "Home shows the system monitor.", FAINT, 1)
+    text(x + 20, y + 160, "Read it: /apps/desktop.aer", FAINT, 1)
 end
 
-func button_width()
-    # how wide each window's taskbar button is: 150 pixels apart, or closer with many windows,
-    # so they all fit between the start button and the clock
-    let room = SW - 100 - 80
-    if len(windows) > 0 and room / len(windows) < 150 then
-        return room / len(windows)
+func draw_power_sign(cx, cy, colour)
+    # the power sign, around cx, cy: a ring open at the top, with a line down into it
+    let r = 7
+    for i = 1 to 10 do
+        let a = i * PI / 6
+        let b = (i + 1) * PI / 6
+        line(cx + floor(sin(a) * r), cy - floor(cos(a) * r), cx + floor(sin(b) * r), cy - floor(cos(b) * r), colour)
     end
-    return 150
+    line(cx, cy - 9, cx, cy - 1, colour)
 end
 
 func draw_taskbar()
-    # the start button, a button for each window, and the clock
-    rect(0, SH - TASKBAR_H, SW, TASKBAR_H, TASKBAR)
-    rect(0, SH - TASKBAR_H, SW, 1, TASKBAR_LIGHT)
-    let start_colour = ACCENT
-    if menu_open then
-        start_colour = 0xFFA040
+    # the start button, a button for each window, the clock and the power button
+    rect(BAR_X, BAR_Y, BAR_W, BAR_H, TASKBAR)
+    # a light edge on the side next to the desk
+    if TASKBAR_SIDE == "top" then
+        rect(BAR_X, BAR_Y + BAR_H - 1, BAR_W, 1, TASKBAR_LIGHT)
+    elif TASKBAR_SIDE == "left" then
+        rect(BAR_X + BAR_W - 1, BAR_Y, 1, BAR_H, TASKBAR_LIGHT)
+    elif TASKBAR_SIDE == "right" then
+        rect(BAR_X, BAR_Y, 1, BAR_H, TASKBAR_LIGHT)
+    else
+        rect(BAR_X, BAR_Y, BAR_W, 1, TASKBAR_LIGHT)
     end
-    rect(6, SH - TASKBAR_H + 5, 84, TASKBAR_H - 10, start_colour)
-    text(20, SH - TASKBAR_H + 9, "aerOS", WHITE_INK, 1)
+    let start = start_button()
+    let start_colour = ACCENT
+    if menu_open == "start" then
+        start_colour = blend(ACCENT, 0xFFFFFF, 1, 4)
+    end
+    rect(start[0], start[1], start[2], start[3], start_colour)
+    text(start[0] + start[2] / 2 - 20, start[1] + start[3] / 2 - 8, "aerOS", WHITE_INK, 1)
+
     let top = front()
     for i = 0 to len(windows) - 1 do
         let win = windows[i]
-        let bx = 100 + i * button_width()
+        let b = window_button(i)
         let colour = TASKBAR_LIGHT
         if win == top then
             colour = TITLE_ON
         end
-        rect(bx, SH - TASKBAR_H + 5, button_width() - 6, TASKBAR_H - 10, colour)
-        text(bx + 8, SH - TASKBAR_H + 9, fit(win[W_TITLE], (button_width() - 22) / CHAR_W), WHITE_INK, 1)
+        rect(b[0], b[1], b[2], b[3], colour)
+        text(b[0] + 8, b[1] + b[3] / 2 - 8, fit(win[W_TITLE], (b[2] - 16) / CHAR_W), WHITE_INK, 1)
     end
-    text(SW - 60, SH - TASKBAR_H + 9, time_text(false), WHITE_INK, 1)
+
+    draw_tray()
+    let spot = clock_spot()
+    text(spot[0], spot[1], time_text(false), WHITE_INK, 1)
+    let off = power_button()
+    let off_colour = TASKBAR_LIGHT
+    if menu_open == "power" or inside_box(pointer_x, pointer_y, off) then
+        off_colour = TITLE_ON
+    end
+    rect(off[0], off[1], off[2], off[3], off_colour)
+    draw_power_sign(off[0] + off[2] / 2, off[1] + off[3] / 2 + 1, WHITE_INK)
 end
 
-func menu_entries()
-    # what the start menu has: the apps, then leaving
+
+# ---- the system monitor ---------------------------------------------------------------------
+
+# Little graphics on the taskbar, next to the clock, show what aerOS is doing, from left to
+# right (or in two rows, down a taskbar on the left or the right):
+#     the network     signal bars, lit while the link is up. A dot in the corner says whether
+#                     the card is running (green) or resting: app mode puts it away while a
+#                     program that doesn't use the network runs, as the desktop doesn't
+#     the processor   how busy it has been, a bar a second, the newest on the right
+#     the threads     a square for each of the 16 aerOS can run, lit for the ones running
+#     memory          two gauges: the memory in use, and how full the disk cache is
+# Clicking them (or Home) opens a panel with more: bigger graphs and the numbers behind them.
+# It is drawn again each time the desktop is, so it stays up to date while it is open, and a
+# click outside it, Esc or Home closes it. menu_open is "monitor" while it is open.
+
+func take_telemetry()
+    # ask telemetry() how things are, and add a reading to each graph. How busy the processor
+    # was is the share of the time since the last look that it wasn't idle
+    let now = telemetry()
+    if reading != nil then
+        let spent = now[T_MS] - reading[T_MS]
+        if spent > 0 then
+            let busy = spent - (now[T_IDLE] - reading[T_IDLE])
+            cpu_load = keep_between(busy * 100 / spent, 0, 100)
+        end
+        cpu_history[history_next] = cpu_load
+        memory_history[history_next] = share(now[T_MEMORY][0], now[T_MEMORY][1])
+        history_next = (history_next + 1) % HISTORY
+        readings = keep_between(readings + 1, 0, HISTORY)
+    end
+    reading = now
+end
+
+func keep_between(n, low, high)
+    # n, or low or high if it is past them
+    if n < low then
+        return low
+    end
+    if n > high then
+        return high
+    end
+    return n
+end
+
+func share(part, total)
+    # part as a percentage of total, 0 to 100 (0 when there is no total)
+    if total <= 0 then
+        return 0
+    end
+    return keep_between(part * 100 / total, 0, 100)
+end
+
+func level_colour(percent)
+    # green while there is plenty left, yellow as it fills, red when it is nearly full
+    if percent < 60 then
+        return GOOD
+    elif percent < 85 then
+        return BUSY
+    end
+    return BAD
+end
+
+func thread_colour(state)
+    # a thread's square or dot: the one running now (the desktop itself) in the theme's colour,
+    # one waiting for its turn yellow, and one asleep (the disk writer, mostly) pale
+    if state == "running" then
+        return ACCENT
+    elif state == "ready" or state == "waiting" then
+        return BUSY
+    elif state == "sleeping" then
+        return SELECT
+    end
+    return FAINT
+end
+
+func size_text(kb)
+    # a size in KB as "640 KB", or "12.5 MB" from a megabyte up
+    if kb < 1024 then
+        return str(kb) + " KB"
+    end
+    let tenths = kb * 10 / 1024
+    return str(tenths / 10) + "." + str(tenths % 10) + " MB"
+end
+
+func duration(ms)
+    # how long, as "3h 05m" or "4m 12s"
+    let seconds = ms / 1000
+    if seconds >= 3600 then
+        return str(seconds / 3600) + "h " + two(seconds / 60 % 60) + "m"
+    end
+    return str(seconds / 60) + "m " + two(seconds % 60) + "s"
+end
+
+func tray_parts()
+    # where each indicator goes in tray_box(): [signal, processor graph, threads, gauges], each
+    # [x, y, w, h]. In a row along the taskbar, or two rows down one side (the graph below)
+    let box = tray_box()
+    let x = box[0]
+    let y = box[1]
+    if upright() then
+        return [[x + 8, y + 4, 16, 18], [x + 8, y + 26, box[2] - 16, 16],
+                [x + box[2] / 2 - 8, y + 5, 15, 15], [x + box[2] - 26, y + 4, 18, 18]]
+    end
+    return [[x + 6, y + 3, 16, 18], [x + 28, y + 3, 44, 18], [x + 78, y + 5, 15, 15], [x + 100, y + 3, 18, 18]]
+end
+
+func draw_signal(x, y, w, h, net)
+    # the network as 4 signal bars, each taller than the last, in w x h. Lit while the link is
+    # up; with none, dim with a red dot, and with no card at all, crossed out in red. A dot in
+    # the top left (where the bars are short) is green while the card is running
+    let bar_w = (w + 1) / 4
+    let dim = blend(TASKBAR_LIGHT, 0xFFFFFF, 1, 5)
+    let colour = dim
+    if net[N_CARD] and net[N_LINK] then
+        colour = LINK_UP
+    end
+    for i = 0 to 3 do
+        let tall = (i + 1) * h / 4
+        rect(x + i * bar_w, y + h - tall, bar_w - 1, tall, colour)
+    end
+    if not net[N_CARD] then
+        line(x, y + 2, x + w - 1, y + h - 1, BAD)
+        line(x + 1, y + 2, x + w, y + h - 1, BAD)
+        line(x + w - 1, y + 2, x, y + h - 1, BAD)
+        line(x + w, y + 2, x + 1, y + h - 1, BAD)
+    elif not net[N_LINK] then
+        draw_disc(x + 3, y + 3, 3, BAD)
+    elif net[N_RUNNING] then
+        draw_disc(x + 3, y + 3, 2, GOOD)
+    end
+end
+
+func draw_graph(history, x, y, w, h, bar_w, colour)
+    # a bar graph of a history ring (readings of 0 to 100) on a dark little screen: as many of
+    # the newest readings as fit, bar_w pixels each, the newest on the right. Each bar is a
+    # dimmer colour with a bright top, so the bars together look like a glowing line. Only the
+    # readings taken so far are drawn, so a new graph fills in from the right
+    rect(x, y, w, h, SCREEN_BACK)
+    # lines across at a quarter, a half and three quarters (only a half on a small graph), in
+    # a faint shade of the graph's colour, like the lines on an oscilloscope's screen
+    let grid = blend(SCREEN_BACK, colour, 1, 7)
+    if h >= 40 then
+        for q = 1 to 3 do
+            rect(x, y + h * q / 4, w, 1, grid)
+        end
+    else
+        rect(x, y + h / 2, w, 1, grid)
+    end
+    let shown = keep_between(w / bar_w, 0, readings)
+    let first_x = x + w - shown * bar_w
+    let body = blend(colour, SCREEN_BACK, 2, 5)
+    let gap = 1
+    if bar_w <= 2 then
+        gap = 0
+    end
+    for c = 0 to shown - 1 do
+        # (the ring's oldest reading is at history_next, so the newest `shown` start that many before it)
+        let value = history[(history_next - shown + c + HISTORY) % HISTORY]
+        # at least the bright top, so a quiet minute is still a line along the bottom
+        let tall = keep_between(value * (h - 2) / 100, 1, h - 2)
+        let bx = first_x + c * bar_w
+        rect(bx, y + h - 1 - tall, bar_w - gap, tall, body)
+        rect(bx, y + h - 1 - tall, bar_w - gap, 1, colour)
+    end
+end
+
+func draw_thread_squares(x, y, threads)
+    # a 4 x 4 grid of squares, one for each thread aerOS can run: lit (thread_colour) for the
+    # ones running, faint for the rest
+    let unused = blend(TASKBAR_LIGHT, 0xFFFFFF, 1, 6)
+    for i = 0 to THREADS_MAX - 1 do
+        let colour = unused
+        if i < len(threads) then
+            colour = thread_colour(threads[i][1])
+        end
+        rect(x + (i % 4) * 4, y + (i / 4) * 4, 3, 3, colour)
+    end
+end
+
+func filled(percent, room)
+    # how many of `room` pixels a gauge fills for percent: at least 2 for anything above 0, so
+    # a little is still seen
+    if percent <= 0 then
+        return 0
+    end
+    return keep_between(percent * room / 100, 2, room)
+end
+
+func draw_gauge(x, y, w, h, percent, colour)
+    # an upright gauge, filled from the bottom, its empty part a dark shade of its colour
+    rect(x, y, w, h, SCREEN_BACK)
+    rect(x + 1, y + 1, w - 2, h - 2, blend(SCREEN_BACK, colour, 1, 6))
+    let full = filled(percent, h - 2)
+    rect(x + 1, y + h - 1 - full, w - 2, full, colour)
+end
+
+func draw_meter(x, y, w, h, percent, colour)
+    # a gauge lying down, filled from the left
+    rect(x, y, w, h, SCREEN_BACK)
+    rect(x + 1, y + 1, w - 2, h - 2, blend(SCREEN_BACK, colour, 1, 6))
+    rect(x + 1, y + 1, filled(percent, w - 2), h - 2, colour)
+end
+
+func cache_colour()
+    # the disk cache's gauge: a lighter shade of the theme's title bars
+    return blend(TITLE_ON, 0xFFFFFF, 2, 5)
+end
+
+func draw_tray()
+    # the indicators on the taskbar (see the top of this section), lit up while the pointer is
+    # on them or their panel is open
+    let box = tray_box()
+    if menu_open == "monitor" or inside_box(pointer_x, pointer_y, box) then
+        rect(box[0], box[1], box[2], box[3], TASKBAR_LIGHT)
+    end
+    if reading == nil then
+        return
+    end
+    let parts = tray_parts()
+    let s = parts[0]
+    draw_signal(s[0], s[1], s[2], s[3], reading[T_NET])
+    let g = parts[1]
+    draw_graph(cpu_history, g[0], g[1], g[2], g[3], 2, ACCENT)
+    draw_thread_squares(parts[2][0], parts[2][1], reading[T_THREADS])
+    let m = parts[3]
+    let memory = reading[T_MEMORY]
+    let used = share(memory[0], memory[1])
+    draw_gauge(m[0], m[1], 7, m[3], used, level_colour(used))
+    let cache = reading[T_CACHE]
+    draw_gauge(m[0] + 11, m[1], 7, m[3], share(cache[0], cache[1]), cache_colour())
+end
+
+func monitor_box()
+    # where the panel goes, as [x, y, w, h]: by the indicators, on the desk side of the taskbar
+    let tray = tray_box()
+    let w = MONITOR_W
+    let h = MONITOR_H
+    let x = tray[0] + tray[2] - w
+    let y = BAR_Y - h - 2
+    if TASKBAR_SIDE == "top" then
+        y = BAR_Y + BAR_H + 2
+    elif upright() then
+        # beside the taskbar, its bottom level with the indicators'
+        y = tray[1] + tray[3] - h
+        if TASKBAR_SIDE == "left" then
+            x = BAR_X + BAR_W + 2
+        else
+            x = BAR_X - w - 2
+        end
+    end
+    return [keep_between(x, 2, SW - 2 - w), keep_between(y, 2, SH - 2 - h), w, h]
+end
+
+func monitor_heading(x, y, w, title, value, value_colour)
+    # a heading in the panel: the title on the left, a figure on the right
+    text(x, y, title, WHITE_INK, 1)
+    text(x + w - len(value) * CHAR_W, y, value, value_colour, 1)
+end
+
+func draw_monitor()
+    # the panel: like frosted glass, the desk showing faintly through it, with a line of the
+    # theme's colour along the top. Then a part for each of the processor, memory, the disk
+    # cache, the threads and the network
+    let box = monitor_box()
+    let x = box[0]
+    let y = box[1]
+    let w = box[2]
+    let h = box[3]
+    rect(x - 1, y - 1, w + 2, h + 2, MONITOR_EDGE)
+    gtint(x, y, w, h, MENU, 0.88)
+    rect(x, y, w, 3, ACCENT)
+    let left = x + 18
+    let wide = w - 36
+
+    text(left, y + 14, "System monitor", ACCENT, 1)
+    let up = "up " + duration(reading[T_MS])
+    text(x + w - 18 - len(up) * CHAR_W, y + 14, up, SOFT_INK, 1)
+
+    # the processor: the last minute, a bar a second
+    let row = y + 44
+    monitor_heading(left, row, wide, "Processor", str(cpu_load) + "% busy", ACCENT)
+    draw_graph(cpu_history, left, row + 22, wide, 64, wide / HISTORY, ACCENT)
+    text(left, row + 90, "a minute ago", SOFT_INK, 1)
+    text(left + wide - 3 * CHAR_W, row + 90, "now", SOFT_INK, 1)
+
+    # memory: the kernel's heap, where programs get theirs from, and its last minute as a line
+    # of little bars under the meter
+    row = row + 118
+    let memory = reading[T_MEMORY]
+    let used = share(memory[0], memory[1])
+    monitor_heading(left, row, wide, "Memory", size_text(memory[0]) + " of " + size_text(memory[1]), SOFT_INK)
+    draw_meter(left, row + 22, wide, 10, used, level_colour(used))
+    draw_graph(memory_history, left, row + 34, wide, 12, wide / HISTORY, level_colour(used))
+
+    # the disk cache: how full it is, and how often a read was found in it
+    row = row + 60
+    let cache = reading[T_CACHE]
+    if cache[1] == 0 then
+        monitor_heading(left, row, wide, "Disk cache", "none", SOFT_INK)
+        text(left, row + 22, "No aerOS disk: files are in memory.", SOFT_INK, 1)
+    else
+        monitor_heading(left, row, wide, "Disk cache", size_text(cache[0]) + " of " + size_text(cache[1]), SOFT_INK)
+        draw_meter(left, row + 22, wide, 10, share(cache[0], cache[1]), cache_colour())
+        let found = "found in memory " + str(share(cache[2], cache[2] + cache[3])) + "%"
+        text(left, row + 38, found + ", " + size_text(cache[4]) + " to write", SOFT_INK, 1)
+    end
+
+    # the threads, a row each (room for 3): a dot in the colour of what it is doing, its name,
+    # and what it is doing
+    row = row + 62
+    let threads = reading[T_THREADS]
+    let how_many = str(len(threads)) + " of " + str(THREADS_MAX)
+    if len(threads) > 3 then
+        how_many = "first 3 of " + how_many
+    end
+    monitor_heading(left, row, wide, "Threads", how_many, SOFT_INK)
+    for i = 0 to keep_between(len(threads), 0, 3) - 1 do
+        let ty = row + 22 + i * 18
+        let doing = threads[i][1]
+        draw_disc(left + 4, ty + 8, 4, thread_colour(doing))
+        text(left + 16, ty, fit(threads[i][0], 20), SOFT_INK, 1)
+        text(left + wide - len(doing) * CHAR_W, ty, doing, thread_colour(doing), 1)
+    end
+
+    # the network: the signal bars, bigger, and what they mean
+    row = row + 84
+    let net = reading[T_NET]
+    let status = "connected"
+    let status_colour = LINK_UP
+    if not net[N_CARD] then
+        status = "no card"
+        status_colour = BAD
+    elif not net[N_LINK] then
+        status = "no link"
+        status_colour = BAD
+    end
+    monitor_heading(left, row, wide, "Network", status, status_colour)
+    draw_signal(left, row + 24, 22, 30, net)
+    let lines = []
+    if not net[N_CARD] then
+        lines = ["aerOS found no network card", "when it started."]
+    else
+        let card = "The card is resting (app mode)."
+        if net[N_RUNNING] then
+            card = "The card is running."
+        end
+        if not net[N_LINK] then
+            lines = ["Not plugged in: no link.", card]
+        else
+            lines = ["Address " + net[N_ADDRESS], card]
+        end
+        push(lines, "Sent " + str(net[N_SENT]) + ", received " + str(net[N_RECEIVED]) + ", blocked " + str(net[N_BLOCKED]))
+        if net[N_RULES] == 0 then
+            push(lines, "Firewall: no rules, all blocked")
+        else
+            push(lines, "Firewall: " + str(net[N_RULES]) + " rule(s)")
+        end
+    end
+    for i = 0 to len(lines) - 1 do
+        text(left + 34, row + 22 + i * 18, fit(lines[i], (wide - 34) / CHAR_W), SOFT_INK, 1)
+    end
+
+    text(left, y + h - 28, "Esc, Home or a click outside closes it", FAINT, 1)
+end
+
+
+# ---- the menus ------------------------------------------------------------------------------
+
+# Two menus open from the taskbar: the start menu (every app, then the power entries and
+# leaving the desktop) and the power menu (only the power entries). Each entry is
+# [what it says, what it does, the app it opens or nil]
+
+func power_entries()
+    # Sleep, Restart and Shut down (see "turning off, restarting and sleeping")
+    return [["Sleep", "sleep", nil], ["Restart", "restart", nil], ["Shut down", "off", nil]]
+end
+
+func menu_entries(which)
+    # what the start menu ("start") or the power menu ("power") has
+    if which == "power" then
+        return power_entries()
+    end
     let entries = []
     for app in APPS do
-        push(entries, app[1])
+        push(entries, [app[1], "open", app])
     end
-    push(entries, "Exit desktop")
+    for entry in power_entries() do
+        push(entries, entry)
+    end
+    push(entries, ["Exit desktop", "exit", nil])
     return entries
 end
 
-func menu_top()
-    # the menu's top edge, so its bottom sits on the taskbar
-    return SH - TASKBAR_H - len(menu_entries()) * 28 - 12
+func menu_box(which)
+    # where a menu is: [x, y, w, h, rows]. Next to the button that opens it, on the desk side of
+    # the taskbar, in as many columns as it takes to fit on the desk
+    let count = len(menu_entries(which))
+    let rows = (DESK_H - 30) / MENU_ROW
+    if rows > count then
+        rows = count
+    end
+    if rows < 1 then
+        rows = 1
+    end
+    let columns = (count + rows - 1) / rows
+    let w = columns * MENU_COLUMN
+    let h = rows * MENU_ROW + 10
+    let button = start_button()
+    if which == "power" then
+        button = power_button()
+    end
+    let x = button[0] - 2
+    let y = BAR_Y - h - 2
+    if which == "power" then
+        x = button[0] + button[2] - w + 2
+    end
+    if TASKBAR_SIDE == "top" then
+        y = BAR_Y + BAR_H + 2
+    elif upright() then
+        # beside the taskbar, level with the button
+        y = button[1]
+        if y + h > SH - 4 then
+            y = SH - 4 - h
+        end
+        if TASKBAR_SIDE == "left" then
+            x = BAR_X + BAR_W + 2
+        else
+            x = BAR_X - w - 2
+        end
+    end
+    if x < 2 then
+        x = 2
+    end
+    if x + w > SW - 2 then
+        x = SW - 2 - w
+    end
+    return [x, y, w, h, rows]
 end
 
-func draw_menu()
-    # the start menu, just above the start button
-    let entries = menu_entries()
-    let top = menu_top()
-    rect(4, top - 2, 204, len(entries) * 28 + 14, 0x101014)
-    rect(6, top, 200, len(entries) * 28 + 10, 0x26262E)
+func entry_spot(box, n)
+    # the top left of entry n of a menu (box from menu_box): down a column, then on to the next
+    return [box[0] + 2 + (n / box[4]) * MENU_COLUMN, box[1] + 5 + (n % box[4]) * MENU_ROW]
+end
+
+func entry_at(which, px, py)
+    # which entry of a menu is under px, py: its number, or -1 for none
+    let box = menu_box(which)
+    let count = len(menu_entries(which))
+    if not inside(px, py, box[0] + 2, box[1] + 5, box[2] - 2, box[3] - 5) then
+        return -1
+    end
+    let column = (px - box[0] - 2) / MENU_COLUMN
+    let row = (py - box[1] - 5) / MENU_ROW
+    if row >= box[4] then
+        return -1
+    end
+    let n = column * box[4] + row
+    if n >= count then
+        return -1
+    end
+    return n
+end
+
+func draw_menu(which)
+    # a menu, over everything but the pointer
+    let entries = menu_entries(which)
+    let box = menu_box(which)
+    rect(box[0] - 2, box[1] - 2, box[2] + 4, box[3] + 4, 0x101014)
+    rect(box[0], box[1], box[2], box[3], MENU)
+    let hovered = entry_at(which, pointer_x, pointer_y)
     for i = 0 to len(entries) - 1 do
-        let ey = top + 5 + i * 28
-        if i == menu_choice or inside(pointer_x, pointer_y, 6, ey, 200, 28) then
-            rect(8, ey, 196, 28, TITLE_ON)
+        let spot = entry_spot(box, i)
+        let behind = MENU
+        if i == menu_choice or i == hovered then
+            behind = TITLE_ON
+            rect(spot[0], spot[1], MENU_COLUMN - 4, MENU_ROW, behind)
         end
-        if i < len(APPS) then
-            draw_icon_small(APPS[i][0], 16, ey + 6)
-        end
-        text(44, ey + 6, entries[i], WHITE_INK, 1)
+        draw_icon_small(entries[i], spot[0] + 8, spot[1] + 6, behind)
+        text(spot[0] + 36, spot[1] + 6, fit(entries[i][0], (MENU_COLUMN - 44) / CHAR_W), WHITE_INK, 1)
     end
 end
 
-func draw_icon_small(kind, x, y)
-    # a coloured square standing for an app in the menu
+func draw_disc(cx, cy, r, colour)
+    # a filled circle, a row at a time: each row as wide as the circle is at that height
+    for dy = -r to r do
+        let half = floor(sqrt(r * r - dy * dy))
+        rect(cx - half, cy + dy, half * 2 + 1, 1, colour)
+    end
+end
+
+func draw_icon_small(entry, x, y, behind)
+    # a coloured square standing for an app in the menu, or a sign for the other entries.
+    # behind is the colour behind it (the moon is a disc with another of that colour over it)
+    let does = entry[1]
+    if does == "sleep" then
+        draw_disc(x + 8, y + 8, 7, 0xC9D3F0)
+        draw_disc(x + 12, y + 5, 6, behind)
+        return
+    elif does == "restart" or does == "off" then
+        draw_power_sign(x + 8, y + 9, 0xE0E0E0)
+        return
+    elif does == "exit" then
+        rect(x + 1, y + 1, 14, 14, 0x6F7C8A)
+        return
+    end
+    let app = entry[2]
+    let kind = app[0]
     let colour = ACCENT
     if kind == "clock" then
         colour = 0xEDEDED
@@ -983,8 +2198,30 @@ func draw_icon_small(kind, x, y)
         colour = 0x8FA0B5
     elif kind == "system" then
         colour = 0x4DA3FF
+    elif kind == "settings" then
+        colour = 0xBFC5CC
+    elif kind == "app" then
+        colour = app_colour(app)
     end
     rect(x, y, 16, 16, colour)
+end
+
+func choose(which, n)
+    # entry n of a menu was picked
+    let entries = menu_entries(which)
+    if n < 0 or n >= len(entries) then
+        return
+    end
+    let entry = entries[n]
+    if entry[1] == "open" then
+        open_app(entry[2])
+    elif entry[1] == "sleep" then
+        go_to_sleep()
+    elif entry[1] == "restart" or entry[1] == "off" then
+        power_off(entry[1])
+    elif entry[1] == "exit" then
+        running = false
+    end
 end
 
 func draw_pointer()
@@ -1014,8 +2251,10 @@ func draw_all()
         end
     end
     draw_taskbar()
-    if menu_open then
-        draw_menu()
+    if menu_open == "monitor" then
+        draw_monitor()
+    elif menu_open != "" then
+        draw_menu(menu_open)
     end
     draw_pointer()
     gshow()
@@ -1026,30 +2265,53 @@ end
 
 func click(px, py)
     # the left button went down at px, py: whatever is on top there gets it
-    # the start menu first, as it is drawn over everything
-    if menu_open then
-        let entries = menu_entries()
-        let top = menu_top()
-        menu_open = false
-        if inside(px, py, 6, top, 200, len(entries) * 28 + 10) then
-            choose((py - top - 5) / 28)
+    # the system monitor's panel first, as it is drawn over everything: a click in it does
+    # nothing, and anywhere else closes it (and on its indicators, that is all it does)
+    if menu_open == "monitor" then
+        if inside_box(px, py, monitor_box()) then
             return
         end
-        # a click anywhere else only closes the menu (unless it is on the start button again)
-        if inside(px, py, 6, SH - TASKBAR_H + 5, 84, TASKBAR_H - 10) then
+        menu_open = ""
+        if inside_box(px, py, tray_box()) then
+            return
+        end
+    end
+    # a menu, also drawn over everything
+    if menu_open != "" then
+        let which = menu_open
+        menu_open = ""
+        let n = entry_at(which, px, py)
+        if n >= 0 then
+            choose(which, n)
+            return
+        end
+        # a click anywhere else only closes the menu (unless it is on its button again)
+        if which == "start" and inside_box(px, py, start_button()) then
+            return
+        end
+        if which == "power" and inside_box(px, py, power_button()) then
             return
         end
     end
 
-    # the taskbar: the start button, or a window's button
-    if py >= SH - TASKBAR_H then
-        if inside(px, py, 6, SH - TASKBAR_H + 5, 84, TASKBAR_H - 10) then
-            menu_open = true
+    # the taskbar: the start button, the power button, the system monitor or a window's button
+    if inside(px, py, BAR_X, BAR_Y, BAR_W, BAR_H) then
+        if inside_box(px, py, start_button()) then
+            menu_open = "start"
+            menu_choice = -1
+            return
+        end
+        if inside_box(px, py, tray_box()) then
+            menu_open = "monitor"
+            return
+        end
+        if inside_box(px, py, power_button()) then
+            menu_open = "power"
             menu_choice = -1
             return
         end
         for i = 0 to len(windows) - 1 do
-            if inside(px, py, 100 + i * button_width(), SH - TASKBAR_H + 5, button_width() - 6, TASKBAR_H - 10) then
+            if inside_box(px, py, window_button(i)) then
                 let win = windows[i]
                 # clicking the front window's button shrinks it, any other brings it forward
                 if win == front() then
@@ -1074,11 +2336,11 @@ func click(px, py)
         i = i - 1
     end
 
-    # the icons on the desktop
+    # the icons on the desk
     for n = 0 to len(APPS) - 1 do
         let spot = icon_at(n)
         if inside(px, py, spot[0] - 10, spot[1] - 4, 68, 66) then
-            start_app(APPS[n][0])
+            open_app(APPS[n])
             return
         end
     end
@@ -1106,7 +2368,7 @@ func click_window(win, px, py)
         return
     end
     let kind = win[W_KIND]
-    if kind == "files" then
+    if kind == "files" or kind == "pick" then
         let names = win[W_DATA][1]
         let top = y + TITLE_H + ROW + 6 + 5
         if names != nil and py >= top then
@@ -1125,15 +2387,8 @@ func click_window(win, px, py)
         if inside(px, py, x + 8, y + TITLE_H + 4, 60, ROW) then
             save_notes()
         end
-    end
-end
-
-func choose(n)
-    # menu entry n was picked
-    if n >= 0 and n < len(APPS) then
-        start_app(APPS[n][0])
-    elif n == len(APPS) then
-        running = false
+    elif kind == "settings" then
+        click_settings(win, px, py)
     end
 end
 
@@ -1141,7 +2396,7 @@ func scroll(win, by)
     # scroll a list window by `by` rows, keeping inside the list
     let total = 0
     let shown = rows_fit(win[W_H] - TITLE_H)
-    if win[W_KIND] == "files" then
+    if win[W_KIND] == "files" or win[W_KIND] == "pick" then
         if win[W_DATA][1] != nil then
             total = len(win[W_DATA][1])
         end
@@ -1161,26 +2416,58 @@ func scroll(win, by)
     win[W_SCROLL] = first
 end
 
+func menu_key(k)
+    # a key while a menu is open: Up and Down move along it, Left and Right a column across,
+    # Enter picks, Esc closes it
+    let count = len(menu_entries(menu_open))
+    let rows = menu_box(menu_open)[4]
+    if menu_choice < 0 then
+        menu_choice = 0
+    end
+    if k == KEY_UP then
+        menu_choice = (menu_choice + count - 1) % count
+    elif k == KEY_DOWN then
+        menu_choice = (menu_choice + 1) % count
+    elif k == KEY_LEFT and menu_choice >= rows then
+        menu_choice = menu_choice - rows
+    elif k == KEY_RIGHT and menu_choice + rows < count then
+        menu_choice = menu_choice + rows
+    elif k == KEY_ENTER then
+        let which = menu_open
+        menu_open = ""
+        choose(which, menu_choice)
+    elif k == KEY_ESCAPE then
+        menu_open = ""
+    end
+end
+
 func press(k)
     # a key was pressed
     let top = front()
-    # Tab, or the menu open: the menu has the keyboard (Notes keeps Tab for itself)
-    if k == KEY_TAB and not (top != nil and top[W_KIND] == "notes" and not menu_open) then
-        menu_open = not menu_open
+    # Tab, or a menu open: the menu has the keyboard (Notes keeps Tab for itself)
+    if k == KEY_TAB and not (top != nil and top[W_KIND] == "notes" and menu_open == "") then
+        if menu_open == "" then
+            menu_open = "start"
+        else
+            menu_open = ""
+        end
         menu_choice = 0
         return
     end
-    if menu_open then
-        if k == KEY_UP then
-            menu_choice = (menu_choice + len(menu_entries()) - 1) % len(menu_entries())
-        elif k == KEY_DOWN then
-            menu_choice = (menu_choice + 1) % len(menu_entries())
-        elif k == KEY_ENTER then
-            menu_open = false
-            choose(menu_choice)
-        elif k == KEY_ESCAPE then
-            menu_open = false
+    # the system monitor: Esc or Home closes it. Other keys carry on as usual underneath it (the
+    # arrows move the pointer, typing goes to Notes)
+    if menu_open == "monitor" then
+        if k == KEY_ESCAPE or k == KEY_HOME then
+            menu_open = ""
+            return
         end
+    elif menu_open != "" then
+        menu_key(k)
+        return
+    end
+    # Home opens the system monitor
+    if k == KEY_HOME then
+        menu_open = "monitor"
         return
     end
     if k == KEY_ESCAPE then
@@ -1200,8 +2487,13 @@ func press(k)
         calc_key(top, k)
         return
     end
+    if top != nil and top[W_KIND] == "settings" then
+        if settings_key(top, k) then
+            return
+        end
+    end
     # Files: Up and Down choose a row, Enter opens it
-    if top != nil and top[W_KIND] == "files" and top[W_DATA][1] != nil then
+    if top != nil and (top[W_KIND] == "files" or top[W_KIND] == "pick") and top[W_DATA][1] != nil then
         if files_key(top, k) then
             return
         end
@@ -1305,23 +2597,10 @@ func follow_mouse()
         dragging = nil
     end
     if dragging != nil then
-        # the window follows the pointer, but its title bar stays on the screen
-        let nx = pointer_x - drag_dx
-        let ny = pointer_y - drag_dy
-        if ny < 0 then
-            ny = 0
-        end
-        if ny > SH - TASKBAR_H - TITLE_H then
-            ny = SH - TASKBAR_H - TITLE_H
-        end
-        if nx < 60 - dragging[W_W] then
-            nx = 60 - dragging[W_W]
-        end
-        if nx > SW - 60 then
-            nx = SW - 60
-        end
-        dragging[W_X] = nx
-        dragging[W_Y] = ny
+        # the window follows the pointer, but its title bar stays on the desk
+        dragging[W_X] = pointer_x - drag_dx
+        dragging[W_Y] = pointer_y - drag_dy
+        keep_on_desk(dragging)
     end
     buttons_before = m[2]
     return changed
@@ -1342,8 +2621,32 @@ func main()
     pointer_y = SH / 2
     NOTES_FILE = cwd() + "notes.txt"
     read_clock()
-    # say hello with the clock
-    start_app("clock")
+    SETTINGS_FILE = home_folder() + "desktop.cfg"
+    layout()
+    find_apps()
+
+    # the windows: the ones that were open, back from an app (see "Opening an app" at the top),
+    # or else the clock, to say hello
+    let reopen = ["clock"]
+    if len(args) > 0 and args[0] == "back" then
+        reopen = []
+        for i = 1 to len(args) - 1 do
+            push(reopen, args[i])
+        end
+    end
+    for kind in reopen do
+        if own_kind(kind) then
+            start_app(kind)
+        end
+    end
+
+    # The desktop as it starts, then the settings. aerOS may ask about reading them (they are
+    # in the home folder), in a box over the desktop
+    take_telemetry()
+    looked_at = time()
+    draw_all()
+    load_settings()
+    move_taskbar(TASKBAR_SIDE)
 
     let shown_second = -1
     let needs_drawing = true
@@ -1351,7 +2654,7 @@ func main()
         if follow_mouse() then
             needs_drawing = true
         end
-        while haskey() do
+        while haskey() and running do
             press(key())
             needs_drawing = true
         end
@@ -1361,14 +2664,24 @@ func main()
             shown_second = half
             needs_drawing = true
         end
-        if needs_drawing then
+        # the system monitor's indicators (and its panel, if it is open) take a new look each second
+        if time() - looked_at >= LOOK_EVERY then
+            looked_at = time()
+            take_telemetry()
+            needs_drawing = true
+        end
+        if needs_drawing and running then
             draw_all()
             needs_drawing = false
         end
         frame(30)
     end
     gclose()
-    print("Left the desktop.")
+    if launching != "" then
+        print("Opening " + launching + ". The desktop comes back when it ends.")
+    else
+        print("Left the desktop.")
+    end
 end
 
 main()

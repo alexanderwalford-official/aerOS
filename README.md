@@ -63,7 +63,7 @@ I've decided to use inline assmembly in C with the GCC GNU99 standard for the mo
 - [x] Implement local filesystem. (FAT16 / FAT32 on IDE disks labelled AEROS, temporary VFS without one)
 - [x] Process management.
 - [x] Programming interface. (AerLang: an interpreter, a prompt and a text editor, see docs/AERLANG.md)
-- [x] Graphics driver. (framebuffer console, pixels, shapes, text and BMP pictures for apps)
+- [x] Graphics driver. (framebuffer console, pixels, shapes, text and pictures for apps: BMP, and PNG, GIF and JPEG with decoders of AerOS's own)
 - [x] User accounts. (login screen, passwords stored as salted PBKDF2 hashes)
 - [x] File encryption. (ENC / DEC, AES-256 with an HMAC tag)
 - [x] Audio. (AC'97 sound card, PLY for WAV and MP3 files using minimp3, and a startup sound in /sys/startup.wav that you can replace)
@@ -80,7 +80,8 @@ I've decided to use inline assmembly in C with the GCC GNU99 standard for the mo
 - [x] File versions. (the last 10 versions of every file in a home folder: VERS, file@N and UNDO)
 - [x] RT mode, experimental. (boot option 6: real-time tasks from the timer, a schedulability check and a watchdog; RT lists them)
 - [x] Decimal numbers in AerLang. (3.14, 7 / 2.0, sqrt, sin, cos, atan2, floor, round, PI, on the x87 FPU)
-- [x] A 3D game demo. (MAZE3D, a first-person maze drawn with ray casting, with mouse look, written in AerLang to show what it can do)
+- [x] A 3D game demo. (MAZE3D, a first-person maze drawn with ray casting, with mouse look, a pitch black dungeon of textured stone walls, flagstone floors and cobbled ceilings seen by the beam of your flashlight, ghosts that chase you, made-up mazes up to 55 x 55, and its own chiptune music and sound effects, written in AerLang to show what it can do)
+- [x] A horror game. (FOUR KNOCKS, a story told in a pitch black observatory over a borehole: a thing that hunts you by ear, heard on your left or right as it moves (stereo panning), seen only in your flashlight's beam, pre-rendered 3D models, lightning, static and fades drawn by new AerLang built-ins, and every sound, voice and picture made by scripts in tools/; `pkg install knocks`)
 - [x] A database. (AerDB: tables of rows in one file, a little SQL, the SQL command and dbopen / dbrun / dbquery in AerLang)
 - [x] Ethernet network driver. (Intel e1000, sealed messages only, and a firewall that blocks everything until FW ALLOW; see docs/NETWORK.md)
 - [ ] More in the pipeline coming soon..

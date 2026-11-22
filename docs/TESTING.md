@@ -49,7 +49,7 @@ are skipped rather than failed.
 | --- | --- |
 | `test_basics.py` | booting, commands, files without a disk, "did you mean" |
 | `test_terminal.py` | usage messages, Tab completion, Page Up / Page Down, the editor (save, run, quit), a line exactly as wide as the screen, and the big title moving up whole as the screen scrolls |
-| `test_desktop.py` | the desktop package: its wallpaper and clock window, the start menu opened with a click of the mouse and with Tab, Notes reading and saving `notes.txt` (aerOS's question answered in its box over the graphics), and leaving it with Esc |
+| `test_desktop.py` | the desktop package: its wallpaper and clock window, the start menu opened with a click of the mouse and with Tab, Notes reading and saving `notes.txt` (aerOS's question answered in its box over the graphics), and leaving it with Esc; an installed package found and listed in the start menu, opened with `launch()` and the desktop coming back after it; Sleep, and Shut down asking first (no, then yes turns QEMU off); Settings saving a theme, the taskbar's side and a background picture in `desktop.cfg` and reading them back after a reboot |
 | `test_install.py` | installing AerOS on a blank disk from demo mode (`disks()`, `install()`, saying no first) and then starting QEMU from that disk alone; the same from the real CD, picking demo mode in the boot options; and `install()` refusing outside demo mode. `AerOS(words=, module=, from_disk=)` give the kernel's command line, a module as GRUB gives one, and a start from the disk with its own GRUB ([installing](INSTALLING.md)) |
 | `test_aerlang.py` | the language (`files/langtest.aer` checks every statement and expression), and AerLang at the prompt |
 | `test_explain.py` | WHY, SRC, SHOW and the read-only `/src/` folder |
@@ -59,6 +59,7 @@ are skipped rather than failed.
 | `test_crypto.py` | the boot's crypto self-test, and the decryptor printed in `docs/SECURITY.md` run on a file AerOS encrypted |
 | `test_media.py` | WAV files in three formats and an MP3 (recorded and checked for the right notes), the startup sound, and video |
 | `test_input.py` | the mouse in AerLang; at the prompt, the pointer (text and graphics mode), selecting and copying, double clicks, pasting (right click and Ctrl+V), clicking to move the cursor and the wheel; and held keys |
+| `test_pictures.py` | PNG, GIF and JPEG drawn with `image()`, checked pixel by pixel against Pillow: 30 pictures (every PNG colour type and filter, 16 bit and interlaced ones written by hand, see-through parts, GIFs with long codes and interlacing, JPEGs baseline and progressive with every subsampling and restart markers), a 1920 x 1080 progressive JPEG, and 42 damaged pictures that must not harm AerOS. Needs Pillow |
 | `test_games.py` | Maze 3D, Snake (and its high scores) and `move.aer`, booted from the ISO in graphics mode. They are packages: `t.package('snake')` puts one on the test's disk the way `pkg install` would |
 | `test_database.py` | AerDB from AerLang (`files/aerdb.aer`: every statement, many pages, reopening, COMPACT), the SQL command, and SHOW on a query |
 | `test_scan.py` | SCAN on Snake, on a program full of tricks (`files/phish.aer`, only ever scanned) and on one that only mentions a built-in in a comment and a string (`files/clean.aer`) |

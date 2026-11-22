@@ -103,15 +103,39 @@ description:
 | Package | What it is | Comes with |
 | --- | --- | --- |
 | `snake` | Snake, with high scores | |
-| `maze3d` | a maze in 3D, seen from inside, with ray casting | |
+| `maze3d` | a maze in 3D, seen from inside, with ray casting: a dungeon of stone and brick walls, flagstone floors and cobbled ceilings, pitch black but for your flashlight's beam (or lit all round by a lantern, or plain colours, quicker on a slow computer), the classic maze or a made-up one up to 55 x 55 squares, with as many crystals and ghosts as you choose (your light sends the ghosts away), with music and sound effects | the sounds and music (WAV files made by `tools/make_maze3d_sounds.py`) and the dungeon's pictures (BMP files made by `tools/make_maze3d_textures.py`) |
+| `knocks` | Four Knocks, a horror game: your father vanished from an observatory built over a borehole; his voice on your answering machine calls you there. Explore it in the dark by flashlight, read what was left behind, and keep quiet: something blind hunts you by the sounds you make, heard in stereo round corners. Two endings, saved progress, and a content warning first | its pictures (walls, floors, ceilings, the thing and the furniture: 3D models rendered by `tools/make_knocks_sprites.py`, textures by `tools/make_knocks_textures.py`), its sounds, music and voices (`tools/make_knocks_sounds.py`), and `credits.txt` |
 | `move` | a square moved with the arrow keys: a small example of a game | |
 | `guess` | guess the number from 1 to 100 | |
 | `viewer` | a picture viewer (BMP) that zooms | `aeros.bmp`, `colours.bmp` |
 | `clip` | plays a 6 second video, to try the video player on | `sample.mpg` |
 | `webserve` | a small web server, in AerLang (see [the network](NETWORK.md)) | |
+| `browser` | a text web browser for plain `http://` pages: numbered links, back, paging, `s` to search with FrogFind, and pictures (BMP, PNG, GIF, JPEG) on a graphics screen | |
 | `bench` | how fast AerOS reads and writes its disk | |
 | `anim` | spinners, progress bars and moving text | |
-| `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, System and About, by mouse or keyboard | |
+| `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, System, Settings and About, an icon for every app installed, and a live system monitor on the taskbar, by mouse or keyboard | |
+
+**The desktop** finds the apps as it starts: every program in `/bin/` and the packages in
+`/apps/` (not itself, and not `sleep`, which the power menu has). AerOS runs one program in
+front at a time, so opening one closes the desktop: it calls AerLang's `launch()`, the app has
+the screen, and when it ends AerOS starts the desktop again with the same windows open (after
+a text app, AerOS waits for a key first, so its last words can be read). The power button on the
+taskbar, and the end of the start menu, have Sleep (a dark screen until a key or the mouse
+wakes it, as `sleep` does, but with the windows kept), Restart and Shut down, which go through
+`power()`: AerOS asks you first, in a box over the desktop. Settings changes the colour theme
+(Ocean, Forest, Sunset or Graphite), the background (the theme's colours, or a BMP picture
+chosen from your files) and which side the taskbar is on, and keeps them in `desktop.cfg` in
+your home folder, read each time it starts. As that is your folder, AerOS asks before the
+desktop reads or changes it: A (always) answers once and for all.
+
+Next to the clock, the **system monitor** shows what AerOS is doing, live, in little graphics:
+the network's signal bars (lit while the link is up; crossed out with no card), how busy the
+processor has been over the last seconds, a square for each thread running, and gauges for the
+memory in use and the disk cache. Clicking them, or Home, opens a panel with a minute of the
+processor's load, the numbers behind every gauge, each thread by name, and the network's
+address, counters and firewall rules; Esc, Home or a click outside closes it. It all comes from
+AerLang's `telemetry()`, asked once a second: it only reads counters AerOS keeps, so it costs
+next to nothing, and it never starts the network card that app mode put away.
 
 The tests don't need the server for them: `t.package('snake')` puts one on a test's disk the
 way `pkg install` would (`tools/test/run.py`).

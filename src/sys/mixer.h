@@ -46,6 +46,11 @@ bool mixer_playing (int voice);
 // stop every voice and give the sound card back (programs do this when they end)
 void mixer_stop_all (void);
 
+// change a playing voice's volume, separately for the left and the right speaker (each 0 to
+// MIXER_FULL_VOLUME): to fade it, or to move it from one side to the other. A wrong or out of
+// date voice number is fine (nothing happens)
+void mixer_set_volume (int voice, int left, int right);
+
 // pause a voice (it keeps its place and plays nothing) or carry it on again
 void mixer_pause (int voice, bool paused);
 

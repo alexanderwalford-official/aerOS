@@ -99,12 +99,15 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("sleep", bi_sleep, 1, 1),
     BUILTIN("time", bi_time, 0, 0),
     BUILTIN("sysinfo", bi_system_info, 0, 0),
+    BUILTIN("telemetry", bi_telemetry, 0, 0),
     BUILTIN("big", bi_big_text, 3, 5),
     BUILTIN("progress", bi_progress, 5, 6),
     BUILTIN("spinner", bi_spinner, 2, 4),
     BUILTIN("frame", bi_frame, 1, 1),
     BUILTIN("queue", bi_queue, 1, 1),
     BUILTIN("cmd", bi_cmd, 1, 1),
+    BUILTIN("launch", bi_launch, 1, 2),
+    BUILTIN("power", bi_power, 1, 1),
     BUILTIN("nsend", bi_net_send, 3, 3),
     BUILTIN("nrecv", bi_net_receive, 2, 2),
     BUILTIN("httpget", bi_http_get, 1, 1),
@@ -144,6 +147,11 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("text", bi_text, 4, 5),
     BUILTIN("image", bi_image, 3, 5),
     BUILTIN("imgsz", bi_image_size, 1, 1),
+    BUILTIN("imgcol", bi_image_column, 8, 9),
+    BUILTIN("imgrow", bi_image_row, 10, 10),
+    BUILTIN("imglight", bi_image_light, 0, 4),
+    BUILTIN("gtint", bi_gtint, 6, 6),
+    BUILTIN("gnoise", bi_gnoise, 5, 5),
     // for games, and video
     BUILTIN("gbuf", bi_gbuf, 1, 1),
     BUILTIN("gshow", bi_gshow, 0, 0),
@@ -152,7 +160,8 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("mousemove", bi_mousemove, 0, 0),
     BUILTIN("mousedown", bi_mousedown, 1, 1),
     BUILTIN("sload", bi_sload, 1, 1),
-    BUILTIN("splay", bi_splay, 1, 3),
+    BUILTIN("splay", bi_splay, 1, 4),
+    BUILTIN("svol", bi_svol, 2, 3),
     BUILTIN("sstop", bi_sstop, 0, 1),
     BUILTIN("isply", bi_isply, 1, 1),
     BUILTIN("video", bi_video, 1, 1),
@@ -163,15 +172,16 @@ const int aer_builtin_count = sizeof(aer_builtins) / sizeof(aer_builtins[0]);
 // ---- app mode: which built-ins belong to which part of AerOS (sys/appmode.h) ---------------------
 
 // for each part of AerOS that app mode can put away, the built-ins that need it. While a program
-// that names none of a part's built-ins runs, that part can be put away. The longest list (graphics) has
-// 14 names, so 16 leaves room for the NULL and one more
+// that names none of a part's built-ins runs, that part can be put away. The longest list (files) has
+// 26 names, so 28 leaves room for the NULL and one more
 static const struct {
     uint32_t part;
     const char* names[28];   // ends with NULL
 } parts[] = {
     { APP_GRAPHICS, { "gopen", "gclose", "gw", "gh", "gclear", "rgb", "pixel", "rect", "line",
-                      "text", "image", "imgsz", "gbuf", "gshow", NULL } },
-    { APP_SOUND,    { "beep", "play", "sload", "splay", "sstop", "isply", NULL } },
+                      "text", "image", "imgsz", "imgcol", "imgrow", "imglight", "gtint", "gnoise", "gbuf",
+                      "gshow", NULL } },
+    { APP_SOUND,    { "beep", "play", "sload", "splay", "svol", "sstop", "isply", NULL } },
     { APP_VIDEO,    { "video", NULL } },
     { APP_FILES,    { "rdf", "rdb", "wrf", "apf", "isf", "delf", "la", "cwd", "enc", "dec",
                       "isenc", "rdenc", "rdat", "wrat", "trunc", "dbopen", "dbrun", "dbquery",
@@ -215,7 +225,7 @@ uint32_t aer_profile (const token_t* tokens, int count) {
 static const char* const front_only[] = {
     "input", "inpw", "key", "haskey", "keydown", "mouse", "mousemove", "mousedown",
     "cls", "color", "at", "progress", "spinner", "frame", "big", "clip", "setclip",
-    "logclear", "setlogging", "cmd", "queue", "install", "osupdate", NULL
+    "logclear", "setlogging", "cmd", "queue", "launch", "power", "install", "osupdate", NULL
 };
 
 // the first built-in a program's tokens name that only the program in front can use (see

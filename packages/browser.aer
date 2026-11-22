@@ -1,0 +1,586 @@
+# a basic web browser for aerOS
+# Alexander Walford 2026
+#
+#     browser                 ask for an address
+#     browser frogfind.com    open that address straight away
+#
+# pictures are numbered like links: type a picture's number to see it on the graphics screen
+# (BMP, PNG, GIF and JPEG)
+#
+# then underneath each page: a link's number to follow it, Enter for more of the page, u to go
+# back up, b for the page before, g and an address to go there, s and some words to search
+# the web (with FrogFind), and q to quit
+#
+# only plain http:// pages for now (aerOS can't do https yet), and each site has to be
+# allowed first with fw web <site> 80. FrogFind (frogfind.com) is a good place to start,
+# it turns big modern sites into simple pages over http
+
+
+# what the browser does with each tag it knows; any other tag is left out, its words kept
+let TAGS = [
+    ["title", "title"],
+    ["h1", "heading"], ["h2", "heading"], ["h3", "heading"],
+    ["h4", "heading"], ["h5", "heading"], ["h6", "heading"],
+    ["p", "paragraph"], ["ul", "paragraph"], ["ol", "paragraph"], ["table", "paragraph"],
+    ["blockquote", "paragraph"], ["pre", "paragraph"], ["form", "paragraph"],
+    ["br", "newline"], ["div", "newline"], ["tr", "newline"], ["dt", "newline"], ["dd", "newline"],
+    ["section", "newline"], ["article", "newline"], ["header", "newline"], ["footer", "newline"],
+    ["nav", "newline"], ["main", "newline"], ["center", "newline"],
+    ["li", "bullet"],
+    ["td", "cell"], ["th", "cell"],
+    ["hr", "rule"],
+    ["a", "link"],
+    ["img", "image"],
+    ["script", "skip"], ["style", "skip"], ["svg", "skip"], ["template", "skip"], ["select", "skip"]
+]
+
+# the &...; codes pages use for characters, and what to show instead. &amp; is done last, so
+# "&amp;lt;" comes out as "&lt;" like it should
+let ENTITIES = [
+    ["&nbsp;", " "], ["&#160;", " "], ["&lt;", "<"], ["&gt;", ">"],
+    ["&quot;", "\""], ["&#34;", "\""], ["&#39;", "'"], ["&apos;", "'"],
+    ["&lsquo;", "'"], ["&rsquo;", "'"], ["&ldquo;", "\""], ["&rdquo;", "\""],
+    ["&ndash;", "-"], ["&mdash;", "-"], ["&hellip;", "..."], ["&bull;", "*"], ["&middot;", "*"],
+    ["&raquo;", ">>"], ["&laquo;", "<<"], ["&rarr;", "->"], ["&larr;", "<-"],
+    ["&copy;", "(c)"], ["&reg;", "(R)"], ["&trade;", "(TM)"],
+    ["&amp;", "&"]
+]
+
+let WIDTH = 79           # how wide a line of the page can be
+let SCREEN_LINES = 21    # how many lines of the page fit on the screen, with the title and the help
+let TEXT_COLOUR = BRIGHT
+let HEADING_COLOUR = LIGHT_CYAN
+let TITLE_COLOUR = YELLOW
+let SEARCH = "http://frogfind.com/?q="    # where s sends what you search for
+
+# the page being shown
+let address = ""         # where it came from
+let title = ""           # what its <title> says
+let lines = []           # its lines, each one [colour, text], ready to print
+let links = []           # the address of each link on it: [1] is links[0]
+let history = []         # the pages before it, for going back
+let message = ""         # something to tell you under the page, like a link that didn't work
+
+# used by convert_html while it builds the lines
+let this_line = ""       # the words of the line it is on so far
+let line_colour = TEXT_COLOUR
+let in_title = false
+let in_link = 0          # the number of the link it is inside, or 0
+
+
+func warn(text)
+    # something that went wrong, in yellow
+    color(YELLOW, BLACK)
+    print("[ ! ] " + text)
+    color(BRIGHT, BLACK)
+end
+
+
+# ---- text ------------------------------------------------------------------------------------
+
+func replace(text, old, new)
+    # every old in text swapped for new
+    return join(split(text, old), new)
+end
+
+func flatten(text)
+    # line breaks and tabs turned into spaces (chr(13) is the carriage return Windows puts
+    # before each \n)
+    text = replace(text, chr(13), " ")
+    text = replace(text, "\n", " ")
+    return replace(text, "\t", " ")
+end
+
+func squash(text)
+    # every run of spaces, tabs and line breaks turned into one space, which is what HTML does.
+    # a space at the start or end is kept (as one), so "with <b>bold</b> text" still has its spaces
+    text = flatten(text)
+    let squashed = join(split(text), " ")
+    if squashed == "" then
+        if text != "" then return " " end
+        return ""
+    end
+    if text[0] == " " then squashed = " " + squashed end
+    if text[len(text) - 1] == " " then squashed = squashed + " " end
+    return squashed
+end
+
+func decode(text)
+    # the &...; codes swapped for the characters they stand for
+    if find(text, "&") == -1 then return text end
+    for pair in ENTITIES do
+        text = replace(text, pair[0], pair[1])
+    end
+    return text
+end
+
+
+# ---- addresses -------------------------------------------------------------------------------
+
+func site(url)
+    # the start of an address, up to the site's name: "http://frogfind.com/read.php" gives
+    # "http://frogfind.com"
+    let start = find(url, "://") + 3
+    let slash = find(sub(url, start), "/")
+    if slash == -1 then return url end
+    return sub(url, 0, start + slash)
+end
+
+func folder(url)
+    # the folder a page is in: "http://site.com/docs/a.html" gives "http://site.com/docs/"
+    let question = find(url, "?")
+    if question != -1 then url = sub(url, 0, question) end
+    let base = site(url)
+    let path = sub(url, len(base))
+    let last = -1
+    let i = 0
+    while i < len(path) do
+        if path[i] == "/" then last = i end
+        i = i + 1
+    end
+    if last == -1 then return base + "/" end
+    return base + sub(path, 0, last + 1)
+end
+
+func resolve(href)
+    # turn a link into a whole address, using the address of the page it's on. gives back ""
+    # for links that can't be followed: to the same page (#top), email, or JavaScript
+    let hash = find(href, "#")
+    if hash != -1 then href = sub(href, 0, hash) end
+    if href == "" then return "" end
+    let low = lower(href)
+    if sub(low, 0, 7) == "mailto:" or sub(low, 0, 11) == "javascript:" then return "" end
+    if find(low, "://") != -1 then return href end
+    if sub(href, 0, 2) == "//" then return "http:" + href end
+    if sub(href, 0, 1) == "/" then return site(address) + href end
+    if sub(href, 0, 1) == "?" then
+        let question = find(address, "?")
+        if question == -1 then return address + href end
+        return sub(address, 0, question) + href
+    end
+    return folder(address) + href
+end
+
+func fix(url)
+    # an address typed in: spaces taken off, and http:// added if it's missing
+    url = join(split(url), "")
+    if url != "" and find(url, "://") == -1 then url = "http://" + url end
+    return url
+end
+
+
+# ---- reading the page ------------------------------------------------------------------------
+
+func tag_name(tag)
+    # the tag's name in small letters: "A href=..." gives "a", "/P" gives "/p", "br/" gives "br"
+    let space = find(tag, " ")
+    # if there's a space, cut it off so "A href=..." gives "A" and "/P class=..." gives "/P"
+    if space != -1 then tag = sub(tag, 0, space) end
+    # and a / on the end, from tags like <br/> that close themselves
+    if len(tag) > 1 and tag[len(tag) - 1] == "/" then tag = sub(tag, 0, len(tag) - 1) end
+    return lower(tag)
+end
+
+func action_for(name)
+    # what TAGS says to do with this tag, or "ignore" if it isn't there
+    for pair in TAGS do
+        if pair[0] == name then return pair[1] end
+    end
+    return "ignore"
+end
+
+func attribute(tag, name)
+    # one of a tag's settings: attribute("a href=\"/two.html\"", "href") gives "/two.html",
+    # or "" if the tag hasn't got it
+    let at = find(lower(tag), " " + name + "=")
+    if at == -1 then return "" end
+    let value = sub(tag, at + len(name) + 2)
+    let quote = sub(value, 0, 1)
+    let stop = -1
+    if quote == "\"" or quote == "'" then
+        # in quotes: everything up to the closing quote
+        value = sub(value, 1)
+        stop = find(value, quote)
+    else
+        # no quotes: up to the next space
+        stop = find(value, " ")
+    end
+    if stop != -1 then value = sub(value, 0, stop) end
+    return decode(value)
+end
+
+func add_line(colour, text)
+    # put a line on the page, cut into lines that fit the screen (breaking between words)
+    let row = ""
+    for each_word in split(text) do
+        let word = each_word
+        if row != "" and len(row) + 1 + len(word) > WIDTH then
+            push(lines, [colour, row])
+            row = ""
+        end
+        # a word too long for a whole line (like a long address) gets cut up
+        while len(word) > WIDTH do
+            if row != "" then
+                push(lines, [colour, row])
+                row = ""
+            end
+            push(lines, [colour, sub(word, 0, WIDTH)])
+            word = sub(word, WIDTH)
+        end
+        if row == "" then
+            row = word
+        else
+            row = row + " " + word
+        end
+    end
+    if row != "" then push(lines, [colour, row]) end
+end
+
+func new_line()
+    # finish the line being built and start another
+    if this_line != "" then add_line(line_colour, this_line) end
+    this_line = ""
+end
+
+func gap()
+    # an empty line between paragraphs, but never two in a row (or one at the very top)
+    new_line()
+    if len(lines) > 0 and lines[len(lines) - 1][1] != "" then push(lines, [TEXT_COLOUR, ""]) end
+end
+
+func add_words(words)
+    # add some of the page's words to the line being built (or to the title)
+    words = decode(squash(words))
+    if in_title then
+        title = title + words
+        return
+    end
+    # no spaces at the start of a line, and never two together
+    if this_line == "" or this_line[len(this_line) - 1] == " " then
+        while words != "" and words[0] == " " do
+            words = sub(words, 1)
+        end
+    end
+    this_line = this_line + words
+end
+
+func do_tag(tag, name, action, closing)
+    # what each kind of tag does to the page. closing is true for the end tags, like </h1>
+    if action == "title" then
+        in_title = not closing
+    elif action == "heading" then
+        # headings get a line to themselves, in their own colour
+        gap()
+        if closing then
+            line_colour = TEXT_COLOUR
+        else
+            line_colour = HEADING_COLOUR
+        end
+    elif action == "paragraph" then
+        gap()
+    elif action == "newline" then
+        new_line()
+    elif action == "bullet" and not closing then
+        new_line()
+        this_line = "* "
+    elif action == "cell" and not closing then
+        add_words(" ")
+    elif action == "rule" then
+        new_line()
+        push(lines, [DARK_GRAY, "----------------------------------------"])
+    elif action == "image" then
+        # pictures get a number like links do, and typing it shows the picture. what it's of
+        # (its alt text) goes in the page too, if it says
+        let alt = squash(attribute(tag, "alt"))
+        let label = "[picture]"
+        if alt != "" and alt != " " then label = "[picture: " + join(split(alt), " ") + "]" end
+        let url = resolve(attribute(tag, "src"))
+        if url != "" then
+            push(links, url)
+            label = label + " [" + len(links) + "]"
+        end
+        add_words(" " + label + " ")
+    elif action == "link" then
+        if closing then
+            # the link's number goes after its words, so you can type it to follow the link
+            if in_link > 0 then add_words(" [" + in_link + "]") end
+            in_link = 0
+        else
+            let url = resolve(attribute(tag, "href"))
+            if url != "" then
+                push(links, url)
+                in_link = len(links)
+            end
+        end
+    end
+end
+
+func convert_html(html)
+    # convert HTML to a format suitable for display: fills in title, lines and links
+    title = ""
+    lines = []
+    links = []
+    this_line = ""
+    line_colour = TEXT_COLOUR
+    in_title = false
+    in_link = 0
+
+    # a plain text page has no tags: just show its lines as they are
+    if find(html, "<") == -1 then
+        for text in split(replace(html, chr(13), ""), "\n") do
+            if text == "" then
+                push(lines, [TEXT_COLOUR, ""])
+            else
+                add_line(TEXT_COLOUR, text)
+            end
+        end
+        return
+    end
+
+    let skipping = ""      # inside <script> or <style>: the tag whose end we're waiting for
+    for piece in split(html, "<") do
+        let close = find(piece, ">")
+        if close == -1 then
+            # no tag here: the text before the first <, or a < that's just a <
+            if skipping == "" then add_words(piece) end
+            continue
+        end
+        # tags can go over more than one line, so the line breaks in them become spaces
+        let tag = flatten(sub(piece, 0, close))
+        let name = tag_name(tag)
+        let words = sub(piece, close + 1)
+        let closing = false
+        if sub(name, 0, 1) == "/" then
+            closing = true
+            name = sub(name, 1)
+        end
+        let action = action_for(name)
+
+        if skipping != "" then
+            if closing and name == skipping then skipping = "" end
+        elif action == "skip" and not closing then
+            skipping = name
+        else
+            do_tag(tag, name, action, closing)
+        end
+        if skipping == "" then add_words(words) end
+    end
+    new_line()
+end
+
+
+# ---- pictures --------------------------------------------------------------------------------
+
+func starts_with_bytes(data, codes)
+    # do the first bytes of data match these numbers? (for spotting the kind of picture)
+    if len(data) < len(codes) then return false end
+    let i = 0
+    while i < len(codes) do
+        if ord(data[i]) != codes[i] then return false end
+        i = i + 1
+    end
+    return true
+end
+
+func picture_kind(data)
+    # what kind of picture the data is, from the bytes it starts with, or "" if it isn't one
+    if starts_with_bytes(data, [66, 77]) then return "BMP" end                 # "BM"
+    if starts_with_bytes(data, [137, 80, 78, 71]) then return "PNG" end        # 137 "PNG"
+    if starts_with_bytes(data, [255, 216, 255]) then return "JPEG" end
+    if starts_with_bytes(data, [71, 73, 70, 56]) then return "GIF" end         # "GIF8"
+    if starts_with_bytes(data, [82, 73, 70, 70]) then return "WebP" end        # "RIFF"
+    return ""
+end
+
+func is_picture(data)
+    # is what came back a picture rather than a page?
+    return picture_kind(data) != ""
+end
+
+func show_picture(data, url)
+    # show a picture on the graphics screen, as big as fits, until a key is pressed
+    let kind = picture_kind(data)
+    let size = imgsz(data)
+    if size == nil then
+        # aerOS shows BMP, PNG, GIF and JPEG pictures, so this is a WebP, or a damaged one
+        message = "Can't show that picture (" + kind + "): aerOS shows BMP, PNG, GIF and JPEG."
+        return
+    end
+    if not gopen() then
+        message = "Pictures need a graphics screen, and this one is text only."
+        return
+    end
+
+    # shrink it to fit (keeping its shape), with room for a line of text at the bottom.
+    # small pictures stay their own size, so they stay sharp
+    let w = gw()
+    let h = gh() - 24
+    let pw = size[0]
+    let ph = size[1]
+    if pw > w or ph > h then
+        let scale = w * 1.0 / pw
+        if h * 1.0 / ph < scale then scale = h * 1.0 / ph end
+        pw = floor(pw * scale)
+        ph = floor(ph * scale)
+        if pw < 1 then pw = 1 end
+        if ph < 1 then ph = 1 end
+    end
+
+    gclear(BLACK)
+    image(data, (w - pw) / 2, (h - ph) / 2, pw, ph)
+    let caption = size[0] + " x " + size[1] + "  " + url
+    text(8, gh() - 18, sub(caption, 0, (w - 16) / 8 - 30), rgb(200, 200, 200))
+    text(w - 8 - 25 * 8, gh() - 18, "any key: back to the page", rgb(255, 127, 0))
+    key()
+    gclose()
+end
+
+
+# ---- showing it ------------------------------------------------------------------------------
+
+func open(url)
+    # load a page and get it ready to show. false if it couldn't be loaded, with message saying why
+    if sub(lower(url), 0, 8) == "https://" then
+        message = "aerOS can't open https:// pages yet: " + url
+        return false
+    end
+    color(LIGHT_CYAN, BLACK)
+    print("Loading " + url + "...")
+    color(BRIGHT, BLACK)
+    let page = httpget(url)
+    if page != nil and is_picture(page) then
+        # a picture, not a page: show it, then go back to the page you were on (so it isn't
+        # added to the history either, which is why this gives back false)
+        show_picture(page, url)
+        return false
+    end
+    if page == nil then
+        # the site's name, for the fw web command, without http:// or a :port
+        let name = sub(site(url), find(url, "://") + 3)
+        let colon = find(name, ":")
+        if colon != -1 then name = sub(name, 0, colon) end
+        # httpget doesn't say why, so it's one of the two
+        message = "Couldn't load it: no such page, or the site needs fw web " + name + " 80"
+        return false
+    end
+    address = url
+    convert_html(page)
+    return true
+end
+
+func show(top)
+    # draw one screen of the page, starting at line top
+    cls()
+    # the title along the top (or the address, if the page hasn't got a title)
+    let heading = squash(title)
+    if heading == "" or heading == " " then heading = address end
+    color(TITLE_COLOUR, BLACK)
+    print(sub(heading, 0, WIDTH))
+    let i = top
+    while i < top + SCREEN_LINES do
+        if i < len(lines) then
+            color(lines[i][0], BLACK)
+            print(lines[i][1])
+        else
+            print("")
+        end
+        i = i + 1
+    end
+    # and along the bottom, a message if there is one, or how to get about
+    if message != "" then
+        color(YELLOW, BLACK)
+        print(sub("[ ! ] " + message, 0, WIDTH))
+        message = ""
+    else
+        color(DARK_GRAY, BLACK)
+        let last = top + SCREEN_LINES
+        if last > len(lines) then last = len(lines) end
+        # which lines these are, out of how many: "1-21/70"
+        let where = (top + 1) + "-" + last + "/" + len(lines)
+        print(sub(where + "  number: link  Enter: more  u: up  b: back  g: go  s: search  q: quit", 0, WIDTH))
+    end
+    color(BRIGHT, BLACK)
+end
+
+func go(url)
+    # open a new page, and remember the one before it for going back. true if it opened
+    let before = address
+    if open(url) then
+        if before != "" then push(history, before) end
+        return true
+    end
+    return false
+end
+
+
+func main()
+    # get the URL from the user (or from what was typed after browser), and load it
+    let start = ""
+    if len(args) > 0 then
+        start = args[0]
+    else
+        print("aerOS web browser")
+        start = input("URL: ")
+    end
+    if start == nil or fix(start) == "" then return end
+    if not open(fix(start)) then
+        warn(message)
+        return
+    end
+
+    # then show it a screen at a time, and do what's typed underneath
+    let top = 0
+    while true do
+        show(top)
+        let typed = input("> ")
+        if typed == nil then break end
+        let answer = lower(join(split(typed), ""))
+        # and the words typed, for g and s
+        let words = split(typed)
+        let first = ""
+        if len(words) > 0 then first = lower(words[0]) end
+
+        if answer == "q" then
+            break
+        elif answer == "" or answer == "n" then
+            # the next screen of the page, if there's more
+            if top + SCREEN_LINES < len(lines) then
+                top = top + SCREEN_LINES
+            else
+                message = "That's the end of the page."
+            end
+        elif answer == "u" then
+            # the screen before
+            top = top - SCREEN_LINES
+            if top < 0 then top = 0 end
+        elif answer == "b" then
+            # the page before this one
+            if len(history) == 0 then
+                message = "There's no page to go back to."
+            elif open(history[len(history) - 1]) then
+                pop(history)
+                top = 0
+            end
+        elif first == "g" and len(words) > 1 then
+            # g and an address: go there
+            if go(fix(words[1])) then top = 0 end
+        elif first == "s" and len(words) > 1 then
+            # s and some words: search for them with FrogFind, which needs fw web frogfind.com 80
+            let search = join(split(sub(join(words, " "), 2)), "+")
+            if go(SEARCH + search) then top = 0 end
+        elif int(answer) != nil then
+            # a link's number
+            let number = int(answer)
+            if number < 1 or number > len(links) then
+                message = "There's no link " + number + " on this page."
+            elif go(links[number - 1]) then
+                top = 0
+            end
+        else
+            message = "Type a link's number, Enter, u, b, g and an address, s and words, or q."
+        end
+    end
+    cls()
+end
+
+main()

@@ -292,8 +292,34 @@ gives it back to the terminal, so a program drawing graphics calls `gopen()` aga
 (see [VIDEO.md](VIDEO.md)) · `exit()` ·
 `queue(line)` add a program to the queue the `GO` command runs, e.g. `queue("hello.aer a b")`
 or `queue("s:some text")`; returns how many are queued (-1 if the process stack is full) ·
+`launch(app, back)` when the program ends, run an installed app (`"maze3d"`, or a path such as
+`"/apps/maze3d.aer"`: a program in `/bin/`, `/bin/games/` or `/apps/`), then start the program
+again with `back` (text, optional) as its `args`; true if that will happen. Only one program
+runs in front at a time, so this is how the desktop opens apps. The app gets nothing after its
+name, and the program's `back` doesn't count as typed: files named in either are asked about
+as usual. It won't start an app in a folder the program could change without asking (one it
+made, or was told yes to), so a program can't write a program and quietly run it. After a text
+app AerOS waits for a key before the program comes back ·
+`power(what)` turn the computer off (`"off"`, as `OFF` does) or restart it (`"restart"`, as
+`RBT`), after AerOS asks you itself (a box over graphics); false if you said no, otherwise it
+never comes back. Save first: there is no going back once you say yes ·
 `sysinfo()` everything AerOS knows about the computer, as a list of `[group, name, value]`
 rows, e.g. `["Processor", "Speed", "about 2400 MHz"]` (`/bin/sysinfo.aer` shows them) ·
+`telemetry()` how busy AerOS is right now, for a live display (the desktop's system monitor
+asks once a second). Unlike `sysinfo()` it is quick: it only reads counters AerOS keeps anyway,
+never waits, never touches a disk and never starts a network card app mode put away. It gives
+`[ms, idle ms, threads, memory, disk cache, network]`, e.g.
+`[6294, 3353, [["main", "running"], ["disk writer", "sleeping"]], [4286, 257489], [1, 4096, 1618, 11, 0], [true, false, true, "10.0.2.15", 0, 0, 0, 0]]`:
+`ms` is milliseconds since AerOS started and `idle ms` how many of them the processor had
+nothing to do (stopped with `hlt` until the next interrupt: waiting for a key, `sleep()`,
+`frame()`; `clck_idle_ms` in `src/sys/sys_clck.h`), so asked twice, the share of the time
+between that wasn't idle is the CPU load; `threads` is `[name, state]` for each thread
+(`"running"`, `"ready"`, `"sleeping"`, `"waiting"`: see THREADS.md); `memory` is
+`[KB of the kernel heap used, KB it has]`; `disk cache` is `[KB kept, KB it can keep,
+sectors found in it, sectors read from the drive, KB changed and not written yet]`
+(DISK_CACHE.md); `network` is `[is there a card, is it running, is the link up, AerOS's
+address, sealed messages sent, received, packets blocked, firewall rules]` (NETWORK.md: a card
+app mode put away isn't running, but its link is still known) ·
 `disks()` the hard disks there are, as `[number, model, megabytes, what is on it]` ·
 `install(number)` erase that disk and install AerOS on it: only in demo mode, and only after
 AerOS has asked you itself (see [installing](INSTALLING.md)) ·
@@ -337,9 +363,37 @@ Colours are numbers like `0xFF7F00`, or `rgb(255, 127, 0)`. Drawing off the edge
 `gw()` · `gh()` · `gclear(colour)` · `pixel(x, y, colour)` ·
 `rect(x, y, w, h, colour)` filled · `line(x1, y1, x2, y2, colour)` ·
 `text(x, y, text, colour, size)` (size 1 is 8 x 16 pixels per character) ·
-`image(bytes, x, y, w, h)` draw a BMP picture (8, 24 or 32 bit), scaled to fit `w` x `h` if given
-(up to 16384 x 16384, so it can be far bigger than the screen; only the part on screen is drawn) ·
-`imgsz(bytes)` its `[width, height]`, or nil if it isn't a BMP
+`image(bytes, x, y, w, h)` draw a picture, scaled to fit `w` x `h` if given (up to 16384 x 16384,
+so it can be far bigger than the screen; only the part on screen is drawn): BMP (8, 24 or 32
+bit), PNG, GIF (its first picture) or JPEG (baseline or progressive). See-through parts of a PNG
+or GIF show what was drawn there before · `imgsz(bytes)` its `[width, height]`, or nil if it
+isn't one of those. Both take the picture as bytes from `rdb`, or as fetched by `httpget` (the
+`browser` package shows web pictures this way). A PNG, GIF or JPEG is decoded the first time
+it is drawn and kept, so drawing the same one again (every frame of a game) is quick
+
+Two more draw a picture as a "texture", for ray casting games like `maze3d`, where a per-pixel
+loop in AerLang would be far too slow. Both repeat the picture past its edges (so it tiles),
+darken it by `light` (1 is the picture as it is, 0 black, so far walls can be dark), take
+positions in the picture's pixels (decimals allowed), and give false if it isn't a picture.
+See-through parts are drawn solid, except by `imgcol`'s `see_through` ·
+`imgcol(bytes, x, y, w, h, u0, u1, light, see_through)` a strip of wall: `w` x `h` at `x`, `y`,
+showing the picture's columns from `u0` at its left to `u1` at its right, each its whole height
+stretched to `h` (taller than the screen is fine). With `see_through` true it is a strip of a
+sprite: the picture's see-through pixels are left out, so what is behind shows (a 32 bit BMP's
+4th byte counts as how solid a pixel is: under 128 is see-through; a 24 bit BMP is solid), and
+it is lit like a wall, so a monster in the dark only shows in your flashlight's beam · `imgrow(bytes, x, y, w, h, u0, v0, u1, v1, light)` a
+band of floor or ceiling: `w` x `h` at `x`, `y`, every row the picture read along the straight
+line from (`u0`, `v0`) at the left to (`u1`, `v1`) at the right ·
+`imglight(x, y, radius, ambient)` a spotlight, like a flashlight, on everything `imgcol` and
+`imgrow` draw from then on: they are lit only inside a circle round `x`, `y` on the screen (fully
+out to a third of the radius, then fading) and outside it only by `ambient` (0 to 1, 0 if left
+out: pitch black), the faint light of a room you can just make things out in, or for a moment
+the whole room, in a flash of lightning. `imglight()` turns it off (it is off
+when a program starts); other drawing (`rect`, `text`, `image`) is never dimmed by it, so
+glowing things can be drawn in the dark. Use BMPs for these (32 bit are quickest): they are drawn straight from their bytes, while only the last PNG, GIF or JPEG
+decoded is kept, so drawing several in turn decodes them again and again (in `maze3d`, 3
+frames a second with PNGs against 25 with BMPs). How they work is in
+`src/drivers/video/gfx.c`
 
 ```
 gopen()
@@ -349,6 +403,14 @@ text(10, 320, "Press a key", 0xFFFFFF, 2)
 key()
 ```
 
+Two more change what is already drawn, for effects over a whole picture:
+`gtint(x, y, w, h, colour, amount)` mixes every pixel of that area with `colour`, `amount` of the
+way (0 to 1): a little black more each frame fades out, a moment of red is a hurt ·
+`gnoise(x, y, w, h, amount)` makes every pixel lighter or darker by a random amount up to
+`amount` (0 to 255), like the grain of a picture seen in the dark, or static; it is different
+each time, so it seethes. Both work on every pixel, so on a slow computer use them on part of
+the screen, or now and then. How they work is in `src/drivers/video/gfx.c`.
+
 **For games** (smooth movement, keys held down, sounds that overlap)
 `gbuf(on)` with `true`, draw into a back buffer (a copy of the screen in memory) instead of
 the screen, so nothing shows until `gshow()` · `gshow()` put the finished frame on the screen
@@ -356,9 +418,13 @@ in one go, so it never flickers · `keydown(key)` is the key held down right now
 (`"a"`, `" "`) or `KEY_LEFT`, `KEY_SPACE`, `KEY_SHIFT`, `KEY_CTRL`, `KEY_ALT`... It doesn't wait
 (unlike `key()`) and any number of keys can be down at once ·
 `sload(path)` load a WAV or MP3 into memory, ready to play (nil if it can't) ·
-`splay(sound, loop, volume)` start it and carry on straight away; `loop` plays it round and round,
-`volume` is 0 to 100. Up to 8 sounds play at once, mixed together. Returns a number for:
-`sstop(n)` stop it (`sstop()` stops every sound) · `isply(n)` is it still playing?
+`splay(sound, loop, volume, pan)` start it and carry on straight away; `loop` plays it round and
+round, `volume` is 0 to 100, and `pan` puts it on the left (-100) or the right (100), or
+anywhere between (0, the middle, if left out). Up to 8 sounds play at once, mixed together.
+Returns a number for:
+`svol(n, volume, pan)` change its volume and pan while it plays, to fade it or to move it round
+you as whatever makes it moves (or as you turn) · `sstop(n)` stop it (`sstop()` stops every
+sound) · `isply(n)` is it still playing?
 Sounds stop when the program ends.
 
 Two ways to read keys, for two jobs: `keydown()` for things that last while a key is held
@@ -412,11 +478,44 @@ smoothly whatever the program is doing.
 The `maze3d` package (`pkg install maze3d`) goes further: a first-person 3D maze, drawn with
 ray casting the way early 3D games were. For each strip of the screen it sends a ray across a
 grid of squares until it hits a wall, and draws that wall shorter the further away it is. The
-crystals are sprites, placed with the same maths backwards and hidden behind nearer walls. It
-uses decimals, `sin` / `cos`, `keydown`, `mousemove` (for looking around), `gbuf` and `frame`,
-and its comments explain each step,
-so it is meant to be read and changed: draw your own maze in `MAP`, add wall colours, or widen
-`STRIP_WIDTH` for more speed on a slow computer.
+crystals are sprites, placed with the same maths backwards and hidden behind nearer walls. So
+are the ghosts that haunt it, which find their way to you along a step map of the maze (how
+many steps every square is from yours, counted outwards from you): one that touches you costs
+a life, and your light (Space or a click) sends one away for a while. Its menu chooses the
+hand-drawn maze or a new one made up for each game (up to 55 x 55 squares, dug out by a
+"recursive backtracker"), and how many crystals, ghosts and lives there are. The map in the
+corner is a BMP it builds in `bytes(n)` once for each maze and draws with `image()`, which
+is far quicker than a rectangle for every wall of a big maze on every frame. Its music and
+sound effects are WAV files it comes with, loaded once with `sload` and started with `splay`,
+so the quiet looped music plays on under footsteps, crystals and ghosts (the menu turns the
+music, or all sound, off; with no sound card the important sounds are `beep`s). They are
+made from plain waves, the way old game chips made them, by `tools/make_maze3d_sounds.py`,
+which can be changed and run again. It looks like a dungeon: stone, brick and mossy walls, a
+flagstone floor and a cobbled ceiling, pitch black but for the beam of your flashlight
+(`imglight`), in which the ghosts and crystals glow. They are 64 x 64 BMPs worked out pixel
+by pixel (blocks, bevels, noise and a Voronoi pattern for the cobbles) by
+`tools/make_maze3d_textures.py`, and drawn with `imgcol` (each wall strip, picked by where its
+ray hit the wall) and `imgrow` (the floor and ceiling a band of rows at a time, each row being
+all one distance away), darker the further away they are. The menu's LOOK can instead light
+it all round with a LANTERN, or be WALLS ONLY or PLAIN, the old flat colours, for a slow
+computer (in QEMU, the flashlight runs at about 21 frames a second on the classic maze and
+17 on the huge one, and PLAIN at about 30 and 21). It uses
+decimals, `sin` / `cos`, `keydown`, `mousemove` (for looking around), `gbuf` and `frame`,
+and its comments explain each step, so it is meant to be read and changed: draw your own maze
+in `MAP`, add wall colours, or widen `STRIP_WIDTH` for more speed on a slow computer.
+
+The `knocks` package (Four Knocks, `pkg install knocks`) builds a horror game on Maze 3D's ray
+caster. Its levels are letterboxed like a film, the thing that hunts you and the furniture are
+sprites drawn with `imgcol(..., true)`, lit only by your flashlight, and every sound has a
+place: `splay`'s pan and `svol` put the thing's footsteps on your left or right as you turn,
+quieter the further away it is, counted along the corridors with a step map so you hear it
+round corners. It hunts by ear: each frame you make a noise that carries a number of steps
+(none standing still, a few walking, more running), and if it is that close, it hears you.
+Lightning is `imglight`'s ambient light for a moment, the static round the thing is `gnoise`,
+and fades and the red of the alarm are `gtint`. Its pictures are 3D models rendered from five
+sides by `tools/make_knocks_sprites.py` (ray marching "signed distance functions" with numpy),
+and its sounds, music and voices are made by `tools/make_knocks_sounds.py`. "knocks demo"
+plays it by itself, start to end.
 
 The `viewer` package is a complete app built from these: a picture picker and viewer that
 zooms (`+` / `-`, `0` to fit) by drawing the picture bigger than the screen and moving it

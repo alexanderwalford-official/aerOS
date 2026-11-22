@@ -123,19 +123,27 @@ The first time, let AerOS reach the server: `fw web packages.intercon.network 80
 | Package | What it is |
 | --- | --- |
 | `snake` | Snake, with high scores |
-| `maze3d` | a maze in 3D, seen from inside |
+| `maze3d` | a maze in 3D, seen from inside: a pitch black stone dungeon, seen by flashlight (or lantern light, or plain colours for a slow computer); choose its size, find the crystals, dodge the ghosts, with music and sound |
+| `knocks` | Four Knocks, a horror game: find your father in a pitch black observatory, by flashlight, while something blind hunts you by sound (headphones help) |
 | `move` | move a square with the arrow keys: a small example of a game |
 | `guess` | guess the number |
 | `viewer` | a picture viewer, with two pictures to try it on |
 | `clip` | a 6 second [video](video.md) |
 | `webserve` | a web server: show a folder to web browsers ([network](network.md)) |
+| `browser` | a web browser for http:// pages: `browser frogfind.com` ([network](network.md)) |
 | `bench` | how fast the disk is |
 | `anim` | the animations AerLang can draw |
-| `desktop` | a desktop with windows: a clock, files, notes, a calculator and more (from the CD, for its graphics screen) |
+| `desktop` | a desktop with windows: a clock, files, notes, a calculator, your installed apps, Sleep / Restart / Shut down, Settings for its colours, background picture and taskbar, and a live system monitor (from the CD, for its graphics screen) |
 
 A package is its program, `/apps/<name>.aer`, and a folder of its own, `/apps/<name>/`, for the
 files it comes with (the viewer's pictures) and what it keeps there (Snake's high scores). It
 may read its own folder without asking.
+
+The desktop shows every app in `/bin/` and `/apps/` as an icon and in its start menu. Opening
+one closes the desktop until the app ends, then it comes back with the same windows. Its
+settings are kept in `desktop.cfg` in your home folder. The little graphics by its clock are
+the system monitor: the network, how busy the processor is, the threads, the memory and the
+disk cache, live. Click them, or press Home, for a panel with graphs and numbers.
 | `pm` | show the process stack |
 
 ## Updating aerOS

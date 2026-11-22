@@ -245,6 +245,13 @@ uint32_t aer_profile (const token_t* tokens, int count);
 // the screen, sound), or NULL: a program run with BG mustn't use any
 const char* aer_front_only (const token_t* tokens, int count);
 
+// launch(program, back): when the program in front ends, run the app `program` ("maze3d" or
+// "/apps/maze3d.aer", in /bin/, /bin/games/ or /apps/), then start the program again with
+// `back` as its arguments. NULL if that will happen, or why not ("there is no app ..."). See
+// "launch()" in aer_interp.c
+#define AER_LAUNCH_ARGS_MAX 128
+const char* aer_launch_later (const char* program, const char* back);
+
 // is this word (length characters) one of AerLang's keywords? (aer_lexer.c)
 bool aer_is_keyword (const char* word, size_t length);
 

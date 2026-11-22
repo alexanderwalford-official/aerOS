@@ -120,6 +120,21 @@ typedef struct {
 
 void net_status (net_status_t* out);
 
+// A quick look, for the desktop's network light (AerLang's telemetry()): some of what
+// net_status says, but without starting a card that app mode has put away, and without waiting
+// for the network's lock (a background program part way through a web request can hold it for
+// seconds). Cheap enough to ask every second
+typedef struct {
+    bool card;                    // there is a network card
+    bool running;                 // ...it is running now (false: app mode put it away, net_rest)
+    bool link;                    // ...and it is plugged in
+    uint32_t address;             // AerOS's own address
+    uint32_t sent, received;      // sealed messages sent, and accepted
+    uint32_t blocked;             // packets thrown away because no rule allows them
+} net_glance_t;
+
+void net_glance (net_glance_t* out);
+
 // set AerOS's own address, netmask, gateway and DNS server, and keep them in /acc/network
 void net_set_address (uint32_t address, uint32_t netmask, uint32_t gateway, uint32_t dns);
 

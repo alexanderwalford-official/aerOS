@@ -17,8 +17,8 @@
                          spinner, frame
         bi_graphics.c    graphics (gopen, rect, image...), gbuf and gshow, keydown, and the mouse
         bi_sound.c       beep, play, sounds that mix (sload, splay, sstop, isply) and video
-        bi_system.c      sleep, time, random, sysinfo, queue, cmd, appmode, the log (logadd, logclear,
-                         setlogging, islogging) and exit
+        bi_system.c      sleep, time, random, sysinfo, telemetry, queue, cmd, launch, power,
+                         appmode, the log (logadd, logclear, setlogging, islogging) and exit
         bi_network.c     nsend, nrecv and httpget
         bi_trust.c       verify, packagekey and scan: deciding whether to trust something
         bi_database.c    dbopen, dbrun, dbquery and dbclose: databases (db/aerdb.h)
@@ -148,6 +148,11 @@ value_t bi_line (int argc, value_t* argv, int line);
 value_t bi_text (int argc, value_t* argv, int line);
 value_t bi_image (int argc, value_t* argv, int line);
 value_t bi_image_size (int argc, value_t* argv, int line);
+value_t bi_image_column (int argc, value_t* argv, int line);
+value_t bi_image_row (int argc, value_t* argv, int line);
+value_t bi_image_light (int argc, value_t* argv, int line);
+value_t bi_gtint (int argc, value_t* argv, int line);
+value_t bi_gnoise (int argc, value_t* argv, int line);
 value_t bi_gbuf (int argc, value_t* argv, int line);
 value_t bi_gshow (int argc, value_t* argv, int line);
 value_t bi_keydown (int argc, value_t* argv, int line);
@@ -160,6 +165,7 @@ value_t bi_beep (int argc, value_t* argv, int line);
 value_t bi_play (int argc, value_t* argv, int line);
 value_t bi_sload (int argc, value_t* argv, int line);
 value_t bi_splay (int argc, value_t* argv, int line);
+value_t bi_svol (int argc, value_t* argv, int line);
 value_t bi_sstop (int argc, value_t* argv, int line);
 value_t bi_isply (int argc, value_t* argv, int line);
 value_t bi_video (int argc, value_t* argv, int line);
@@ -169,8 +175,11 @@ value_t bi_sleep (int argc, value_t* argv, int line);
 value_t bi_time (int argc, value_t* argv, int line);
 value_t bi_random (int argc, value_t* argv, int line);
 value_t bi_system_info (int argc, value_t* argv, int line);
+value_t bi_telemetry (int argc, value_t* argv, int line);
 value_t bi_queue (int argc, value_t* argv, int line);
 value_t bi_cmd (int argc, value_t* argv, int line);
+value_t bi_launch (int argc, value_t* argv, int line);
+value_t bi_power (int argc, value_t* argv, int line);
 value_t bi_appmode (int argc, value_t* argv, int line);
 value_t bi_logadd (int argc, value_t* argv, int line);
 value_t bi_logclear (int argc, value_t* argv, int line);

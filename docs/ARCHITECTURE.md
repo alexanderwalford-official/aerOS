@@ -61,8 +61,12 @@ src/
               mouse.c     PS/2 mouse on IRQ12, only on while a program uses it (mouse() in AerLang)
               GIO.h       inb / outb port I/O and other one-instruction helpers
     video/    VGA_linear.c  the text console: VGA text mode, or 80x25 cells drawn on a framebuffer
-              gfx.c       pixels, rectangles, lines, text, BMP pictures and scaled pixel blocks for
+              gfx.c       pixels, rectangles, lines, text, pictures and scaled pixel blocks for
                           apps, drawn straight to the screen or into a back buffer (gfx_show)
+              picture.c   PNG, GIF and JPEG pictures turned into pixels for gfx.c (see picture.h)
+              png.c       PNG: deflate undone (lib/inflate.c), then each row's filter
+              gif.c       GIF: LZW undone, the first picture of an animation
+              jpeg.c      JPEG, baseline and progressive, with a whole number DCT
               bga.c       changing resolution on QEMU / Bochs / VirtualBox graphics (RES command)
               font8x16.c  the console font
     storage/  ata.c       IDE / ATA disks, read and write sectors (PIO)
@@ -129,6 +133,7 @@ src/
     busy.c                busy(): long loops call it so a spinner can turn (see sys/ui.h)
     mp3.c + minimp3/      MP3 decoding
     mpg.c + pl_mpeg/      MPEG-1 video and MP2 sound decoding (pl_mpeg, MIT)
+    inflate.c             undoing deflate (zlib) compression, for PNG pictures
     fpu.c                 switches the x87 FPU on, for decimal numbers (AerLang's, the decoders')
     aer_math.c            sqrt, sin, cos, atan2, floor on the x87, and decimals to text and back
     shim/                 <string.h> and <stdlib.h> for the decoders, pointing at the files above

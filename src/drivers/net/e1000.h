@@ -39,7 +39,7 @@ const char* e1000_name (void);
 // the card's own hardware address (its MAC address)
 void e1000_mac (uint8_t mac[6]);
 
-// is the cable plugged in (in QEMU: is the link up)?
+// is the cable plugged in (in QEMU: is the link up)? Also while the card rests (e1000_stop)
 bool e1000_link_up (void);
 
 // send a frame of `length` bytes (at most ETHERNET_FRAME_MAX). False if the card didn't take it

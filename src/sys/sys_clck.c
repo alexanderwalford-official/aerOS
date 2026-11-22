@@ -49,12 +49,23 @@ static volatile uint32_t ticks = 0; // milliseconds since clck_init()
 
 void (*clck_tick_hook)(void) = NULL;
 
+// true while the processor is stopped in cpu_idle (drivers/input/GIO.h sets it around "hlt")
+volatile bool cpu_halted = false;
+
+// ticks that found the processor stopped, with nothing to do: how long it has been idle, in
+// milliseconds (clck_idle_ms). Sampled once a tick, so it is right to about a millisecond
+static volatile uint32_t idle_ticks = 0;
+
 // IRQ0 handler, the end of interrupt is sent by isr_dispatch
 // runs once a millisecond, so it does as little as possible
 static void timer_handler(struct regs* r) {
     // the saved registers are not needed, this just silences the unused parameter warning
     (void)r;
     ticks++;
+    // was the processor resting when this tick woke it? (see cpu_halted above)
+    if (cpu_halted) {
+        idle_ticks++;
+    }
     // the exact cycle each tick lands on jitters a little, which helps the random generator
     crypto_add_entropy(ticks);
     // anything that needs a regular nudge, like the sound mixer keeping the card topped up
@@ -96,6 +107,11 @@ static uint32_t busy_ms = 0;
 // clck_verify() found it dead) ticks stays frozen, so the busy wait's own count is the best guess
 uint32_t clkuptms(void) {
     return clck_ready ? ticks : busy_ms;
+}
+
+// how long the processor has been idle, in milliseconds since the timer started (see sys_clck.h)
+uint32_t clck_idle_ms(void) {
+    return idle_ticks;
 }
 
 // wait ms milliseconds, see sys_clck.h for when each method is used

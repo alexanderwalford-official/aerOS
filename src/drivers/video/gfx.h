@@ -1,6 +1,6 @@
 /*
     gfx.h
-    Graphics for apps: pixels, rectangles, lines, text and BMP pictures, drawn straight into the
+    Graphics for apps: pixels, rectangles, lines, text and pictures (BMP, PNG, GIF, JPEG), drawn straight into the
     framebuffer. Colours are 0xRRGGBB. Everything is clipped to the screen, so drawing partly
     (or completely) off screen is fine.
 
@@ -47,14 +47,42 @@ void gfx_text(int x, int y, const char* text, uint32_t rgb, int scale);
 // row to the next (usually just w). Used for video frames, and handy for sprites
 void gfx_draw_pixels(const uint32_t* pixels, int w, int h, int stride, int x, int y, int out_w, int out_h);
 
-// the size of a BMP picture, false if the data isn't a BMP we can show (8, 24 or 32 bit, uncompressed)
+// the size of a picture, false if the data isn't one we can show: a BMP (8, 24 or 32 bit,
+// uncompressed), PNG, GIF or JPEG (see picture.h)
 bool gfx_image_size(const uint8_t* data, uint32_t length, int* w, int* h);
 
-// draw a BMP picture with its top left corner at x, y. If max_w and max_h are above 0 the picture
-// is scaled (up or down, keeping its shape) to fit in that box. The box may be bigger than the
-// screen (up to 16384 pixels each way) and x, y may be negative, which is how a picture is zoomed
-// in on: only the part that lands on the screen is drawn. False if it isn't a BMP we can show.
+// draw a picture (BMP, PNG, GIF or JPEG) with its top left corner at x, y. If max_w and max_h
+// are above 0 the picture is scaled (up or down, keeping its shape) to fit in that box. The box
+// may be bigger than the screen (up to 16384 pixels each way) and x, y may be negative, which is
+// how a picture is zoomed in on: only the part that lands on the screen is drawn. See-through
+// parts of a PNG or GIF let what's already there show through. False if it isn't one we can show.
 bool gfx_image(const uint8_t* data, uint32_t length, int x, int y, int max_w, int max_h);
+
+// Textures, for ray casting games (see the notes in gfx.c): a picture stretched over a strip of
+// wall or a band of floor, darkened by light (1 as it is, 0 black), repeating past its edges.
+// Positions in the picture (u across, v down) are in pixels, and may be decimals.
+//   column: a w x h strip at x, y showing the picture's columns from u0 at its left to u1 at
+//           its right, each the picture's whole height stretched to h
+//   row:    a w x h band at x, y whose every row reads the picture along the line from
+//           (u0, v0) at the left to (u1, v1) at the right
+// See-through parts of a PNG or GIF are drawn solid, except in a column drawn see_through (a
+// sprite's strip), which skips them (a 32 bit BMP's 4th byte counts too: under 128 is
+// see-through). False if the data isn't a picture.
+bool gfx_texture_column(const uint8_t* data, uint32_t length, int x, int y, int w, int h, double u0, double u1, double light, bool see_through);
+bool gfx_texture_row(const uint8_t* data, uint32_t length, int x, int y, int w, int h, double u0, double v0, double u1, double v1, double light);
+// A spotlight on the textures drawn from now on, like a flashlight: they are lit only inside a
+// circle round x, y on the screen (fully out to a third of the radius, then fading), and
+// outside it only by `ambient` (0 to 1: 0 is pitch black). A radius of 0 or less turns it
+// off, and gfx_begin starts with it off
+void gfx_texture_light(int x, int y, int radius, double ambient);
+
+// Effects over what has been drawn, on a w x h area at x, y (cut to fit the screen):
+//   tint:  every pixel mixed with the colour 0xRRGGBB, `amount` of the way (0 to 1): fading
+//          to black, or a red flash
+//   noise: every pixel made lighter or darker by a random amount up to `amount` (0 to 255),
+//          like the grain of a picture seen in the dark
+void gfx_tint(int x, int y, int w, int h, uint32_t rgb, double amount);
+void gfx_noise(int x, int y, int w, int h, int amount);
 
 // Draw over the screen for a moment, without spoiling what a program has drawn:
 //

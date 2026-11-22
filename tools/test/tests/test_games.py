@@ -5,7 +5,9 @@ would (t.package), rather than fetching it from a package server.
 In graphics mode the text screen can't be read, so these check the serial log (where the
 terminal's text also goes) and the pixels of screenshots."""
 
+import struct
 import time
+import wave
 
 
 def colours(shot):
@@ -69,9 +71,201 @@ def test_maze3d(t):
     if aeros.screenshot('walked')[2] == after[2]:
         aeros.fail('holding Up did not move')
 
+    quit_maze(aeros)
+
+
+def quit_maze(aeros):
+    """Escape from a game of Maze 3D: the first goes back to its menu, the second quits."""
+    aeros.key('esc')
+    time.sleep(1)
     aeros.key('esc')
     aeros.wait_for('Thanks for playing Maze 3D!', 20)
     aeros.expect_not('Error')
+
+
+def choose(aeros, keys):
+    """Press keys one at a time, e.g. to make choices on Maze 3D's menu."""
+    for key in keys:
+        aeros.key(key)
+        time.sleep(0.3)
+
+
+# maze3d.aer's colours for the eyes of a ghost chasing you, and for the "CAUGHT" screen
+GHOST_STARE = 0xFF3355
+CAUGHT = 0xFF5A5F
+
+
+def boot_with_maze(t, changes, sound=None):
+    """Boot with a copy of maze3d.aer changed by (old line, new line) pairs, installed as maze3d
+    (with its sounds). sound is t.boot's: a file name records what the sound card plays."""
+    game = open(t.repo('packages', 'maze3d.aer')).read()
+    for old, new in changes:
+        if game.count(old) != 1:
+            raise AssertionError(f'maze3d.aer no longer has the line {old.strip()!r}: update this test')
+        game = game.replace(old, new)
+    with open(t.path('maze3d.aer'), 'w') as f:
+        f.write(game)
+    files = t.package('maze3d')
+    files['/apps/maze3d.aer'] = t.path('maze3d.aer')
+    aeros = t.boot(graphics=True, sound=sound, disk=t.disk(files=files))
+    aeros.first_login()
+    return aeros
+
+
+# A ghost two squares in front of where you start, looking straight at you
+GHOST_AHEAD = ('    "#P...#.....o..X#",\n', '    "#P.X.#.....o..X#",\n')
+
+
+def test_maze3d_ghosts(t):
+    # Ghosts that stand still, one of them just ahead: it is drawn (with red eyes, as it is
+    # near enough to chase you), and the light sends it away
+    aeros = boot_with_maze(t, [GHOST_AHEAD,
+                               ('let GHOST_SPEED = 1.2 ', 'let GHOST_SPEED = 0.0 '),
+                               ('let CHASE_SPEED = 1.9 ', 'let CHASE_SPEED = 0.0 ')])
+    aeros.run('maze3d', 5)
+    aeros.key('spc')
+    wait_for_colour(aeros, GHOST_STARE, 'ghost', timeout=20)
+    aeros.key('spc')
+    time.sleep(1.5)
+    if has_colour(aeros.screenshot('light'), GHOST_STARE):
+        aeros.fail('shining the light at the ghost did not send it away')
+    quit_maze(aeros)
+
+
+def test_maze3d_caught(t):
+    # With one life (chosen on the menu: down to LIVES, then left from 3 to 1), the ghost just
+    # ahead comes for you, and that's the game over
+    aeros = boot_with_maze(t, [GHOST_AHEAD])
+    aeros.run('maze3d', 5)
+    choose(aeros, ['down', 'down', 'down', 'left', 'spc'])
+    wait_for_colour(aeros, CAUGHT, 'caught', timeout=30)
+    aeros.key('esc')
+    aeros.wait_for('Thanks for playing Maze 3D!', 20)
+    aeros.expect_not('Error')
+
+
+def test_maze3d_huge(t):
+    # The biggest made-up maze, with lots of crystals and many ghosts: it is made, drawn, and
+    # can be looked round. (It is made up afresh each time, so it is only checked loosely.)
+    # On the menu, left from CLASSIC goes round to HUGE, then crystals and ghosts go up one each
+    aeros = boot_with(t, 'maze3d')
+    aeros.run('maze3d', 5)
+    choose(aeros, ['left', 'down', 'right', 'down', 'right', 'spc'])
+    time.sleep(8)
+    before = aeros.screenshot('huge')
+    if colours(before) < 6:
+        aeros.fail('the huge maze looks empty')
+    aeros.key('left', 600)
+    time.sleep(1.5)
+    if aeros.screenshot('turned')[2] == before[2]:
+        aeros.fail('holding Left did not turn in the huge maze')
+    quit_maze(aeros)
+
+
+def colours_in(shot, left, top, right, bottom):
+    """How many different colours there are in a box of a screenshot (every pixel of it)."""
+    width, height, pixels = shot
+    return len({pixels[(y * width + x) * 3:(y * width + x) * 3 + 3]
+                for y in range(top, bottom) for x in range(left, right)})
+
+
+def test_maze3d_dungeon(t):
+    # The dungeon looks: the pictures the game comes with are read and drawn on the walls
+    # (imgcol) and the floor (imgrow). On the PLAIN look the floor is a few flat bands and each
+    # strip of wall one colour; with the pictures (LANTERN), both are full of different colours.
+    # The FLASHLIGHT look (the first) lights them only in a circle in the middle of the view
+    # (imglight): the wall ahead is stone, and the screen's left edge pitch black. The ghosts
+    # stand still, so nothing moves between the pictures but the look.
+    aeros = boot_with_maze(t, [('let GHOST_SPEED = 1.2 ', 'let GHOST_SPEED = 0.0 '),
+                               ('let CHASE_SPEED = 1.9 ', 'let CHASE_SPEED = 0.0 ')])
+    aeros.run('maze3d', 5)
+    aeros.key('spc')
+    time.sleep(4)
+    flashlight = aeros.screenshot('flashlight')
+    # Escape to the menu, up (round from MAZE) to LOOK, right to LANTERN, and start again;
+    # then back, left twice (round from FLASHLIGHT) to PLAIN, and start
+    looks = {}
+    for name, keys in (('lantern', ['up', 'right', 'spc']), ('plain', ['left', 'left', 'spc'])):
+        aeros.key('esc')
+        time.sleep(1)
+        choose(aeros, keys)
+        time.sleep(4)
+        looks[name] = aeros.screenshot(name)
+    width, height, _ = flashlight
+    # the floor at the bottom middle of the screen, the wall straight ahead at the horizon (a
+    # strip just right of the middle, clear of the cross the light shines at), and the left
+    # edge, out of the flashlight's beam (and clear of the words in the corners)
+    floor_box = (width // 2 - 100, height - 60, width // 2 + 100, height - 10)
+    wall_box = (width // 2 + 20, height // 2 - 30, width // 2 + 28, height // 2 + 30)
+    edge_box = (0, height // 2 - 50, 60, height // 2 + 50)
+    for name, box in (('floor', floor_box), ('wall', wall_box)):
+        with_pictures, without = colours_in(looks['lantern'], *box), colours_in(looks['plain'], *box)
+        if with_pictures < 12 or with_pictures < without * 3:
+            aeros.fail(f'the {name} does not look like stone: {with_pictures} colours with the '
+                       f'pictures, {without} without')
+    if colours_in(flashlight, *wall_box) < 12:
+        aeros.fail('the flashlight does not light the wall ahead')
+    if colours_in(flashlight, *edge_box) != 1 or not has_colour(flashlight, 0x000000):
+        aeros.fail("outside the flashlight's beam is not pitch black")
+    if colours_in(looks['lantern'], *edge_box) < 6:
+        aeros.fail('the lantern does not light the edge of the view')
+    quit_maze(aeros)
+
+
+def loud_quarters(path):
+    """For each quarter second of a recording QEMU made: None if it is quiet, or else its pitch
+    in Hz, from how often the wave crosses zero. (Like notes_in in test_media.py, but keeping
+    the quiet parts, so a test can see when things were heard)"""
+    with wave.open(path) as w:
+        rate, channels, count = w.getframerate(), w.getnchannels(), w.getnframes()
+        samples = struct.unpack(f'<{count * channels}h', w.readframes(count))[0::channels]
+    quarters = []
+    window = rate // 4
+    for start in range(0, len(samples) - window + 1, window):
+        part = samples[start:start + window]
+        loudness = (sum(s * s for s in part) / len(part)) ** 0.5
+        if loudness < 300:
+            quarters.append(None)
+            continue
+        crossings = sum(1 for a, b in zip(part, part[1:]) if (a < 0) != (b < 0))
+        quarters.append(crossings / 2 / (len(part) / rate))
+    return quarters
+
+
+CRYSTAL_BELL = 2093   # the note (C7) crystal.wav rings on (see tools/make_maze3d_sounds.py)
+
+
+def test_maze3d_sound(t):
+    # With a sound card, recorded: the menu's music plays, and taking a crystal rings its bell.
+    # A crystal is put next to the start, and can be taken from there, so it is taken on the
+    # very first frame. The game is played with SOUND on EFFECTS ONLY (no music), and the
+    # ghosts stand still, so after the bell all is quiet.
+    recording = t.path('out.wav')
+    aeros = boot_with_maze(t, [('    "#P...#.....o..X#",\n', '    "#Po..#.....o..X#",\n'),
+                               ('let PICK_UP_DISTANCE = 0.5 ', 'let PICK_UP_DISTANCE = 1.2 '),
+                               ('let GHOST_SPEED = 1.2 ', 'let GHOST_SPEED = 0.0 '),
+                               ('let CHASE_SPEED = 1.9 ', 'let CHASE_SPEED = 0.0 ')],
+                           sound=recording)
+    aeros.run('maze3d', 6)
+    # down to SOUND, right to EFFECTS ONLY, and start
+    choose(aeros, ['down', 'down', 'down', 'down', 'right', 'spc'])
+    time.sleep(5)
+    quit_maze(aeros)
+    aeros.quit()
+
+    quarters = loud_quarters(recording)
+    bell = [i for i, hz in enumerate(quarters) if hz and abs(hz - CRYSTAL_BELL) <= CRYSTAL_BELL * 0.03]
+    if not bell:
+        aeros.fail(f'the crystal\'s bell ({CRYSTAL_BELL} Hz) was not heard: {quarters}')
+    at = bell[0]
+    # the 3 seconds before it (but the last half second: the start sound) were the menu's music
+    menu = quarters[max(0, at - 14):at - 2]
+    if sum(1 for q in menu if q) < 10:
+        aeros.fail(f'the menu\'s music was not heard before the game: {menu}')
+    # from 1.5 seconds after it, for 2 seconds: nothing (no music, with EFFECTS ONLY)
+    after = quarters[at + 6:at + 14]
+    if any(after):
+        aeros.fail(f'there was sound after the bell, with only effects on: {after}')
 
 
 def test_move(t):

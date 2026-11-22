@@ -79,7 +79,11 @@ printing something that looks like AerOS's own `[ ? ]` questions or the login sc
 asking for a password. Read such a program with `rd` before you trust it.
 
 A program that writes another program and queues it can make that one do anything: SCAN says
-so, and you can scan the other one too.
+so, and you can scan the other one too. `launch()`, which starts an installed app when a
+program ends (the desktop opens apps with it), can't be used that way: it only starts apps in
+`/bin/` and `/apps/`, never in a folder the program could change without asking, and the app
+asks you about your files for itself. Turning the computer off or restarting it from a
+program (`power()`) always asks you first.
 
 A program can scan another too, with `scan(text)` in [AerLang](aerlang.md): an installer can show
 you what a program could do before it puts it on the disk.
