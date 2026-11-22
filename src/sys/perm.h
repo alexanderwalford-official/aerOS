@@ -84,6 +84,12 @@ bool perm_allows (const char* folder, const char* name, perm_kind_t kind);
 // without asking, until it ends. Does nothing at the terminal, which may anyway
 void perm_made_folder (const char* folder);
 
+// Could the running program change files in this folder now without being asked: it made the
+// folder, was told yes this time, or was told "always" before? AerLang's launch() uses it, so a
+// program can't write a program somewhere quietly and then start it (lang/aer_interp.c). True
+// at the terminal, which may change anything
+bool perm_could_change (const char* folder);
+
 // the "always" answers the logged in user has given (PERM lists them): fn is called for each,
 // numbered from 1. Returns how many there are
 typedef void (*perm_each_fn)(int number, const char* program, perm_kind_t kind, const char* folder, void* ctx);

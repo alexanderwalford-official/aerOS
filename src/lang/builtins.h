@@ -17,8 +17,8 @@
                          spinner, frame
         bi_graphics.c    graphics (gopen, rect, image...), gbuf and gshow, keydown, and the mouse
         bi_sound.c       beep, play, sounds that mix (sload, splay, sstop, isply) and video
-        bi_system.c      sleep, time, random, sysinfo, queue, cmd, appmode, the log (logadd, logclear,
-                         setlogging, islogging) and exit
+        bi_system.c      sleep, time, random, sysinfo, queue, cmd, launch, power, appmode, the log
+                         (logadd, logclear, setlogging, islogging) and exit
         bi_network.c     nsend, nrecv and httpget
         bi_trust.c       verify, packagekey and scan: deciding whether to trust something
         bi_database.c    dbopen, dbrun, dbquery and dbclose: databases (db/aerdb.h)
@@ -171,6 +171,8 @@ value_t bi_random (int argc, value_t* argv, int line);
 value_t bi_system_info (int argc, value_t* argv, int line);
 value_t bi_queue (int argc, value_t* argv, int line);
 value_t bi_cmd (int argc, value_t* argv, int line);
+value_t bi_launch (int argc, value_t* argv, int line);
+value_t bi_power (int argc, value_t* argv, int line);
 value_t bi_appmode (int argc, value_t* argv, int line);
 value_t bi_logadd (int argc, value_t* argv, int line);
 value_t bi_logclear (int argc, value_t* argv, int line);

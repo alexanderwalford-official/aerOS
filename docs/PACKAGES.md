@@ -112,7 +112,20 @@ description:
 | `browser` | a text web browser for plain `http://` pages: numbered links, back, paging, `s` to search with FrogFind, and pictures (BMP, PNG, GIF, JPEG) on a graphics screen | |
 | `bench` | how fast AerOS reads and writes its disk | |
 | `anim` | spinners, progress bars and moving text | |
-| `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, System and About, by mouse or keyboard | |
+| `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, System, Settings and About, and an icon for every app installed, by mouse or keyboard | |
+
+**The desktop** finds the apps as it starts: every program in `/bin/` and the packages in
+`/apps/` (not itself, and not `sleep`, which the power menu has). AerOS runs one program in
+front at a time, so opening one closes the desktop: it calls AerLang's `launch()`, the app has
+the screen, and when it ends AerOS starts the desktop again with the same windows open (after
+a text app, AerOS waits for a key first, so its last words can be read). The power button on the
+taskbar, and the end of the start menu, have Sleep (a dark screen until a key or the mouse
+wakes it, as `sleep` does, but with the windows kept), Restart and Shut down, which go through
+`power()`: AerOS asks you first, in a box over the desktop. Settings changes the colour theme
+(Ocean, Forest, Sunset or Graphite), the background (the theme's colours, or a BMP picture
+chosen from your files) and which side the taskbar is on, and keeps them in `desktop.cfg` in
+your home folder, read each time it starts. As that is your folder, AerOS asks before the
+desktop reads or changes it: A (always) answers once and for all.
 
 The tests don't need the server for them: `t.package('snake')` puts one on a test's disk the
 way `pkg install` would (`tools/test/run.py`).

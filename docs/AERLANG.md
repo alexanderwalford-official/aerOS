@@ -292,6 +292,17 @@ gives it back to the terminal, so a program drawing graphics calls `gopen()` aga
 (see [VIDEO.md](VIDEO.md)) · `exit()` ·
 `queue(line)` add a program to the queue the `GO` command runs, e.g. `queue("hello.aer a b")`
 or `queue("s:some text")`; returns how many are queued (-1 if the process stack is full) ·
+`launch(app, back)` when the program ends, run an installed app (`"maze3d"`, or a path such as
+`"/apps/maze3d.aer"`: a program in `/bin/`, `/bin/games/` or `/apps/`), then start the program
+again with `back` (text, optional) as its `args`; true if that will happen. Only one program
+runs in front at a time, so this is how the desktop opens apps. The app gets nothing after its
+name, and the program's `back` doesn't count as typed: files named in either are asked about
+as usual. It won't start an app in a folder the program could change without asking (one it
+made, or was told yes to), so a program can't write a program and quietly run it. After a text
+app AerOS waits for a key before the program comes back ·
+`power(what)` turn the computer off (`"off"`, as `OFF` does) or restart it (`"restart"`, as
+`RBT`), after AerOS asks you itself (a box over graphics); false if you said no, otherwise it
+never comes back. Save first: there is no going back once you say yes ·
 `sysinfo()` everything AerOS knows about the computer, as a list of `[group, name, value]`
 rows, e.g. `["Processor", "Speed", "about 2400 MHz"]` (`/bin/sysinfo.aer` shows them) ·
 `disks()` the hard disks there are, as `[number, model, megabytes, what is on it]` ·

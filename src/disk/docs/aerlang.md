@@ -142,7 +142,10 @@ only one signed by AerOS's makers, after asking you (`osupdatable()` says if it 
 `sysinfo()` gives everything AerOS knows about the computer as a list of
 `[group, name, value]`, e.g. `["Processor", "Speed", "about 2400 MHz"]`.
 `queue("hello.aer")` adds a program (with its arguments) to the queue that `go` runs, and
-gives back how many are queued. At the prompt only, `cmd("la")` runs a terminal command and
+gives back how many are queued. `launch("maze3d", "back")` runs an installed app (in `/bin/`
+or `/apps/`) when the program ends, then starts the program again with `back` as its `args`:
+the desktop opens apps this way. `power("off")` and `power("restart")` turn the computer off
+or restart it, after AerOS asks you. At the prompt only, `cmd("la")` runs a terminal command and
 gives back what it printed, as a list of lines.
 
 **App mode:** before a program runs, AerOS reads all of it, so it knows every part of AerOS

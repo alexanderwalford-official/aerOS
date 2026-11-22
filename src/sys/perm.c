@@ -533,3 +533,18 @@ void perm_made_folder (const char* folder) {
         remember_decision(folder, PERM_CHANGE, true);
     }
 }
+
+// could the running program change files in folder without asking? (see perm.h) Rules 1, 4
+// and 5 of perm_allows, without the asking of rule 6
+bool perm_could_change (const char* folder) {
+    if (perm_running == NULL) {
+        return true;
+    }
+    for (int i = 0; i < perm_running->decision_count; i++) {
+        bool same = strcasecmp(perm_running->decisions[i].folder, folder) == 0;
+        if (same && perm_running->decisions[i].allowed && perm_running->decisions[i].kind == PERM_CHANGE) {
+            return true;
+        }
+    }
+    return always_allowed(folder, PERM_CHANGE);
+}

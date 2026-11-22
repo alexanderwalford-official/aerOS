@@ -11,7 +11,7 @@
 anim 1.0 Spinners, progress bars and moving text: AerLang's text animations
 bench 1.0 How fast AerOS reads and writes its disk
 clip 1.0 A 6 second video, to try AerOS's video player on
-desktop 1.0 A desktop with windows: clock, files, notes, calculator and more
+desktop 1.1 A desktop with windows: clock, files, notes, calculator, your installed apps, power options and settings
 guess 1.0 Guess the number from 1 to 100
 maze3d 1.1 A maze in 3D, seen from inside: the classic maze or a new one up to 55 x 55, with crystals to find and ghosts that chase you
 move 1.0 Move a square with the arrow keys: a small example of a game

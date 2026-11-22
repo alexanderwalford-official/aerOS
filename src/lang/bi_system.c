@@ -5,6 +5,8 @@
     terminal command from the prompt (cmd), what app mode did (appmode), adding to AerOS's log
     (logadd), clearing it or turning it off after asking (logclear, setlogging, islogging),
     the disks there are and installing AerOS on one (disks, install: see sys/install.h),
+    starting an installed app in the program's place (launch), turning the computer off or
+    restarting it after asking (power),
     updating AerOS on an installed disk (osbuild, osversion, osupdatable, osupdate: see
     sys/update.h) and ending the program (exit).
 
@@ -33,6 +35,7 @@
 #include "../sys/install.h"
 #include "../sys/update.h"
 #include "../sys/boot.h"
+#include "../sys/power.h"
 #include "../lib/crypto.h"
 #include "../drivers/video/gfx.h"
 
@@ -147,6 +150,62 @@ value_t bi_cmd (int argc, value_t* argv, int line) {
     }
     aer_free(output);
     return lines;
+}
+
+// launch(app, back): when this program ends, run the installed app `app` ("maze3d", or
+// "/apps/maze3d.aer": a program in /bin/, /bin/games/ or /apps/, started with nothing after
+// its name), and when that ends, start this program again, with `back` (text, "" if left out)
+// as its arguments. True if that will happen, false if `app` isn't an app it may start.
+// The program ends itself as usual; calling launch() again picks a different app instead.
+// AerOS runs one program in front at a time, so this is how the desktop opens apps: see
+// "launch()" in aer_interp.c for the rules, and why they keep it from going round the
+// permission questions
+value_t bi_launch (int argc, value_t* argv, int line) {
+    if (aer->shell) {
+        aer_error(line, "launch() is for programs: at the prompt, type the app's name to run it");
+    }
+    const char* app = str_arg(argv, 0, line, "launch")->data.chars;
+    const char* back = argc > 1 ? str_arg(argv, 1, line, "launch")->data.chars : "";
+    if (slen(back) >= AER_LAUNCH_ARGS_MAX) {
+        aer_error(line, "launch()'s second argument is too long (at most %d characters)", AER_LAUNCH_ARGS_MAX - 1);
+    }
+    return aer_bool(aer_launch_later(app, back) == NULL);
+}
+
+// power(what): turn the computer off ("off", what OFF does) or restart it ("restart", what RBT
+// does), once AerOS itself has asked the person at the keyboard (perm_confirm: a box over the
+// graphics, or a question on the text screen). False if they said no; otherwise it never comes
+// back. The disk gets everything first (sys/power.c), but the program must save its own work
+// before it asks. There is no password to type, as at the prompt OFF and RBT need none: the
+// question is there so the person decides, not the program
+value_t bi_power (int argc, value_t* argv, int line) {
+    (void)argc;
+    const char* what = str_arg(argv, 0, line, "power")->data.chars;
+    bool off = strcasecmp(what, "off") == 0;
+    if (!off && strcasecmp(what, "restart") != 0) {
+        aer_error(line, "power() takes \"off\" or \"restart\", not \"%s\"", what);
+    }
+    const char* doing = off ? "turn off the computer" : "restart the computer";
+
+    // who is asking: the program's name, or the prompt
+    const char* program = perm_program_name();
+    char question[FS_NAME_MAX + 48];
+    if (program[0] != '\0') {
+        sfmt(question, sizeof(question), "%s wants to %s", program, doing);
+    } else {
+        sfmt(question, sizeof(question), "%c%s?", toupper(doing[0]), doing + 1);   // "Turn off the computer?"
+    }
+    if (!perm_confirm(question)) {
+        return aer_bool(false);
+    }
+    syslog_add("boot", "power", "%s: %s", program[0] != '\0' ? program : "the prompt", doing);
+    // the text screen back, so "It is now safe to turn off your computer" can be seen if the
+    // computer doesn't switch itself off
+    aer_give_screen_back();
+    if (off) {
+        sys_shutdown();
+    }
+    sys_reboot();
 }
 
 // appmode(): what app mode did for this program, as [the parts of AerOS it uses, KB of memory

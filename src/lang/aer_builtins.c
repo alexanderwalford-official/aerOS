@@ -105,6 +105,8 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("frame", bi_frame, 1, 1),
     BUILTIN("queue", bi_queue, 1, 1),
     BUILTIN("cmd", bi_cmd, 1, 1),
+    BUILTIN("launch", bi_launch, 1, 2),
+    BUILTIN("power", bi_power, 1, 1),
     BUILTIN("nsend", bi_net_send, 3, 3),
     BUILTIN("nrecv", bi_net_receive, 2, 2),
     BUILTIN("httpget", bi_http_get, 1, 1),
@@ -215,7 +217,7 @@ uint32_t aer_profile (const token_t* tokens, int count) {
 static const char* const front_only[] = {
     "input", "inpw", "key", "haskey", "keydown", "mouse", "mousemove", "mousedown",
     "cls", "color", "at", "progress", "spinner", "frame", "big", "clip", "setclip",
-    "logclear", "setlogging", "cmd", "queue", "install", "osupdate", NULL
+    "logclear", "setlogging", "cmd", "queue", "launch", "power", "install", "osupdate", NULL
 };
 
 // the first built-in a program's tokens name that only the program in front can use (see

@@ -1301,10 +1301,21 @@ static int run_program (const char* source) {
     return jumped;
 }
 
+// the parts of AerOS (APP_ bits) the last program to run in front used: launch() below looks at
+// it, to know whether an app drew graphics or left text on the screen worth reading
+static uint32_t front_uses = 0;
+// where the last program to run in front was found (run_file fills these in), so a program
+// that called launch() can be started again
+static char front_folder[FS_PATH_MAX];
+static char front_name[FS_NAME_MAX];
+
 // run a program held in memory in `session`; -1 if it stopped with an error
 static int run_in_session (aer_state_t* session, const char* source, const char* name, const char* args, bool background) {
     session_begin(session, name, args, background);
     int jumped = run_program(source);
+    if (!background) {
+        front_uses = session->uses;
+    }
     session_end();
     // exit() (2) counts as a normal ending, only an error (1) is a failure
     return jumped == 1 ? -1 : 0;
@@ -1368,8 +1379,11 @@ static char* find_program (const char* path, char* folder_out, size_t folder_siz
 }
 
 // Find a program file, run it in `session`, and give back its source's memory; -1 if not found
-// or it failed. background: run with BG, on a thread of its own (see aer_run_file_background)
-static int run_file (aer_state_t* session, const char* path, const char* args, bool background) {
+// or it failed. background: run with BG, on a thread of its own (see aer_run_file_background).
+// typed: args are what the person typed after its name, so a file named in them may be read
+// without asking (sys/perm.h). Not for a program started again after launch(), whose args the
+// program chose itself
+static int run_file (aer_state_t* session, const char* path, const char* args, bool background, bool typed) {
     char folder[FS_PATH_MAX];
     char name[FS_NAME_MAX];
     char* source = find_program(path, folder, sizeof(folder), name, sizeof(name));
@@ -1379,10 +1393,15 @@ static int run_file (aer_state_t* session, const char* path, const char* args, b
     }
     // while it runs, it has to ask before it touches your files (sys/perm.h). Without the
     // memory for that, it doesn't run at all
-    if (!perm_program_started(folder, name, args)) {
+    if (!perm_program_started(folder, name, typed ? args : "")) {
         free(source);
         prtf("Not enough memory to run %s.\n", name);
         return -1;
+    }
+    // where the program in front came from, in case it calls launch() and has to start again
+    if (!background) {
+        scpy(front_folder, folder, sizeof(front_folder));
+        scpy(front_name, name, sizeof(front_name));
     }
     int result = run_in_session(session, source, name, args, background);
     perm_program_ended();
@@ -1392,9 +1411,129 @@ static int run_file (aer_state_t* session, const char* path, const char* args, b
     return result;
 }
 
-// Find a program file and run it in front (see aerlang.h)
+
+// ---- launch(): an app in the program's place, then the program again ---------------------------
+//
+// AerOS runs one program in front at a time (see front_session above): a program can't start
+// another one inside itself. launch() asks for the next best thing. When the program ends, AerOS
+// runs the app it named, and when the app ends, starts the program again. That is how the desktop
+// (packages/desktop.aer) opens the apps that are installed: it closes, the app has the screen to
+// itself, and the desktop comes back.
+//
+// Only an app can be launched: a program in one of the app folders (aer_app_folders: /bin/,
+// /bin/games/, /apps/), found there the way typing its name finds it. Not one the program could
+// have written there itself without being asked (perm_could_change, sys/perm.h), or it could
+// write a program and start it, out of sight of SCAN. The app runs as if its name had been
+// typed: it asks before it touches your files, for itself, whatever the program before it was
+// allowed.
+
+// the app waiting to run when the program in front ends, filled in by aer_launch_later
+static struct {
+    bool waiting;                        // launch() was called, the program hasn't ended yet
+    char folder[FS_PATH_MAX];            // where the app is, "/apps/"
+    char name[FS_NAME_MAX];              // the app, "maze3d.aer"
+    char back[AER_LAUNCH_ARGS_MAX];      // what the program is started again with, afterwards
+} launch_next;
+
+// an app started by launch() is running: it can't launch() one of its own, as it isn't the
+// program that comes back afterwards
+static bool running_launched_app = false;
+
+// Is there a program `name` (with ".aer" added if it hasn't got it) in `folder`, one of the
+// app folders? Fills in the name it has there. False if not, or folder isn't an app folder
+static bool app_in (const char* folder, const char* name, char* found, size_t found_size) {
+    bool app_folder = false;
+    for (int f = 0; aer_app_folders[f] != NULL; f++) {
+        if (strcasecmp(folder, aer_app_folders[f]) == 0) {
+            app_folder = true;
+        }
+    }
+    if (!app_folder) {
+        return false;
+    }
+    scpy(found, name, found_size);
+    if (!aer_is_program_name(found, slen(found))) {
+        scat(found, ".aer", found_size);
+    }
+    return fs_file_exists(folder, found);
+}
+
+// launch(): run `program` (an app: "maze3d" or "/apps/maze3d.aer") when the program in front
+// ends, then start that program again with `back` as its arguments. NULL if it will, or why not
+// (see the top of this part)
+const char* aer_launch_later (const char* program, const char* back) {
+    if (running_launched_app) {
+        return "it was started by launch() itself, and only the program that started it comes back";
+    }
+    // Only the app's name, nothing after it. A file named after a program's name may be read
+    // without asking (sys/perm.h), as the person typed it, so words chosen by another program
+    // mustn't count as typed. (The same goes for `back`: see run_file's typed)
+    if (program[0] == '\0' || strchr(program, ' ') != NULL || slen(program) >= FS_PATH_MAX) {
+        return "give only the app's name, with nothing after it";
+    }
+
+    // a path ("/apps/maze3d.aer") must be in an app folder itself; a plain name ("maze3d") is
+    // looked for in each of them, in order, as typing it at the prompt would (not in the
+    // current folder, which may be anywhere)
+    char folder[FS_PATH_MAX];
+    char name[FS_NAME_MAX];
+    char found[FS_NAME_MAX];
+    bool there = false;
+    if (strchr(program, '/') != NULL) {
+        there = fs_split_path(program, folder, sizeof(folder), name, sizeof(name)) &&
+                app_in(folder, name, found, sizeof(found));
+    } else {
+        for (int f = 0; aer_app_folders[f] != NULL && !there; f++) {
+            scpy(folder, aer_app_folders[f], sizeof(folder));
+            there = app_in(folder, program, found, sizeof(found));
+        }
+    }
+    if (!there) {
+        return "there is no app by that name in /bin/ or /apps/";
+    }
+    if (perm_could_change(folder)) {
+        return "it may change files in that folder, so it could have written the app itself";
+    }
+
+    scpy(launch_next.folder, folder, sizeof(launch_next.folder));
+    scpy(launch_next.name, found, sizeof(launch_next.name));
+    scpy(launch_next.back, back, sizeof(launch_next.back));
+    launch_next.waiting = true;
+    return NULL;
+}
+
+// Find a program file and run it in front (see aerlang.h). Then, for as long as each program
+// ends having called launch(), the app it asked for, and the program again
 int aer_run_file (const char* path, const char* args) {
-    return run_file(&front_session, path, args, false);
+    launch_next.waiting = false;   // (one left over from a program that stopped with an error)
+    int result = run_file(&front_session, path, args, false, true);
+    while (launch_next.waiting && result == 0) {
+        launch_next.waiting = false;
+        // copies: running the app fills front_folder and front_name in again
+        char program[FS_PATH_MAX + FS_NAME_MAX];
+        char back[AER_LAUNCH_ARGS_MAX];
+        char name[FS_NAME_MAX];
+        sfmt(program, sizeof(program), "%s%s", front_folder, front_name);
+        scpy(name, front_name, sizeof(name));
+        scpy(back, launch_next.back, sizeof(back));
+        char app[FS_PATH_MAX + FS_NAME_MAX];
+        sfmt(app, sizeof(app), "%s%s", launch_next.folder, launch_next.name);
+
+        // the app, as if its name had been typed. Then a moment to read what a text app left
+        // on the screen, or why it stopped, before the program takes the screen back. An app
+        // that drew graphics has given the screen back already, so it goes straight back
+        running_launched_app = true;
+        int app_result = run_file(&front_session, app, "", false, false);
+        running_launched_app = false;
+        if (app_result != 0 || !(front_uses & APP_GRAPHICS)) {
+            prtf("\nPress a key to go back to %s.", name);
+            getk();
+            prtf("\n");
+        }
+        result = run_file(&front_session, program, back, false, false);
+    }
+    launch_next.waiting = false;
+    return result;
 }
 
 // Find a program file and run it in the background, on the thread calling this (see aerlang.h)
@@ -1405,7 +1544,7 @@ int aer_run_file_background (const char* path, const char* args) {
         prtf("Not enough memory to run %s.\n", path);
         return -1;
     }
-    int result = run_file(session, path, args, true);
+    int result = run_file(session, path, args, true, true);
     free(session);
     return result;
 }
