@@ -5,7 +5,9 @@ would (t.package), rather than fetching it from a package server.
 In graphics mode the text screen can't be read, so these check the serial log (where the
 terminal's text also goes) and the pixels of screenshots."""
 
+import struct
 import time
+import wave
 
 
 def colours(shot):
@@ -93,8 +95,9 @@ GHOST_STARE = 0xFF3355
 CAUGHT = 0xFF5A5F
 
 
-def boot_with_maze(t, changes):
-    """Boot with a copy of maze3d.aer changed by (old line, new line) pairs, installed as maze3d."""
+def boot_with_maze(t, changes, sound=None):
+    """Boot with a copy of maze3d.aer changed by (old line, new line) pairs, installed as maze3d
+    (with its sounds). sound is t.boot's: a file name records what the sound card plays."""
     game = open(t.repo('packages', 'maze3d.aer')).read()
     for old, new in changes:
         if game.count(old) != 1:
@@ -104,7 +107,7 @@ def boot_with_maze(t, changes):
         f.write(game)
     files = t.package('maze3d')
     files['/apps/maze3d.aer'] = t.path('maze3d.aer')
-    aeros = t.boot(graphics=True, disk=t.disk(files=files))
+    aeros = t.boot(graphics=True, sound=sound, disk=t.disk(files=files))
     aeros.first_login()
     return aeros
 
@@ -157,6 +160,62 @@ def test_maze3d_huge(t):
     if aeros.screenshot('turned')[2] == before[2]:
         aeros.fail('holding Left did not turn in the huge maze')
     quit_maze(aeros)
+
+
+def loud_quarters(path):
+    """For each quarter second of a recording QEMU made: None if it is quiet, or else its pitch
+    in Hz, from how often the wave crosses zero. (Like notes_in in test_media.py, but keeping
+    the quiet parts, so a test can see when things were heard)"""
+    with wave.open(path) as w:
+        rate, channels, count = w.getframerate(), w.getnchannels(), w.getnframes()
+        samples = struct.unpack(f'<{count * channels}h', w.readframes(count))[0::channels]
+    quarters = []
+    window = rate // 4
+    for start in range(0, len(samples) - window + 1, window):
+        part = samples[start:start + window]
+        loudness = (sum(s * s for s in part) / len(part)) ** 0.5
+        if loudness < 300:
+            quarters.append(None)
+            continue
+        crossings = sum(1 for a, b in zip(part, part[1:]) if (a < 0) != (b < 0))
+        quarters.append(crossings / 2 / (len(part) / rate))
+    return quarters
+
+
+CRYSTAL_BELL = 2093   # the note (C7) crystal.wav rings on (see tools/make_maze3d_sounds.py)
+
+
+def test_maze3d_sound(t):
+    # With a sound card, recorded: the menu's music plays, and taking a crystal rings its bell.
+    # A crystal is put next to the start, and can be taken from there, so it is taken on the
+    # very first frame. The game is played with SOUND on EFFECTS ONLY (no music), and the
+    # ghosts stand still, so after the bell all is quiet.
+    recording = t.path('out.wav')
+    aeros = boot_with_maze(t, [('    "#P...#.....o..X#",\n', '    "#Po..#.....o..X#",\n'),
+                               ('let PICK_UP_DISTANCE = 0.5 ', 'let PICK_UP_DISTANCE = 1.2 '),
+                               ('let GHOST_SPEED = 1.2 ', 'let GHOST_SPEED = 0.0 '),
+                               ('let CHASE_SPEED = 1.9 ', 'let CHASE_SPEED = 0.0 ')],
+                           sound=recording)
+    aeros.run('maze3d', 6)
+    # down to SOUND, right to EFFECTS ONLY, and start
+    choose(aeros, ['down', 'down', 'down', 'down', 'right', 'spc'])
+    time.sleep(5)
+    quit_maze(aeros)
+    aeros.quit()
+
+    quarters = loud_quarters(recording)
+    bell = [i for i, hz in enumerate(quarters) if hz and abs(hz - CRYSTAL_BELL) <= CRYSTAL_BELL * 0.03]
+    if not bell:
+        aeros.fail(f'the crystal\'s bell ({CRYSTAL_BELL} Hz) was not heard: {quarters}')
+    at = bell[0]
+    # the 3 seconds before it (but the last half second: the start sound) were the menu's music
+    menu = quarters[max(0, at - 14):at - 2]
+    if sum(1 for q in menu if q) < 10:
+        aeros.fail(f'the menu\'s music was not heard before the game: {menu}')
+    # from 1.5 seconds after it, for 2 seconds: nothing (no music, with EFFECTS ONLY)
+    after = quarters[at + 6:at + 14]
+    if any(after):
+        aeros.fail(f'there was sound after the bell, with only effects on: {after}')
 
 
 def test_move(t):

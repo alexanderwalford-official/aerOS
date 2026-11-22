@@ -16,7 +16,8 @@
 # the game is over.
 #
 # The menu at the start chooses the maze: the classic one drawn below, or a new one made up
-# for each game in three bigger sizes, and how many crystals, ghosts and lives there are.
+# for each game in three bigger sizes, how many crystals, ghosts and lives there are, and
+# whether there is music and sound (with no sound card, the important sounds are beeps).
 #
 # How it works, for anyone who wants to build on it:
 #
@@ -47,6 +48,11 @@
 #   The map in the corner is a tiny picture (a BMP, one pixel a square) made once for each
 #   maze and drawn bigger with image(), which is much quicker than drawing every wall of a big
 #   maze as a rectangle on every frame.
+#
+#   The sounds and music are WAV files in the game's folder (/apps/maze3d/), made from plain
+#   waves by tools/make_maze3d_sounds.py in the repository. Each is loaded once with sload(),
+#   and splay() plays it while the game carries on: AerOS mixes up to 8 at once, so the music
+#   (looped, and quiet) goes on under the footsteps, the crystals and the ghosts.
 #
 #   Looking up and down is a trick too: rays can only go across the grid, so instead the whole
 #   picture is drawn higher or lower on the screen. The horizon (where the walls' middles line up)
@@ -109,9 +115,19 @@ let CRYSTALS_FOR = [[3, 5, 10], [6, 12, 24], [10, 20, 40], [16, 32, 60]]
 let GHOST_NAMES = ["NONE", "SOME", "MANY"]
 let GHOSTS_FOR = [[0, 4, 8], [0, 6, 12], [0, 10, 20], [0, 16, 32]]
 let LIVES_FOR = [1, 3, 5]
-let SETTING_NAMES = ["MAZE", "CRYSTALS", "GHOSTS", "LIVES"]
+let SOUND_NAMES = ["ON", "EFFECTS ONLY", "OFF"]
+let SOUND_ON = 0            # music and sound effects
+let SOUND_OFF = 2           # (1 is the effects without the music)
+let SETTING_NAMES = ["MAZE", "CRYSTALS", "GHOSTS", "LIVES", "SOUND"]
 let LOOPS = 40              # a made-up maze gets an extra gap in a wall for every this many squares
 let SPRITE_DISTANCE = 14.0  # crystals and ghosts further away than this aren't drawn
+
+# Sound. The sounds are WAV files in the game's own folder, made by tools/make_maze3d_sounds.py
+let SOUND_FOLDER = "/apps/maze3d/"
+let MUSIC_VOLUME = 30       # the music, quietly under the effects (volumes go from 0 to 100)
+let STEP_VOLUME = 25        # footsteps, quieter still
+let STEP_LENGTH = 0.75      # squares walked between footsteps
+let SPOTTED_WAIT = 2500     # milliseconds: the "a ghost has seen you" sound plays at most this often
 
 # The ghosts
 let GHOST_SPEED = 1.2       # squares a second while a ghost wanders
@@ -180,6 +196,64 @@ end
 # Write a line of text in the middle of the screen (each letter is 8 pixels times `size`)
 func centre(y, words, colour, size)
     text((gw() - len(words) * 8 * size) / 2, y, words, colour, size)
+end
+
+# ---------------------------------------------------------------------------
+# Sound
+# ---------------------------------------------------------------------------
+
+# One sound from the game's folder, or nil if it isn't there (it then just isn't played)
+func load_sound(name)
+    return sload(SOUND_FOLDER + name + ".wav")
+end
+
+# Load every sound once, at the start, so playing one later costs almost nothing
+func load_sounds()
+    snd_crystal = load_sound("crystal")
+    snd_door = load_sound("door")
+    snd_light = load_sound("light")
+    snd_banish = load_sound("banish")
+    snd_hurt = load_sound("hurt")
+    snd_step = load_sound("step")
+    snd_bump = load_sound("bump")
+    snd_spotted = load_sound("spotted")
+    snd_won = load_sound("won")
+    snd_caught = load_sound("caught")
+    snd_menu_move = load_sound("menumove")
+    snd_menu_change = load_sound("menuchg")
+    snd_start = load_sound("start")
+    snd_music_game = load_sound("gamemus")
+    snd_music_menu = load_sound("menumus")
+    # Is there a sound card? splay() gives -1 without one, so play a sound silently (volume 0)
+    # and see
+    sound_card = snd_menu_move != nil and splay(snd_menu_move, false, 0) >= 0
+end
+
+# Play a sound effect at `volume` (0 to 100), unless the menu says SOUND OFF. With no sound
+# card (or no such file), the PC speaker beeps at `hz` instead, if `hz` isn't 0. A beep holds
+# the game up while it sounds, so only a few important sounds have one.
+func effect(sound, volume, hz)
+    if choice[4] == SOUND_OFF then return end
+    if sound_card and sound != nil then
+        splay(sound, false, volume)
+    elif hz > 0 then
+        beep(hz)
+    end
+end
+
+# Play music round and round, quietly under the effects: "menu", "game", or "" for none. Asking
+# for the music that is already playing changes nothing, so it carries on smoothly. There is
+# music only with SOUND ON (and a sound card).
+func music(name)
+    if choice[4] != SOUND_ON or not sound_card then name = "" end
+    if name == music_name then return end
+    if music_voice >= 0 then sstop(music_voice) end
+    music_voice = -1
+    music_name = name
+    let track = nil
+    if name == "menu" then track = snd_music_menu end
+    if name == "game" then track = snd_music_game end
+    if track != nil then music_voice = splay(track, true, MUSIC_VOLUME) end
 end
 
 # ---------------------------------------------------------------------------
@@ -510,15 +584,31 @@ end
 func handle_movement(seconds)
     let walk = MOVE_SPEED * seconds
     let turn = TURN_SPEED * seconds
+    let was_x = pos_x
+    let was_y = pos_y
+    let walking = false
 
     if keydown(KEY_LEFT) then face(angle - turn) end
     if keydown(KEY_RIGHT) then face(angle + turn) end
-    if keydown(KEY_UP) or keydown("w") then move(dir_x * walk, dir_y * walk) end
-    if keydown(KEY_DOWN) or keydown("s") then move(-dir_x * walk, -dir_y * walk) end
+    if keydown(KEY_UP) or keydown("w") then
+        move(dir_x * walk, dir_y * walk)
+        walking = true
+    end
+    if keydown(KEY_DOWN) or keydown("s") then
+        move(-dir_x * walk, -dir_y * walk)
+        walking = true
+    end
     # sideways is along the camera plane, which points right (divided by VIEW_WIDTH to make
     # it one square long, like dir)
-    if keydown("d") then move(plane_x / VIEW_WIDTH * walk, plane_y / VIEW_WIDTH * walk) end
-    if keydown("a") then move(-plane_x / VIEW_WIDTH * walk, -plane_y / VIEW_WIDTH * walk) end
+    if keydown("d") then
+        move(plane_x / VIEW_WIDTH * walk, plane_y / VIEW_WIDTH * walk)
+        walking = true
+    end
+    if keydown("a") then
+        move(-plane_x / VIEW_WIDTH * walk, -plane_y / VIEW_WIDTH * walk)
+        walking = true
+    end
+    footsteps(walking, walk, sqrt((pos_x - was_x) * (pos_x - was_x) + (pos_y - was_y) * (pos_y - was_y)))
 
     # The mouse: moving it across turns, moving it up and down looks up and down. mousemove()
     # gives how far it moved since the last frame, and never stops at the edge of the screen,
@@ -528,6 +618,25 @@ func handle_movement(seconds)
     # Up on the mouse is negative, and looking up moves the horizon down: hence the minus.
     # It stops a third of the screen either way, past which the trick stops looking right
     look = bigger(smaller(look - moved[1] * MOUSE_LOOK, SCREEN_H / 3), -SCREEN_H / 3)
+end
+
+# The sounds of walking: a footstep every STEP_LENGTH squares, and a bump on walking into a
+# wall. `walking` says if a key to walk is held, `walk` is how far it should have taken you
+# this frame, and `moved` how far you really went. Hardly moving at all means a wall is in the
+# way (sliding along one at an angle still moves you): that bumps once, and not again until
+# you have moved or let go of the keys.
+func footsteps(walking, walk, moved)
+    stride = stride + moved
+    if stride >= STEP_LENGTH then
+        stride = stride - STEP_LENGTH
+        effect(snd_step, STEP_VOLUME, 0)
+    end
+    if walking and moved < walk * 0.2 then
+        if not against_wall then effect(snd_bump, 60, 0) end
+        against_wall = true
+    else
+        against_wall = false
+    end
 end
 
 # Where the horizon is on the screen: the middle, moved by looking up or down
@@ -544,6 +653,7 @@ end
 #   ghost_to_x / ghost_to_y - the middle of the square it is heading for
 #   ghost_way               - which way it last went (0 to 3, see STEP_X), or -1 at the start
 #   ghost_back              - 0 while it is in the maze; while it is away, the time it comes back
+#   ghost_chasing           - whether it was chasing you last frame (to hear when it starts)
 
 # Put every ghost back where it started, ready for a new game
 func reset_ghosts()
@@ -553,6 +663,7 @@ func reset_ghosts()
     ghost_to_y = []
     ghost_way = []
     ghost_back = []
+    ghost_chasing = []
     for i = 0 to len(ghost_home) - 1 do
         push(ghost_x, ghost_home[i][0])
         push(ghost_y, ghost_home[i][1])
@@ -560,6 +671,7 @@ func reset_ghosts()
         push(ghost_to_y, ghost_home[i][1])
         push(ghost_way, -1)
         push(ghost_back, 0)
+        push(ghost_chasing, false)
     end
     # so the step map is worked out afresh on the first frame
     steps_x = -1
@@ -635,7 +747,15 @@ func move_ghosts(seconds, now)
         end
 
         let speed = GHOST_SPEED
-        if is_chasing(i) then speed = CHASE_SPEED end
+        let chasing = is_chasing(i)
+        if chasing then speed = CHASE_SPEED end
+        # A ghost that has just started to chase you makes itself heard (but not over and
+        # over, when several are about)
+        if chasing and not ghost_chasing[i] and now - spotted_at > SPOTTED_WAIT then
+            effect(snd_spotted, 70, 0)
+            spotted_at = now
+        end
+        ghost_chasing[i] = chasing
         let can_go = speed * seconds
         # A ghost only ever moves straight across or straight up and down, so the distance to
         # where it is heading is just the two gaps added up
@@ -666,7 +786,7 @@ func check_ghosts(now)
                 ghost_back[i] = now + GHOST_AWAY
                 hurt_at = now
                 safe_until = now + SAFE_TIME
-                beep(160)
+                effect(snd_hurt, 90, 160)
                 return lives <= 0
             end
         end
@@ -699,11 +819,14 @@ func shine_light(now)
             end
         end
     end
+    # the light's sound either way, and the ghost's as it goes (without a sound card, one beep:
+    # high for a hit, low for a miss)
     if hit >= 0 then
         ghost_back[hit] = now + GHOST_AWAY
-        beep(1500)
+        effect(snd_light, 60, 0)
+        effect(snd_banish, 85, 1500)
     else
-        beep(600)
+        effect(snd_light, 60, 600)
     end
 end
 
@@ -1043,7 +1166,9 @@ func check_pickups()
             if dx * dx + dy * dy < PICK_UP_DISTANCE * PICK_UP_DISTANCE then
                 picked[i] = true
                 taken = taken + 1
-                beep(1200)
+                effect(snd_crystal, 80, 1200)
+                # the last one: the door can open now
+                if taken == len(crystals) then effect(snd_door, 80, 0) end
             end
         end
     end
@@ -1062,12 +1187,14 @@ end
 # The menu
 # ---------------------------------------------------------------------------
 
-# The names of the choices for menu row `row` (0 the maze, 1 crystals, 2 ghosts, 3 lives)
+# The names of the choices for menu row `row` (0 the maze, 1 crystals, 2 ghosts, 3 lives,
+# 4 sound)
 func choice_names(row)
     if row == 0 then return MAZE_NAMES end
     if row == 1 then return CRYSTAL_NAMES end
     if row == 2 then return GHOST_NAMES end
-    return ["1", "3", "5"]
+    if row == 3 then return ["1", "3", "5"] end
+    return SOUND_NAMES
 end
 
 # What menu row `row` shows for its choice, e.g. "LARGE  39 x 39" or "NORMAL  (20)"
@@ -1082,11 +1209,14 @@ func choice_text(row)
         return name + "  (" + str(CRYSTALS_FOR[maze][choice[1]]) + ")"
     elif row == 2 then
         return name + "  (" + str(GHOSTS_FOR[maze][choice[2]]) + ")"
+    elif row == 4 and not sound_card and choice[4] != SOUND_OFF then
+        # without a sound card there are only the PC speaker's beeps
+        return name + "  (BEEPS)"
     end
     return name
 end
 
-# The title, the four choices (the one being changed in gold), and the controls
+# The title, the choices (the one being changed in gold), and the controls
 func draw_menu()
     let top = SCREEN_H / 7
     gclear(0x0B1018)
@@ -1097,8 +1227,8 @@ func draw_menu()
     # The choices, in big letters (16 pixels each): the name, then < choice >. Lined up
     # in two columns, centred as a block 30 letters wide
     let left = (SCREEN_W - 30 * 16) / 2
-    for row = 0 to 3 do
-        let y = top + 140 + row * 30
+    for row = 0 to len(SETTING_NAMES) - 1 do
+        let y = top + 135 + row * 28
         let colour = TEXT
         if row == menu_row then
             colour = GOLD
@@ -1114,28 +1244,46 @@ func draw_menu()
     let actions = ["walk", "turn", "look around", "step sideways", "shine your light at a ghost", "show or hide the map", "back to this menu"]
     left = (SCREEN_W - 49 * 8) / 2
     for i = 0 to len(keys) - 1 do
-        text(left, top + 280 + i * 18, keys[i], TEXT, 1)
-        text(left + 22 * 8, top + 280 + i * 18, actions[i], DIM_TEXT, 1)
+        text(left, top + 290 + i * 18, keys[i], TEXT, 1)
+        text(left + 22 * 8, top + 290 + i * 18, actions[i], DIM_TEXT, 1)
     end
-    centre(top + 425, "UP / DOWN to choose, LEFT / RIGHT to change, ESC to quit", DIM_TEXT, 1)
-    centre(top + 450, "ENTER OR SPACE TO START", CRYSTAL, 2)
+    centre(top + 432, "UP / DOWN to choose, LEFT / RIGHT to change, ESC to quit", DIM_TEXT, 1)
+    centre(top + 456, "ENTER OR SPACE TO START", CRYSTAL, 2)
     gshow()
 end
 
 # The menu, until Enter or Space starts a game (true) or Escape quits (false). The choices
 # stay as they were for the next game.
 func menu()
+    let rows = len(SETTING_NAMES)
     while true do
+        # the menu's music (which also starts or stops at once when SOUND is changed)
+        music("menu")
         draw_menu()
         let k = key()
         let count = len(choice_names(menu_row))
         if k == KEY_ESCAPE then return false end
-        if k == KEY_ENTER or k == ord(" ") then return true end
-        if k == KEY_UP or k == ord("w") then menu_row = (menu_row + 3) % 4 end
-        if k == KEY_DOWN or k == ord("s") then menu_row = (menu_row + 1) % 4 end
-        # Left / Right go round: past the last choice is the first again
-        if k == KEY_LEFT or k == ord("a") then choice[menu_row] = (choice[menu_row] + count - 1) % count end
-        if k == KEY_RIGHT or k == ord("d") then choice[menu_row] = (choice[menu_row] + 1) % count end
+        if k == KEY_ENTER or k == ord(" ") then
+            effect(snd_start, 80, 0)
+            return true
+        end
+        # Up / Down and Left / Right go round: past the last is the first again
+        if k == KEY_UP or k == ord("w") then
+            menu_row = (menu_row + rows - 1) % rows
+            effect(snd_menu_move, 60, 0)
+        end
+        if k == KEY_DOWN or k == ord("s") then
+            menu_row = (menu_row + 1) % rows
+            effect(snd_menu_move, 60, 0)
+        end
+        if k == KEY_LEFT or k == ord("a") then
+            choice[menu_row] = (choice[menu_row] + count - 1) % count
+            effect(snd_menu_change, 60, 0)
+        end
+        if k == KEY_RIGHT or k == ord("d") then
+            choice[menu_row] = (choice[menu_row] + 1) % count
+            effect(snd_menu_change, 60, 0)
+        end
     end
 end
 
@@ -1170,6 +1318,10 @@ func play()
     hurt_at = -100000
     light_ready = 0
     light_at = -100000
+    stride = 0.0
+    against_wall = false
+    spotted_at = -100000
+    music("game")
     started = time()
     # look straight ahead, and forget any mouse movement from before the game started
     look = 0
@@ -1229,7 +1381,8 @@ func finished_screen()
     centre(SCREEN_H / 2, "Time: " + str(round(seconds * 10) / 10.0) + " seconds", TEXT, 2)
     centre(SCREEN_H / 2 + 60, "Press any key for the menu, ESC to quit", DIM_TEXT, 1)
     gshow()
-    beep(880)
+    music("")
+    effect(snd_won, 90, 880)
     return key() != KEY_ESCAPE
 end
 
@@ -1238,6 +1391,8 @@ end
 func caught_screen()
     draw_hurt_edge()
     gshow()
+    music("")
+    effect(snd_caught, 90, 0)
     sleep(700)
     # forget the keys pressed while running away, so they don't skip this screen
     while haskey() do key() end
@@ -1268,8 +1423,8 @@ let depths = list(RAYS, 0.0)
 
 # Everything the functions above share. AerLang needs a variable made (with let) before a
 # function can change it.
-let choice = [0, 1, 1, 1]   # the menu's choices: maze, crystals, ghosts, lives (see the settings)
-let menu_row = 0           # which of them Left / Right changes
+let choice = [0, 1, 1, 1, 0]   # the menu's choices: maze, crystals, ghosts, lives, sound
+let menu_row = 0            # which of them Left / Right changes
 let grid = []
 let crystals = []
 let map_picture = nil       # see make_map_picture
@@ -1302,9 +1457,34 @@ let ghost_to_x = []
 let ghost_to_y = []
 let ghost_way = []
 let ghost_back = []
+let ghost_chasing = []
 let steps = []
 let steps_x = -1            # the square the step map was worked out from
 let steps_y = -1
+# the sounds (see load_sounds), and what is playing
+let snd_crystal = nil
+let snd_door = nil
+let snd_light = nil
+let snd_banish = nil
+let snd_hurt = nil
+let snd_step = nil
+let snd_bump = nil
+let snd_spotted = nil
+let snd_won = nil
+let snd_caught = nil
+let snd_menu_move = nil
+let snd_menu_change = nil
+let snd_start = nil
+let snd_music_game = nil
+let snd_music_menu = nil
+let sound_card = false      # is there one? (see load_sounds)
+let music_voice = -1        # splay's number for the music playing, -1 for none
+let music_name = ""         # which music that is (see music)
+let stride = 0.0            # squares walked since the last footstep
+let against_wall = false    # walking into a wall (see footsteps)
+let spotted_at = 0          # when a ghost was last heard starting to chase you
+
+load_sounds()
 
 # The menu, then a game, then the menu again, until Escape on the menu (or on the screen at
 # the end of a game)
@@ -1322,5 +1502,6 @@ while playing do
     if playing then playing = menu() end
 end
 
+sstop()
 gclose()
 print("Thanks for playing Maze 3D!")

@@ -434,7 +434,12 @@ a life, and your light (Space or a click) sends one away for a while. Its menu c
 hand-drawn maze or a new one made up for each game (up to 55 x 55 squares, dug out by a
 "recursive backtracker"), and how many crystals, ghosts and lives there are. The map in the
 corner is a BMP it builds in `bytes(n)` once for each maze and draws with `image()`, which
-is far quicker than a rectangle for every wall of a big maze on every frame. It uses
+is far quicker than a rectangle for every wall of a big maze on every frame. Its music and
+sound effects are WAV files it comes with, loaded once with `sload` and started with `splay`,
+so the quiet looped music plays on under footsteps, crystals and ghosts (the menu turns the
+music, or all sound, off; with no sound card the important sounds are `beep`s). They are
+made from plain waves, the way old game chips made them, by `tools/make_maze3d_sounds.py`,
+which can be changed and run again. It uses
 decimals, `sin` / `cos`, `keydown`, `mousemove` (for looking around), `gbuf` and `frame`,
 and its comments explain each step, so it is meant to be read and changed: draw your own maze
 in `MAP`, add wall colours, or widen `STRIP_WIDTH` for more speed on a slow computer.
