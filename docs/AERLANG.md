@@ -337,9 +337,13 @@ Colours are numbers like `0xFF7F00`, or `rgb(255, 127, 0)`. Drawing off the edge
 `gw()` · `gh()` · `gclear(colour)` · `pixel(x, y, colour)` ·
 `rect(x, y, w, h, colour)` filled · `line(x1, y1, x2, y2, colour)` ·
 `text(x, y, text, colour, size)` (size 1 is 8 x 16 pixels per character) ·
-`image(bytes, x, y, w, h)` draw a BMP picture (8, 24 or 32 bit), scaled to fit `w` x `h` if given
-(up to 16384 x 16384, so it can be far bigger than the screen; only the part on screen is drawn) ·
-`imgsz(bytes)` its `[width, height]`, or nil if it isn't a BMP
+`image(bytes, x, y, w, h)` draw a picture, scaled to fit `w` x `h` if given (up to 16384 x 16384,
+so it can be far bigger than the screen; only the part on screen is drawn): BMP (8, 24 or 32
+bit), PNG, GIF (its first picture) or JPEG (baseline or progressive). See-through parts of a PNG
+or GIF show what was drawn there before · `imgsz(bytes)` its `[width, height]`, or nil if it
+isn't one of those. Both take the picture as bytes from `rdb`, or as fetched by `httpget` (the
+`browser` package shows web pictures this way). A PNG, GIF or JPEG is decoded the first time
+it is drawn and kept, so drawing the same one again (every frame of a game) is quick
 
 ```
 gopen()

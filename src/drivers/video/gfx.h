@@ -1,6 +1,6 @@
 /*
     gfx.h
-    Graphics for apps: pixels, rectangles, lines, text and BMP pictures, drawn straight into the
+    Graphics for apps: pixels, rectangles, lines, text and pictures (BMP, PNG, GIF, JPEG), drawn straight into the
     framebuffer. Colours are 0xRRGGBB. Everything is clipped to the screen, so drawing partly
     (or completely) off screen is fine.
 
@@ -47,13 +47,15 @@ void gfx_text(int x, int y, const char* text, uint32_t rgb, int scale);
 // row to the next (usually just w). Used for video frames, and handy for sprites
 void gfx_draw_pixels(const uint32_t* pixels, int w, int h, int stride, int x, int y, int out_w, int out_h);
 
-// the size of a BMP picture, false if the data isn't a BMP we can show (8, 24 or 32 bit, uncompressed)
+// the size of a picture, false if the data isn't one we can show: a BMP (8, 24 or 32 bit,
+// uncompressed), PNG, GIF or JPEG (see picture.h)
 bool gfx_image_size(const uint8_t* data, uint32_t length, int* w, int* h);
 
-// draw a BMP picture with its top left corner at x, y. If max_w and max_h are above 0 the picture
-// is scaled (up or down, keeping its shape) to fit in that box. The box may be bigger than the
-// screen (up to 16384 pixels each way) and x, y may be negative, which is how a picture is zoomed
-// in on: only the part that lands on the screen is drawn. False if it isn't a BMP we can show.
+// draw a picture (BMP, PNG, GIF or JPEG) with its top left corner at x, y. If max_w and max_h
+// are above 0 the picture is scaled (up or down, keeping its shape) to fit in that box. The box
+// may be bigger than the screen (up to 16384 pixels each way) and x, y may be negative, which is
+// how a picture is zoomed in on: only the part that lands on the screen is drawn. See-through
+// parts of a PNG or GIF let what's already there show through. False if it isn't one we can show.
 bool gfx_image(const uint8_t* data, uint32_t length, int x, int y, int max_w, int max_h);
 
 // Draw over the screen for a moment, without spoiling what a program has drawn:

@@ -1,7 +1,7 @@
 /*
     bi_graphics.c
     AerLang's built-in functions for graphics: taking the screen over (gopen, gclose), its size,
-    colours (rgb), drawing (gclear, pixel, rect, line, text) and BMP pictures (image, imgsz).
+    colours (rgb), drawing (gclear, pixel, rect, line, text) and pictures: BMP, PNG, GIF and JPEG (image, imgsz).
     Then what games need: drawing out of sight and showing the finished frame (gbuf, gshow),
     keys held down (keydown) and the mouse.
 
@@ -117,23 +117,38 @@ value_t bi_text (int argc, value_t* argv, int line) {
     return aer_nil();
 }
 
-// image(data, x, y, w, h): draw a BMP picture (bytes from rdb) at x, y, shrunk to fit w x h if given. False if it isn't one
+// A picture's data, given to a function as argument i: bytes (from rdb), or the text httpget
+// gives back for a picture fetched from the web (the same bytes, kept as a string). Its length
+// goes in *length. fn is the AerLang name, for the error message
+static const uint8_t* picture_arg (value_t* argv, int i, int line, const char* fn, uint32_t* length) {
+    value_t data = argv[i];
+    if (data.type != V_BYTES && data.type != V_STR) {
+        aer_error(line, "%s() needs a picture (bytes from rdb, or what httpget fetched) for argument %d, not a %s",
+                  fn, i + 1, aer_type_name(data));
+    }
+    *length = data.as.obj->length;
+    return data.type == V_STR ? (const uint8_t*)data.as.obj->data.chars : data.as.obj->data.bytes;
+}
+
+// image(data, x, y, w, h): draw a picture (BMP, PNG, GIF or JPEG, from rdb or httpget) at x, y, shrunk to fit w x h if given. False if it isn't one
 value_t bi_image (int argc, value_t* argv, int line) {
     need_graphics(line, "image");
-    aer_object_t* data = bytes_arg(argv, 0, line, "image");
+    uint32_t length;
+    const uint8_t* data = picture_arg(argv, 0, line, "image", &length);
     // without w and h (0) the picture is drawn at its own size, with them it is scaled to fit
     int max_w = argc > 3 ? int_arg(argv, 3, line, "image") : 0;
     int max_h = argc > 4 ? int_arg(argv, 4, line, "image") : 0;
-    return aer_bool(gfx_image(data->data.bytes, data->length, int_arg(argv, 1, line, "image"),
+    return aer_bool(gfx_image(data, length, int_arg(argv, 1, line, "image"),
                               int_arg(argv, 2, line, "image"), max_w, max_h));
 }
 
-// imgsz(data): a BMP picture's size as [width, height], nil if it isn't one
+// imgsz(data): a picture's size (BMP, PNG, GIF or JPEG, from rdb or httpget) as [width, height], nil if it isn't one
 value_t bi_image_size (int argc, value_t* argv, int line) {
     (void)argc;
-    aer_object_t* data = bytes_arg(argv, 0, line, "imgsz");
+    uint32_t length;
+    const uint8_t* data = picture_arg(argv, 0, line, "imgsz", &length);
     int w, h;
-    if (!gfx_image_size(data->data.bytes, data->length, &w, &h)) {
+    if (!gfx_image_size(data, length, &w, &h)) {
         return aer_nil();
     }
     value_t size = aer_list(2);

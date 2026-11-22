@@ -63,7 +63,7 @@ I've decided to use inline assmembly in C with the GCC GNU99 standard for the mo
 - [x] Implement local filesystem. (FAT16 / FAT32 on IDE disks labelled AEROS, temporary VFS without one)
 - [x] Process management.
 - [x] Programming interface. (AerLang: an interpreter, a prompt and a text editor, see docs/AERLANG.md)
-- [x] Graphics driver. (framebuffer console, pixels, shapes, text and BMP pictures for apps)
+- [x] Graphics driver. (framebuffer console, pixels, shapes, text and pictures for apps: BMP, and PNG, GIF and JPEG with decoders of AerOS's own)
 - [x] User accounts. (login screen, passwords stored as salted PBKDF2 hashes)
 - [x] File encryption. (ENC / DEC, AES-256 with an HMAC tag)
 - [x] Audio. (AC'97 sound card, PLY for WAV and MP3 files using minimp3, and a startup sound in /sys/startup.wav that you can replace)

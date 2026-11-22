@@ -24,9 +24,14 @@
     Rows are stored bottom up unless the height is negative, each one padded to a multiple of
     4 bytes, with pixels in blue, green, red order.
     https://en.wikipedia.org/wiki/BMP_file_format
+
+    PNG, GIF and JPEG pictures are squeezed, so picture.c decodes them into pixels first (see
+    picture.h), and gfx_image draws those the same way. Their see-through parts are mixed with
+    what's already on the screen.
 */
 
 #include "gfx.h"
+#include "picture.h"
 #include "VGA_linear.h"
 #include "font8x16.h"
 #include "../../lib/aer_stdlib.h"
@@ -497,30 +502,96 @@ static uint32_t bmp_pixel(const bmp_t* b, int x, int y) {
     return ((uint32_t)p[2] << 16) | ((uint32_t)p[1] << 8) | p[0];
 }
 
-// the size of a BMP picture, false if it isn't one we can show
-bool gfx_image_size(const uint8_t* data, uint32_t length, int* w, int* h) {
-    bmp_t b;
-    if (!bmp_open(data, length, &b)) {
-        return false;
+// ---- drawing pictures: BMP, and PNG, GIF and JPEG decoded by picture.c ------------------------
+
+// a picture being drawn: a BMP read straight from its file, or decoded pixels (picture.h)
+typedef struct {
+    int width;
+    int height;
+    const bmp_t* bmp;        // the BMP, or NULL for decoded pixels
+    const uint32_t* pixels;  // decoded pixels, 0xAARRGGBB, a row at a time
+} source_t;
+
+// the colour of pixel x, y of a picture being drawn, as 0xAARRGGBB (a BMP's are all solid)
+static uint32_t source_pixel(const source_t* s, int x, int y) {
+    if (s->bmp != NULL) {
+        return 0xFF000000u | bmp_pixel(s->bmp, x, y);
     }
-    *w = b.width;
-    *h = b.height;
-    return true;
+    return s->pixels[(uint32_t)y * (uint32_t)s->width + (uint32_t)x];
 }
 
-// draw a BMP picture at x, y, scaled to fit in max_w x max_h when those are above 0
-bool gfx_image(const uint8_t* data, uint32_t length, int x, int y, int max_w, int max_h) {
+// read the pixel at x, y back off the screen (or the back buffer) as 0xRRGGBB: pack() undone
+static uint32_t get(uint32_t x, uint32_t y) {
+    uint8_t* p = target + y * target_pitch + x * fb_bytes;
+    uint32_t pixel;
+    switch (fb_bytes) {
+        case 4:
+            pixel = *(uint32_t*)p;
+            break;
+        case 3:
+            pixel = p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16);
+            break;
+        default:
+            pixel = *(uint16_t*)p;
+            break;
+    }
+    // each colour's bits, moved back to the top of a byte
+    uint32_t r = ((pixel >> fb.red_pos) & ((1u << fb.red_size) - 1)) << (8 - fb.red_size);
+    uint32_t g = ((pixel >> fb.green_pos) & ((1u << fb.green_size) - 1)) << (8 - fb.green_size);
+    uint32_t b = ((pixel >> fb.blue_pos) & ((1u << fb.blue_size) - 1)) << (8 - fb.blue_size);
+    return (r << 16) | (g << 8) | b;
+}
+
+// a see-through colour (0xAARRGGBB) over the colour under it (0xRRGGBB): each of red, green and
+// blue is that much of the top colour and the rest of the one under it
+static uint32_t mix(uint32_t over, uint32_t under, uint32_t alpha) {
+    uint32_t result = 0;
+    for (int shift = 0; shift <= 16; shift += 8) {
+        uint32_t top = (over >> shift) & 0xFF, bottom = (under >> shift) & 0xFF;
+        result |= ((top * alpha + bottom * (255 - alpha) + 127) / 255) << shift;
+    }
+    return result;
+}
+
+// the size of a picture (BMP, PNG, GIF or JPEG), false if it isn't one we can show
+bool gfx_image_size(const uint8_t* data, uint32_t length, int* w, int* h) {
     bmp_t b;
-    if (!active || !bmp_open(data, length, &b)) {
+    if (bmp_open(data, length, &b)) {
+        *w = b.width;
+        *h = b.height;
+        return true;
+    }
+    return picture_size(data, length, w, h);
+}
+
+// draw a picture (BMP, PNG, GIF or JPEG) at x, y, scaled to fit in max_w x max_h when those are above 0
+bool gfx_image(const uint8_t* data, uint32_t length, int x, int y, int max_w, int max_h) {
+    if (!active) {
         return false;
+    }
+    // a BMP is read straight from the file; the others are decoded into pixels first
+    bmp_t b;
+    source_t s = { 0, 0, NULL, NULL };
+    if (bmp_open(data, length, &b)) {
+        s.width = b.width;
+        s.height = b.height;
+        s.bmp = &b;
+    } else {
+        const picture_t* p = picture_decode(data, length);
+        if (p == NULL) {
+            return false;
+        }
+        s.width = p->width;
+        s.height = p->height;
+        s.pixels = p->pixels;
     }
 
     // the size to draw at: as it is, or as big as fits in the box while keeping its shape.
     // The box can be far bigger than the screen (a zoomed in picture, only part of which shows).
     // Pictures and boxes are both at most 16384 pixels across, so every product below stays under
     // 2^28 and fits in 32 bits (64 bit division would need libgcc, which the kernel doesn't link)
-    uint32_t w = (uint32_t)b.width;
-    uint32_t h = (uint32_t)b.height;
+    uint32_t w = (uint32_t)s.width;
+    uint32_t h = (uint32_t)s.height;
     if (max_w > 0 && max_h > 0) {
         if (max_w > 16384) {
             max_w = 16384;
@@ -531,12 +602,12 @@ bool gfx_image(const uint8_t* data, uint32_t length, int x, int y, int max_w, in
         // compare the shapes without dividing: width / height <= max_w / max_h is the same as
         // width * max_h <= height * max_w. If the picture is the narrower shape, its height
         // fills the box and the width follows; otherwise the width fills it
-        if ((uint32_t)b.width * (uint32_t)max_h <= (uint32_t)b.height * (uint32_t)max_w) {
+        if ((uint32_t)s.width * (uint32_t)max_h <= (uint32_t)s.height * (uint32_t)max_w) {
             h = (uint32_t)max_h;
-            w = (uint32_t)b.width * (uint32_t)max_h / (uint32_t)b.height;
+            w = (uint32_t)s.width * (uint32_t)max_h / (uint32_t)s.height;
         } else {
             w = (uint32_t)max_w;
-            h = (uint32_t)b.height * (uint32_t)max_w / (uint32_t)b.width;
+            h = (uint32_t)s.height * (uint32_t)max_w / (uint32_t)s.width;
         }
         // a very long thin picture could round down to 0 one way, and then draw nothing
         if (w < 1) {
@@ -564,12 +635,23 @@ bool gfx_image(const uint8_t* data, uint32_t length, int x, int y, int max_w, in
     }
 
     // nearest neighbour: every screen pixel takes the colour of the picture pixel under it
-    // (pixel tx of w comes from pixel tx * width / w of the picture, the same fraction across)
+    // (pixel tx of w comes from pixel tx * width / w of the picture, the same fraction across).
+    // See-through pixels are left as they are, and partly see-through ones mixed with them
     for (uint32_t ty = y0; ty < y1; ty++) {
-        int py = (int)(ty * (uint32_t)b.height / h);
+        int py = (int)(ty * (uint32_t)s.height / h);
+        uint32_t sy = (uint32_t)(y + (int)ty);
         for (uint32_t tx = x0; tx < x1; tx++) {
-            int px = (int)(tx * (uint32_t)b.width / w);
-            put((uint32_t)(x + (int)tx), (uint32_t)(y + (int)ty), pack(bmp_pixel(&b, px, py)));
+            int px = (int)(tx * (uint32_t)s.width / w);
+            uint32_t sx = (uint32_t)(x + (int)tx);
+            uint32_t colour = source_pixel(&s, px, py);
+            uint32_t alpha = colour >> 24;
+            if (alpha == 0) {
+                continue;
+            }
+            if (alpha < 255) {
+                colour = mix(colour, get(sx, sy), alpha);
+            }
+            put(sx, sy, pack(colour & 0xFFFFFF));
         }
     }
     return true;

@@ -195,8 +195,8 @@ end
 **Graphics:** `gopen()` takes over the screen and `gclose()` gives it back.
 Colours are numbers like `0xFF7F00` or `rgb(255, 127, 0)`.
 `gw()`, `gh()`, `gclear(c)`, `pixel(x, y, c)`, `rect(x, y, w, h, c)`,
-`line(x1, y1, x2, y2, c)`, `text(x, y, s, c, size)`, `image(bytes, x, y, w, h)` (a BMP
-picture), `imgsz(bytes)`. `w` x `h` can be bigger than the screen and `x`, `y`
+`line(x1, y1, x2, y2, c)`, `text(x, y, s, c, size)`, `image(bytes, x, y, w, h)` (a BMP,
+PNG, GIF or JPEG picture, from `rdb` or `httpget`), `imgsz(bytes)`. `w` x `h` can be bigger than the screen and `x`, `y`
 negative: only the part on the screen is drawn, which is how the viewer zooms in.
 
 ```
