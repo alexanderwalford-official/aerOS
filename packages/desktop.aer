@@ -2266,6 +2266,8 @@ func draw_all()
             draw_window(win, win == top)
         end
     end
+    # the Browser's picture menu, if it is open, over the windows (but under the taskbar)
+    wb_draw_menu(pointer_x, pointer_y)
     draw_taskbar()
     if menu_open == "monitor" then
         draw_monitor()
@@ -2339,6 +2341,7 @@ let WB_MARGIN = 16            # space left and right of the page
 let WB_SB_W = 14              # width of the scroll bar
 let WB_INDENT = 24            # how far a list or quote is moved in
 let WB_FIELD_H = 24           # how tall a box or button on a page is
+let WB_MENU_ROW = 24          # and an entry of the picture menu
 # what a field is: [form, kind, name, value, label, ticked?, columns, choices, choice]. kind is
 # "text", "password", "area", "checkbox", "radio", "submit", "button", "select" or "hidden"; label
 # is a button's words, or what a text box says when empty; each of the choices of a select is
@@ -2386,6 +2389,8 @@ let wb_hover = 0              # the link the pointer is over, or 0 (below 0: a f
 let wb_forms = []             # the forms on the page: [where it goes, its method]
 let wb_fields = []            # what is in them: see F_ below
 let wb_focus = -1             # the box being typed in, or -1
+let wb_pic_hits = []          # where the pictures are on the screen now: [x, y, w, h, picture number]
+let wb_menu = nil             # the open picture menu: [x, y, picture number, entries, w, h], or nil
 
 # the address bar
 let wb_editing = false
@@ -2847,7 +2852,7 @@ end
 
 func wb_place_word(text, colour, size, bold, link, space)
     # put a word on the line, on a new line if it doesn't fit. Boxes are [x, width, height, 0,
-    # text, colour, size, bold, link, how far down in a taller line]
+    # text, colour, size, bold, link, how far down in a taller line, the picture it stands for or -1]
     let cell = 8 * size
     let width = len(text) * cell
     let gap = 0
@@ -2861,7 +2866,7 @@ func wb_place_word(text, colour, size, bold, link, space)
         let wb_fit = (wb_L_right - wb_L_x) / cell
         if wb_fit < 1 then wb_fit = 1 end
         if wb_fit >= len(text) then break end
-        push(wb_L_boxes, [wb_L_x, wb_fit * cell, 16 * size + 4, 0, sub(text, 0, wb_fit), colour, size, bold, link, 0])
+        push(wb_L_boxes, [wb_L_x, wb_fit * cell, 16 * size + 4, 0, sub(text, 0, wb_fit), colour, size, bold, link, 0, -1])
         wb_L_h = 16 * size + 4
         wb_L_words = wb_L_words + 1
         wb_L_x = wb_L_right
@@ -2874,7 +2879,7 @@ func wb_place_word(text, colour, size, bold, link, space)
         let before = wb_L_boxes[len(wb_L_boxes) - 1]
         if before[3] == 0 and before[8] == link then before[1] = before[1] + gap end
     end
-    push(wb_L_boxes, [wb_L_x + gap, width, 16 * size + 4, 0, text, colour, size, bold, link, 0])
+    push(wb_L_boxes, [wb_L_x + gap, width, 16 * size + 4, 0, text, colour, size, bold, link, 0, -1])
     wb_L_x = wb_L_x + gap + width
     if 16 * size + 4 > wb_L_h then wb_L_h = 16 * size + 4 end
     wb_L_words = wb_L_words + 1
@@ -2892,6 +2897,8 @@ func wb_place_picture(number, link)
         else
             wb_place_word(label, WB_C_DIM, 1, false, link, true)
         end
+        # (so it can be right-clicked like the picture)
+        wb_L_boxes[len(wb_L_boxes) - 1][10] = number
         return
     end
     let width = picture[3]
@@ -3107,6 +3114,7 @@ end
 func wb_navigate(url, remember)
     # load a new page. remember: put the page now shown in the history, for Back. True if it came
     wb_suggestions = []
+    wb_menu = nil
     wb_status = "Loading " + url + "..."
     draw_all()
     let page = httpget(url)
@@ -3451,6 +3459,138 @@ func wb_draw_field(box, x, top)
     end
 end
 
+
+# ---- the picture menu ------------------------------------------------------------------------
+#
+# Right-click a picture (or the [name] that stands in for one that couldn't be fetched) and a menu
+# opens at the pointer: Save picture (only for one that was fetched), Open picture (on a page of its
+# own, like a link) and Copy address. While it is open the next click belongs to it: on an entry it
+# does that, anywhere else it only closes the menu.
+#
+# Saving writes the picture's own bytes in the folder the program was started from. aerOS asks
+# before a program changes files (Y, A or N, in a box over the screen), and file names on the disk
+# are 8.3, so the file is called after the picture's (cat.jpg: "cat", then 4 hex digits worked out
+# from its whole address, so two pictures of the same name don't meet, and saving one twice
+# replaces it with itself) and the kind of picture it really is.
+
+func wb_picture_at(x, y)
+    # the number of the picture drawn at this place on the screen, or -1
+    for hit in wb_pic_hits do
+        if x >= hit[0] and x < hit[0] + hit[2] and y >= hit[1] and y < hit[1] + hit[3] then
+            return hit[4]
+        end
+    end
+    return -1
+end
+
+func wb_picture_kind(data)
+    # the end of a picture's file name, from the bytes it starts with
+    let a = ord(data[0])
+    let b = ord(data[1])
+    if a == 137 and b == 80 then return "png" end
+    if a == 255 and b == 216 then return "jpg" end
+    if a == 71 and b == 73 then return "gif" end
+    return "bmp"
+end
+
+func wb_picture_file_name(number)
+    # a file name for a picture: up to 4 letters or digits from its address's last part, 4 hex digits
+    # worked out from the whole address, and its kind
+    let url = wb_imgs[number][0]
+    let whole = url
+    let cut = find(url, "?")
+    if cut != -1 then url = sub(url, 0, cut) end
+    cut = find(url, "#")
+    if cut != -1 then url = sub(url, 0, cut) end
+    let last = ""
+    for part in split(url, "/") do
+        last = part
+    end
+    let dot = find(last, ".")
+    if dot != -1 then last = sub(last, 0, dot) end
+    let base = ""
+    for i = 0 to len(last) - 1 do
+        let n = ord(lower(last[i]))
+        if len(base) < 4 and ((n >= 97 and n <= 122) or (n >= 48 and n <= 57)) then base = base + lower(last[i]) end
+    end
+    if base == "" then base = "pic" end
+    let sum = 7
+    for i = 0 to len(whole) - 1 do
+        sum = (sum * 31 + ord(whole[i])) % 65521
+    end
+    let hex = "0123456789abcdef"
+    let digits = hex[sum / 4096 % 16] + hex[sum / 256 % 16] + hex[sum / 16 % 16] + hex[sum % 16]
+    return base + digits + "." + wb_picture_kind(wb_imgs[number][2])
+end
+
+func wb_save_picture(number)
+    # write a fetched picture to the disk, and say where (or why not) in the status bar
+    let picture = wb_imgs[number]
+    if picture[2] == nil then
+        wb_status = "That picture wasn't fetched, so there is nothing to save."
+        return
+    end
+    let path = cwd() + wb_picture_file_name(number)
+    if wrf(path, picture[2]) then
+        wb_status = "Saved the picture as " + path
+    else
+        wb_status = "Couldn't save it as " + path + " (aerOS asks before a program changes files: answer Y or A)"
+    end
+end
+
+func wb_menu_open_at(number, x, y, max_x, max_y)
+    # open the menu for a picture with its corner at x, y (moved if it would go past max_x or max_y)
+    let entries = []
+    if wb_imgs[number][2] != nil then push(entries, ["Save picture", "save"]) end
+    push(entries, ["Open picture", "open"])
+    push(entries, ["Copy address", "copy"])
+    let width = 12 * 8 + 24
+    let height = len(entries) * WB_MENU_ROW + 8
+    if x + width > max_x then x = max_x - width end
+    if y + height > max_y then y = max_y - height end
+    wb_menu = [x, y, number, entries, width, height]
+end
+
+func wb_menu_entry_at(x, y)
+    # the entry of the open menu at this place, from 0, or -1
+    if wb_menu == nil then return -1 end
+    if x < wb_menu[0] or x >= wb_menu[0] + wb_menu[4] or y < wb_menu[1] + 4 or y >= wb_menu[1] + wb_menu[5] - 4 then return -1 end
+    return (y - wb_menu[1] - 4) / WB_MENU_ROW
+end
+
+func wb_menu_pick(x, y)
+    # a click while the menu is open: an entry does what it says, anywhere else only closes the menu
+    let n = wb_menu_entry_at(x, y)
+    if n < 0 then
+        wb_menu = nil
+        return
+    end
+    let what = wb_menu[3][n][1]
+    let number = wb_menu[2]
+    wb_menu = nil
+    if what == "save" then
+        wb_save_picture(number)
+    elif what == "open" then
+        wb_navigate(wb_imgs[number][0], true)
+    elif what == "copy" then
+        setclip(wb_imgs[number][0])
+        wb_status = "Copied the picture's address."
+    end
+end
+
+func wb_draw_menu(at_x, at_y)
+    # the open menu, over everything, with the entry the pointer is on lit
+    if wb_menu == nil then return end
+    rect(wb_menu[0] - 1, wb_menu[1] - 1, wb_menu[4] + 2, wb_menu[5] + 2, WB_C_EDGE)
+    rect(wb_menu[0], wb_menu[1], wb_menu[4], wb_menu[5], WB_C_PAGE)
+    let lit = wb_menu_entry_at(at_x, at_y)
+    for i = 0 to len(wb_menu[3]) - 1 do
+        let y = wb_menu[1] + 4 + i * WB_MENU_ROW
+        if i == lit then rect(wb_menu[0] + 2, y, wb_menu[4] - 4, WB_MENU_ROW, rgb(200, 220, 255)) end
+        text(wb_menu[0] + 12, y + 4, wb_menu[3][i][0], WB_C_TEXT, 1)
+    end
+end
+
 # ==== END: copied from browsgui.aer ====
 
 func wb_init_colours()
@@ -3537,12 +3677,16 @@ func wb_draw_box(box, top)
             rect(x, down + 16 * box[6] + 1, box[1], 1, colour)
             push(wb_hits, [x, down, box[1], box[2], link])
         end
+        if box[10] >= 0 then
+            push(wb_pic_hits, [x, down, box[1], box[2], box[10]])
+        end
     elif kind == 1 then
         let picture = wb_imgs[box[4]]
         image(picture[2], x, top, box[1], box[2] - 4)
         if box[5] > 0 then
             push(wb_hits, [x, top, box[1], box[2], box[5]])
         end
+        push(wb_pic_hits, [x, top, box[1], box[2] - 4, box[4]])
     elif kind == 2 then
         rect(x + 4, top + 8, 5, 5, box[4])
     elif kind == 4 then
@@ -3556,6 +3700,7 @@ end
 func wb_draw_page()
     # the lines of the page that are in view
     wb_hits = []
+    wb_pic_hits = []
     let page_top = WB_Y + WB_TOOLBAR
     rect(WB_X, page_top, WB_W, wb_view_height(), WB_C_PAGE)
     let bottom = wb_scroll + wb_view_height()
@@ -3705,6 +3850,23 @@ func wb_update_hover()
         return true
     end
     return false
+end
+
+func wb_right_click(px, py)
+    # a click of the right button: on a picture in the Browser window in front, it opens that
+    # picture's menu (anywhere else it closes the menu)
+    wb_menu = nil
+    let win = front()
+    if win == nil or win[W_KIND] != "browser" or menu_open != "" then
+        return
+    end
+    wb_place(win)
+    if inside(px, py, WB_X, WB_Y + WB_TOOLBAR, WB_W - WB_SB_W, wb_view_height()) then
+        let number = wb_picture_at(px, py)
+        if number >= 0 then
+            wb_menu_open_at(number, px, py, SW, DESK_Y + DESK_H)
+        end
+    end
 end
 
 func wb_go_back()
@@ -3916,6 +4078,11 @@ end
 
 func click(px, py)
     # the left button went down at px, py: whatever is on top there gets it
+    # the Browser's picture menu, if it is open, has the click first (an entry, or closing it)
+    if wb_menu != nil then
+        wb_menu_pick(px, py)
+        return
+    end
     # the system monitor's panel first, as it is drawn over everything: a click in it does
     # nothing, and anywhere else closes it (and on its indicators, that is all it does)
     if menu_open == "monitor" then
@@ -4097,6 +4264,11 @@ end
 func press(k)
     # a key was pressed
     let top = front()
+    # Esc closes the Browser's picture menu, if it is open
+    if wb_menu != nil and k == KEY_ESCAPE then
+        wb_menu = nil
+        return
+    end
     # the Browser's address bar, while it is being typed in, has every key (Tab and Esc too)
     if menu_open == "" and wb_typing(top, k) then
         wb_edit_key(k)
@@ -4254,8 +4426,13 @@ func follow_mouse()
     end
     let left = m[2] % 2 == 1
     let was_left = buttons_before % 2 == 1
+    let right = (m[2] / 2) % 2 == 1
+    let was_right = (buttons_before / 2) % 2 == 1
     if left and not was_left then
         click(pointer_x, pointer_y)
+    end
+    if right and not was_right then
+        wb_right_click(pointer_x, pointer_y)
     end
     if not left then
         dragging = nil

@@ -17,6 +17,8 @@
 #     arrow keys, Page Up / Down, space    scroll (Home and End jump to the top and bottom)
 #     the bar down the right edge          click above or below its handle to scroll by a
 #                                          screen, or drag the handle
+#     right-click a picture                Save picture (to the folder you started it in), Open
+#                                          picture, or Copy address
 #     Backspace                            the page before        Esc                 quit
 #
 # http:// and https:// pages work (https is checked: a site with a bad certificate won't load).
@@ -67,6 +69,7 @@ let SUGGEST_H = 24         # and the strip above that, when there's a site to su
 let SB_W = 14              # width of the scroll bar
 let INDENT = 24            # how far a list or quote is moved in
 let FIELD_H = 24           # how tall a box or button on a page is
+let MENU_ROW = 24          # and an entry of the picture menu
 # what a field is: [form, kind, name, value, label, ticked?, columns, choices, choice]. kind is
 # "text", "password", "area", "checkbox", "radio", "submit", "button", "select" or "hidden"; label
 # is a button's words, or what a text box says when empty; each of the choices of a select is
@@ -114,6 +117,8 @@ let hover = 0              # the link the pointer is over, or 0 (below 0: a fiel
 let forms = []             # the forms on the page: [where it goes, its method]
 let fields = []            # what is in them: see F_ below
 let focus = -1             # the box being typed in, or -1
+let pic_hits = []          # where the pictures are on the screen now: [x, y, w, h, picture number]
+let menu = nil             # the open picture menu: [x, y, picture number, entries, w, h], or nil
 let running = true
 
 # the address bar
@@ -581,7 +586,7 @@ end
 
 func place_word(text, colour, size, bold, link, space)
     # put a word on the line, on a new line if it doesn't fit. Boxes are [x, width, height, 0,
-    # text, colour, size, bold, link, how far down in a taller line]
+    # text, colour, size, bold, link, how far down in a taller line, the picture it stands for or -1]
     let cell = 8 * size
     let width = len(text) * cell
     let gap = 0
@@ -595,7 +600,7 @@ func place_word(text, colour, size, bold, link, space)
         let fit = (L_right - L_x) / cell
         if fit < 1 then fit = 1 end
         if fit >= len(text) then break end
-        push(L_boxes, [L_x, fit * cell, 16 * size + 4, 0, sub(text, 0, fit), colour, size, bold, link, 0])
+        push(L_boxes, [L_x, fit * cell, 16 * size + 4, 0, sub(text, 0, fit), colour, size, bold, link, 0, -1])
         L_h = 16 * size + 4
         L_words = L_words + 1
         L_x = L_right
@@ -608,7 +613,7 @@ func place_word(text, colour, size, bold, link, space)
         let before = L_boxes[len(L_boxes) - 1]
         if before[3] == 0 and before[8] == link then before[1] = before[1] + gap end
     end
-    push(L_boxes, [L_x + gap, width, 16 * size + 4, 0, text, colour, size, bold, link, 0])
+    push(L_boxes, [L_x + gap, width, 16 * size + 4, 0, text, colour, size, bold, link, 0, -1])
     L_x = L_x + gap + width
     if 16 * size + 4 > L_h then L_h = 16 * size + 4 end
     L_words = L_words + 1
@@ -626,6 +631,8 @@ func place_picture(number, link)
         else
             place_word(label, C_DIM, 1, false, link, true)
         end
+        # (so it can be right-clicked like the picture)
+        L_boxes[len(L_boxes) - 1][10] = number
         return
     end
     let width = picture[3]
@@ -841,6 +848,7 @@ end
 func navigate(url, remember)
     # load a new page. remember: put the page now shown in the history, for Back. True if it came
     suggestions = []
+    menu = nil
     status = "Loading " + url + "..."
     draw_all()
     let page = httpget(url)
@@ -1186,6 +1194,138 @@ func draw_field(box, x, top)
 end
 
 
+# ---- the picture menu ------------------------------------------------------------------------
+#
+# Right-click a picture (or the [name] that stands in for one that couldn't be fetched) and a menu
+# opens at the pointer: Save picture (only for one that was fetched), Open picture (on a page of its
+# own, like a link) and Copy address. While it is open the next click belongs to it: on an entry it
+# does that, anywhere else it only closes the menu.
+#
+# Saving writes the picture's own bytes in the folder the program was started from. aerOS asks
+# before a program changes files (Y, A or N, in a box over the screen), and file names on the disk
+# are 8.3, so the file is called after the picture's (cat.jpg: "cat", then 4 hex digits worked out
+# from its whole address, so two pictures of the same name don't meet, and saving one twice
+# replaces it with itself) and the kind of picture it really is.
+
+func picture_at(x, y)
+    # the number of the picture drawn at this place on the screen, or -1
+    for hit in pic_hits do
+        if x >= hit[0] and x < hit[0] + hit[2] and y >= hit[1] and y < hit[1] + hit[3] then
+            return hit[4]
+        end
+    end
+    return -1
+end
+
+func picture_kind(data)
+    # the end of a picture's file name, from the bytes it starts with
+    let a = ord(data[0])
+    let b = ord(data[1])
+    if a == 137 and b == 80 then return "png" end
+    if a == 255 and b == 216 then return "jpg" end
+    if a == 71 and b == 73 then return "gif" end
+    return "bmp"
+end
+
+func picture_file_name(number)
+    # a file name for a picture: up to 4 letters or digits from its address's last part, 4 hex digits
+    # worked out from the whole address, and its kind
+    let url = imgs[number][0]
+    let whole = url
+    let cut = find(url, "?")
+    if cut != -1 then url = sub(url, 0, cut) end
+    cut = find(url, "#")
+    if cut != -1 then url = sub(url, 0, cut) end
+    let last = ""
+    for part in split(url, "/") do
+        last = part
+    end
+    let dot = find(last, ".")
+    if dot != -1 then last = sub(last, 0, dot) end
+    let base = ""
+    for i = 0 to len(last) - 1 do
+        let n = ord(lower(last[i]))
+        if len(base) < 4 and ((n >= 97 and n <= 122) or (n >= 48 and n <= 57)) then base = base + lower(last[i]) end
+    end
+    if base == "" then base = "pic" end
+    let sum = 7
+    for i = 0 to len(whole) - 1 do
+        sum = (sum * 31 + ord(whole[i])) % 65521
+    end
+    let hex = "0123456789abcdef"
+    let digits = hex[sum / 4096 % 16] + hex[sum / 256 % 16] + hex[sum / 16 % 16] + hex[sum % 16]
+    return base + digits + "." + picture_kind(imgs[number][2])
+end
+
+func save_picture(number)
+    # write a fetched picture to the disk, and say where (or why not) in the status bar
+    let picture = imgs[number]
+    if picture[2] == nil then
+        status = "That picture wasn't fetched, so there is nothing to save."
+        return
+    end
+    let path = cwd() + picture_file_name(number)
+    if wrf(path, picture[2]) then
+        status = "Saved the picture as " + path
+    else
+        status = "Couldn't save it as " + path + " (aerOS asks before a program changes files: answer Y or A)"
+    end
+end
+
+func menu_open_at(number, x, y, max_x, max_y)
+    # open the menu for a picture with its corner at x, y (moved if it would go past max_x or max_y)
+    let entries = []
+    if imgs[number][2] != nil then push(entries, ["Save picture", "save"]) end
+    push(entries, ["Open picture", "open"])
+    push(entries, ["Copy address", "copy"])
+    let width = 12 * 8 + 24
+    let height = len(entries) * MENU_ROW + 8
+    if x + width > max_x then x = max_x - width end
+    if y + height > max_y then y = max_y - height end
+    menu = [x, y, number, entries, width, height]
+end
+
+func menu_entry_at(x, y)
+    # the entry of the open menu at this place, from 0, or -1
+    if menu == nil then return -1 end
+    if x < menu[0] or x >= menu[0] + menu[4] or y < menu[1] + 4 or y >= menu[1] + menu[5] - 4 then return -1 end
+    return (y - menu[1] - 4) / MENU_ROW
+end
+
+func menu_pick(x, y)
+    # a click while the menu is open: an entry does what it says, anywhere else only closes the menu
+    let n = menu_entry_at(x, y)
+    if n < 0 then
+        menu = nil
+        return
+    end
+    let what = menu[3][n][1]
+    let number = menu[2]
+    menu = nil
+    if what == "save" then
+        save_picture(number)
+    elif what == "open" then
+        navigate(imgs[number][0], true)
+    elif what == "copy" then
+        setclip(imgs[number][0])
+        status = "Copied the picture's address."
+    end
+end
+
+func draw_menu(at_x, at_y)
+    # the open menu, over everything, with the entry the pointer is on lit
+    if menu == nil then return end
+    rect(menu[0] - 1, menu[1] - 1, menu[4] + 2, menu[5] + 2, C_EDGE)
+    rect(menu[0], menu[1], menu[4], menu[5], C_PAGE)
+    let lit = menu_entry_at(at_x, at_y)
+    for i = 0 to len(menu[3]) - 1 do
+        let y = menu[1] + 4 + i * MENU_ROW
+        if i == lit then rect(menu[0] + 2, y, menu[4] - 4, MENU_ROW, rgb(200, 220, 255)) end
+        text(menu[0] + 12, y + 4, menu[3][i][0], C_TEXT, 1)
+    end
+end
+
+
 # ---- drawing ---------------------------------------------------------------------------------
 
 func fit(text, columns)
@@ -1234,10 +1374,12 @@ func draw_box(box, top)
             rect(x, down + 16 * box[6] + 1, box[1], 1, colour)
             push(hits, [x, down, box[1], box[2], link])
         end
+        if box[10] >= 0 then push(pic_hits, [x, down, box[1], box[2], box[10]]) end
     elif kind == 1 then
         let picture = imgs[box[4]]
         image(picture[2], x, top, box[1], box[2] - 4)
         if box[5] > 0 then push(hits, [x, top, box[1], box[2], box[5]]) end
+        push(pic_hits, [x, top, box[1], box[2] - 4, box[4]])
     elif kind == 2 then
         rect(x + 4, top + 8, 5, 5, box[4])
     elif kind == 4 then
@@ -1251,6 +1393,7 @@ end
 func draw_page()
     # the rows that are on the screen
     hits = []
+    pic_hits = []
     rect(0, TOOLBAR, SW, view_height(), C_PAGE)
     let bottom = scroll + view_height()
     for row in rows do
@@ -1372,6 +1515,7 @@ func draw_all()
     draw_toolbar()
     draw_statusbar()
     draw_suggestion()
+    draw_menu(pointer_x, pointer_y)
     draw_pointer()
     gshow()
 end
@@ -1475,6 +1619,16 @@ func click(x, y)
     end
 end
 
+func right_click(x, y)
+    # a click of the right button: on a picture on the page it opens the menu for it (and anywhere
+    # else it closes the menu)
+    menu = nil
+    if y >= TOOLBAR and y < SH - bottom_height() and x < SW - SB_W then
+        let number = picture_at(x, y)
+        if number >= 0 then menu_open_at(number, x, y, SW, SH) end
+    end
+end
+
 func drag_to(y)
     # the scroll bar's handle is being dragged: the page follows
     let height = view_height()
@@ -1494,10 +1648,17 @@ func follow_mouse()
     pointer_y = m[1]
     let left = m[2] % 2 == 1
     let was_left = buttons_before % 2 == 1
+    let right = (m[2] / 2) % 2 == 1
+    let was_right = (buttons_before / 2) % 2 == 1
     if left and not was_left then
         status = ""
-        click(pointer_x, pointer_y)
+        if menu != nil then
+            menu_pick(pointer_x, pointer_y)
+        else
+            click(pointer_x, pointer_y)
+        end
     end
+    if right and not was_right then right_click(pointer_x, pointer_y) end
     if not left then dragging = false end
     if dragging then drag_to(pointer_y) end
     buttons_before = m[2]
@@ -1513,6 +1674,10 @@ end
 
 func press(code)
     # a key
+    if menu != nil and code == KEY_ESCAPE then
+        menu = nil
+        return
+    end
     if editing then
         if code == KEY_ENTER then
             submit()

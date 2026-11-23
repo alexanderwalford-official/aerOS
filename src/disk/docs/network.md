@@ -121,7 +121,12 @@ scroll with the arrow keys, Page Up and Down, or the bar down the right edge; Ba
 and Esc quits. The boxes and buttons on a page work: click a search box, type, and press Enter (or
 click its button); tick boxes and round choices are clicked, and a list shows its next choice each
 click. A form is sent as a GET (the answers go on the end of the address, `?q=hello+world`), which is
-what search boxes use; a form that needs POST says so and isn't sent. There is no JavaScript or style sheets, and the pictures (the first 8 on a page)
+what search boxes use; a form that needs POST says so and isn't sent.
+
+Right-click a picture for a menu: **Save picture** (to the folder you started the browser from, named
+after the picture, like `cat3fa2.jpg`; AerOS asks first, as it does before any program changes
+files), **Open picture** (on a page of its own) and **Copy address**. A click anywhere else, or Esc,
+closes the menu. There is no JavaScript or style sheets, and the pictures (the first 8 on a page)
 come from sites that need their own web rules too. When a page or its pictures are blocked, a
 yellow strip along the bottom offers to allow the site: click it (or press A), and AerOS asks
 you (Y or N) before it makes the rule, the same as `fw web <site> <port>` would. Say N, and

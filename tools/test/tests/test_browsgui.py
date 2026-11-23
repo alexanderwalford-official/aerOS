@@ -485,3 +485,190 @@ def test_forms_in_the_desktop_browser(t):
         wait(lambda: '/search?q=cats' in asked, 'typing in the box and Enter did not send the form')
     finally:
         server.shutdown()
+
+
+MENU_LIT = (200, 220, 255)     # the entry of the picture menu the pointer is on
+
+
+def test_browsgui_saves_a_picture(t):
+    """Right-click a picture: a menu opens at the pointer, Save picture writes the picture to the disk
+    (after aerOS asks), named after it, and a click anywhere else closes the menu."""
+    asked = []
+    picture = make_png(120, 60, RED)
+    page = b'<title>Pic</title><p><img src="/red.png" alt="red"></p>'
+
+    class Pages(http.server.BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
+        def do_GET(self):
+            asked.append(self.path)
+            body, kind = (picture, 'image/png') if self.path == '/red.png' else (page, 'text/html')
+            self.send_response(200)
+            self.send_header('Content-Type', kind)
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    def wait(condition, what, seconds=40):
+        for _ in range(int(seconds * 5)):
+            if condition():
+                return
+            time.sleep(0.2)
+        aeros.fail(what + f' (asked: {asked})')
+
+    def move_pointer(dx, dy):
+        while dx or dy:
+            step_x = max(-100, min(100, dx))
+            step_y = max(-100, min(100, dy))
+            aeros.mouse_move(step_x, step_y)
+            dx -= step_x
+            dy -= step_y
+            time.sleep(0.05)
+        time.sleep(0.5)
+
+    def press_button(mask):
+        aeros.mouse_buttons(mask)
+        time.sleep(0.2)
+        aeros.mouse_buttons(0)
+        time.sleep(0.6)
+
+    port = free_port()
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Pages)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        disk = t.disk(files=t.package('browsgui'))
+        aeros = t.boot(graphics=True, network='user,model=e1000', disk=disk)
+        aeros.first_login()
+        aeros.run(f'fw web 10.0.2.2 {port}')
+        before = aeros.prompts()
+        aeros.ask(f'browsgui http://10.0.2.2:{port}/')
+        wait(lambda: '/red.png' in asked, 'the picture was never fetched')
+        time.sleep(2)
+
+        # the picture is at 16, 44 (120 x 60): right-click on it, then move onto the first entry
+        move_pointer(60 - 512, 70 - 384)
+        press_button(2)
+        move_pointer(20, 16)
+        wait(lambda: count_colour(aeros.screenshot('menu'), MENU_LIT) > 500, 'the right-click did not open the picture menu')
+
+        # a click elsewhere only closes it
+        move_pointer(300, 200)
+        press_button(1)
+        if count_colour(aeros.screenshot('closed'), MENU_LIT) != 0:
+            aeros.fail('the menu stayed open after a click somewhere else')
+
+        # open it again, and take Save picture: aerOS asks before the program writes in the folder
+        move_pointer(60 + 20 - 380, 70 + 16 - 270)
+        move_pointer(-20, -16)
+        press_button(2)
+        move_pointer(20, 16)
+        press_button(1)
+        wait(lambda: count_colour(aeros.screenshot('question'), QUESTION) > 0, "aerOS's question did not come up")
+        aeros.key('y')
+        wait(lambda: count_colour(aeros.screenshot('answered'), QUESTION) == 0, 'the question stayed')
+        time.sleep(1)
+
+        aeros.key('esc')
+        aeros.wait_prompt(before, 30, what='browsgui')
+        aeros.cls()
+        aeros.run('la')
+        names = [word for word in aeros.text().split() if word.startswith('red') and word.endswith('.png')]
+        if len(names) != 1:
+            aeros.fail(f'the picture was not saved as red....png: {aeros.text()}')
+        aeros.run(f'len(rdb("{names[0]}"))')
+        aeros.expect_line(str(len(picture)))
+    finally:
+        server.shutdown()
+
+
+def test_save_a_picture_in_the_desktop_browser(t):
+    """The same menu in the desktop's Browser window: right-click the picture, Save picture."""
+    asked = []
+    picture = make_png(120, 60, RED)
+    page = b'<title>Pic</title><p><img src="/red.png" alt="red"></p>'
+
+    class Pages(http.server.BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
+        def do_GET(self):
+            asked.append(self.path)
+            body, kind = (picture, 'image/png') if self.path == '/red.png' else (page, 'text/html')
+            self.send_response(200)
+            self.send_header('Content-Type', kind)
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    def wait(condition, what, seconds=60):
+        for _ in range(int(seconds * 5)):
+            if condition():
+                return
+            time.sleep(0.2)
+        aeros.fail(what + f' (asked: {asked})')
+
+    port = free_port()
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Pages)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        disk = t.disk(files=t.package('desktop'))
+        aeros = t.boot(graphics=True, network='user,model=e1000', disk=disk)
+        aeros.first_login()
+        aeros.run(f'fw web 10.0.2.2 {port}')
+        before = aeros.prompts()
+        aeros.ask('desktop')
+        wait(lambda: count_colour(aeros.screenshot('desk'), QUESTION) > 0, "aerOS's question did not come up", 90)
+        aeros.key('a')
+        wait(lambda: count_colour(aeros.screenshot('desk'), QUESTION) == 0, 'the question stayed')
+        time.sleep(1)
+        aeros.key('tab')
+        time.sleep(0.5)
+        for _ in range(7):
+            aeros.key('down')
+        time.sleep(0.5)
+        aeros.key('ret')
+        time.sleep(1.5)
+        aeros.type(f'http://10.0.2.2:{port}/\n')
+        wait(lambda: '/red.png' in asked, 'the Browser never fetched the picture')
+        time.sleep(2)
+
+        # the picture is in the window (at 150, 58) at 166, 122: right-click on it, then the first entry
+        for dx, dy in [(-100, -100), (-100, -100), (-112, -44)]:
+            aeros.mouse_move(dx, dy)
+            time.sleep(0.1)
+        time.sleep(0.5)
+        aeros.mouse_buttons(2)
+        time.sleep(0.2)
+        aeros.mouse_buttons(0)
+        time.sleep(0.6)
+        aeros.mouse_move(20, 16)
+        time.sleep(0.5)
+        wait(lambda: count_colour(aeros.screenshot('menu'), MENU_LIT) > 500, 'the right-click did not open the picture menu')
+        aeros.mouse_buttons(1)
+        time.sleep(0.2)
+        aeros.mouse_buttons(0)
+        # aerOS may ask before the desktop writes in the folder (A, from the settings, may cover it already)
+        time.sleep(2)
+        if count_colour(aeros.screenshot('question'), QUESTION) > 0:
+            aeros.key('y')
+        time.sleep(2)
+
+        # Esc closes the Browser, then the Clock, then the desktop, and the file is there
+        for _ in range(3):
+            aeros.key('esc')
+            time.sleep(0.7)
+        aeros.wait_prompt(before, 30, what='the desktop')
+        aeros.cls()
+        aeros.run('la')
+        names = [word for word in aeros.text().split() if word.startswith('red') and word.endswith('.png')]
+        if len(names) != 1:
+            aeros.fail(f'the picture was not saved as red....png: {aeros.text()}')
+    finally:
+        server.shutdown()

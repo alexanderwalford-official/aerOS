@@ -291,6 +291,16 @@ box being typed in. A form is sent by following its address with the answers on 
 (`url_encode`): the GET method, which search boxes use. POST would need a request with a body, which
 `sys/http.c` doesn't send yet, so a POST form is refused with a message saying so.
 
+Right-clicking a picture opens a menu at the pointer (the "picture menu" section of `browsgui.aer`):
+Save picture, Open picture and Copy address. Every picture drawn leaves a place to click in `pic_hits`
+(and so does the `[name]` that stands in for one that couldn't be fetched). Saving does `wrf` of the
+picture's own bytes in the folder the program was started from, so AerOS asks first (`perm.c`); the
+name has to fit 8.3 on the disk, so it is up to 4 letters of the picture's name, 4 hex digits worked
+out from its whole address (two pictures of one name don't meet, and saving one twice replaces it with
+itself) and its real kind (png, jpg, gif or bmp, from its first bytes). While the menu is open the next
+click belongs to it. In the desktop's Browser the menu is drawn over the windows but under the
+taskbar, and Esc closes it.
+
 When the firewall blocks a page, or the site a picture comes from (they are often on another site
 than the page), `browsgui` notices and offers to allow it: a strip along the bottom, which you
 click (or press A). It then calls `fwallow(host, port)` (`lang/bi_network.c`), which makes AerOS
