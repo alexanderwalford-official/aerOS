@@ -115,7 +115,7 @@ description:
 | `browser` | a text web browser for `http://` and `https://` pages: numbered links, back, paging, `s` to search with FrogFind, and pictures (BMP, PNG, GIF, JPEG) on a graphics screen | |
 | `bench` | how fast AerOS reads and writes its disk | |
 | `anim` | spinners, progress bars and moving text | |
-| `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, System, Settings and About, an icon for every app installed, and a live system monitor on the taskbar, by mouse or keyboard | |
+| `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, a Browser (the `browsgui` browser in a window), System, Settings and About, an icon for every app installed, and a live system monitor on the taskbar, by mouse or keyboard | |
 
 **The desktop** finds the apps as it starts: every program in `/bin/` and the packages in
 `/apps/` (not itself, and not `sleep`, which the power menu has). AerOS runs one program in

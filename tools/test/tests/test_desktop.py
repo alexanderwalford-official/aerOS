@@ -25,7 +25,7 @@ SCREEN_BACK = bytes([0x0A, 0x0D, 0x12])
 MONITOR_EDGE = bytes([0x3C, 0x46, 0x54])
 
 # the desktop's own windows, in the order the start menu has them (OWN_APPS in desktop.aer)
-OWN_APPS = ['clock', 'files', 'notes', 'calc', 'system', 'settings', 'about']
+OWN_APPS = ['clock', 'files', 'notes', 'calc', 'system', 'settings', 'about', 'browser']
 
 
 def has(shot, colour):

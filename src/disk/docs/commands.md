@@ -135,7 +135,7 @@ The first time, let AerOS reach the server: `fw web packages.intercon.network 80
 | `browsgui` | a graphical web browser, with a mouse and pictures in the page: `browsgui frogfind.com` ([network](network.md)) |
 | `bench` | how fast the disk is |
 | `anim` | the animations AerLang can draw |
-| `desktop` | a desktop with windows: a clock, files, notes, a calculator, your installed apps, Sleep / Restart / Shut down, Settings for its colours, background picture and taskbar, and a live system monitor (from the CD, for its graphics screen) |
+| `desktop` | a desktop with windows: a clock, files, notes, a calculator, a web browser, your installed apps, Sleep / Restart / Shut down, Settings for its colours, background picture and taskbar, and a live system monitor (from the CD, for its graphics screen) |
 
 A package is its program, `/apps/<name>.aer`, and a folder of its own, `/apps/<name>/`, for the
 files it comes with (the viewer's pictures) and what it keeps there (Snake's high scores). It

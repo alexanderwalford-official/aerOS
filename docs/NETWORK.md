@@ -274,6 +274,14 @@ looking through the boxes on screen), and draws the part in view into the back b
 `image`. Only what changed is drawn again (a mouse move, a key, a click). No JavaScript, no style
 sheets and no tables beyond running the cells along the line.
 
+The desktop (`packages/desktop.aer`) has the same browser in a window, the Browser. AerLang can't share code
+between programs, so its engine (reading the HTML, laying it out, fetching pages and pictures, offering
+to allow blocked sites) is a copy of this one, made by `tools/make_desktop_browser.py`, with `wb_` in front
+of every name. Run it again after changing the engine in `browsgui.aer`. What a window needs and a whole
+screen doesn't, drawing inside the window (nothing is drawn outside it: a line of the page that doesn't
+fit is left out, and the toolbar and bottom bars are drawn over the rest) and getting the desktop's
+mouse clicks and keys, is written by hand in `desktop.aer` ("The Browser window").
+
 When the firewall blocks a page, or the site a picture comes from (they are often on another site
 than the page), `browsgui` notices and offers to allow it: a strip along the bottom, which you
 click (or press A). It then calls `fwallow(host, port)` (`lang/bi_network.c`), which makes AerOS

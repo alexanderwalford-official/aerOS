@@ -12,6 +12,7 @@
 #     System       what aerOS knows about the computer (the same as sysinfo)
 #     Settings     the colours, the background picture and where the taskbar goes
 #     About        what this is
+#     Browser      web pages, with pictures: click links, or type an address (see "The Browser window")
 # and, after those, every app installed: the ones that come with aerOS (/bin/) and the
 # packages from pkg install (/apps/), found each time the desktop starts.
 #
@@ -120,7 +121,7 @@ let W_DATA = 8
 # the desktop's own windows, as [kind, name], in the order the icons and the menu show them.
 # The apps found on the disk come after them (find_apps)
 let OWN_APPS = [["clock", "Clock"], ["files", "Files"], ["notes", "Notes"], ["calc", "Calculator"],
-                ["system", "System"], ["settings", "Settings"], ["about", "About"]]
+                ["system", "System"], ["settings", "Settings"], ["about", "About"], ["browser", "Browser"]]
 
 # where installed apps are, in the order aerOS looks for one typed at the prompt: the ones that
 # come with aerOS, games from an older aerOS, then the packages pkg install puts in /apps/
@@ -888,6 +889,8 @@ func start_app(kind)
         open("settings", "Settings", 490, 290, [0])
     elif kind == "about" then
         open("about", "About", 380, 230, [])
+    elif kind == "browser" then
+        open_browser()
     end
 end
 
@@ -1313,6 +1316,13 @@ func draw_icon(app, x, y)
     elif kind == "about" then
         rect(x + 8, y, 32, 32, ACCENT)
         text(x + 20, y + 8, "i", WHITE_INK, 1)
+    elif kind == "browser" then
+        # a globe in a little window
+        rect(x + 4, y + 2, 40, 30, 0x2A2F38)
+        rect(x + 4, y + 2, 40, 6, 0x4DA3FF)
+        draw_disc(x + 24, y + 20, 10, 0x6BA8E0)
+        line(x + 14, y + 20, x + 34, y + 20, 0xFFFFFF)
+        line(x + 24, y + 10, x + 24, y + 30, 0xFFFFFF)
     elif kind == "app" then
         # an app from the disk: a little window with its first letter, its title bar orange for
         # a package (/apps/) and grey for one that comes with aerOS (/bin/)
@@ -1369,7 +1379,11 @@ func draw_window(win, is_front)
         bar = TITLE_ON
     end
     rect(x, y, w, TITLE_H, bar)
-    text(x + 8, y + 4, fit(win[W_TITLE], (w - 60) / CHAR_W), WHITE_INK, 1)
+    let heading = win[W_TITLE]
+    if win[W_KIND] == "browser" then
+        heading = wb_window_title()
+    end
+    text(x + 8, y + 4, fit(heading, (w - 60) / CHAR_W), WHITE_INK, 1)
     # _ shrinks it to the taskbar, x closes it
     rect(x + w - 2 * BUTTON - 6, y + 3, BUTTON, BUTTON, 0x6F7C8A)
     text(x + w - 2 * BUTTON - 2, y + 4, "_", WHITE_INK, 1)
@@ -1398,6 +1412,8 @@ func draw_content(win, x, y, w, h)
         draw_settings(win, x, y, w, h)
     elif kind == "about" then
         draw_about(x, y)
+    elif kind == "browser" then
+        wb_draw(win)
     end
 end
 
@@ -2261,6 +2277,1249 @@ func draw_all()
 end
 
 
+# ---- The Browser window ---------------------------------------------------------------------
+#
+# The Browser is the browsgui package's browser (packages/browsgui.aer) in a window. Reading a
+# page, laying it out and fetching it with its pictures (the "engine") is the same code, copied
+# below by tools/make_desktop_browser.py: every name in it starts with wb_ or WB_. What comes
+# after it is only what a window needs: drawing the browser inside the window, and the clicks and
+# keys the desktop hands to it. There is one Browser. Closing its window keeps the page, and
+# opening it again shows it.
+#
+# WB_X, WB_Y, WB_W and WB_H say where the window's inside is on the screen: wb_place sets them
+# from the window before anything is drawn or clicked (a window moves when it is dragged). The
+# engine lays the page out WB_W wide, which never changes, as a window has one size.
+#
+# Drawing is clipped by leaving things out: text() and image() draw wherever they are told. A
+# line of the page is only drawn if all of it is inside the window, and the toolbar and the bars
+# along the bottom are drawn after the page, over any of it that reaches under them, so nothing
+# is ever drawn outside the window.
+
+let WB_X = 0
+let WB_Y = 0
+let WB_W = 0
+let WB_H = 0
+let WB_TOOLBAR = 32              # height of the bar along the top of the window's inside
+let WB_STATUS_H = 20             # and of the one along the bottom
+let WB_SUGGEST_H = 22            # and of the strip above that, when a site is suggested
+let wb_dragging = false          # the scroll bar's handle is being dragged
+let wb_drag_offset = 0
+
+# ==== BEGIN: copied from browsgui.aer by tools/make_desktop_browser.py, do not edit here ====
+# (see "The Browser window" for what is written by hand: drawing it, the mouse and the keys)
+
+# what the pages' &...; codes stand for. &amp; is done last, so "&amp;lt;" comes out as "&lt;"
+let WB_ENTITIES = [
+    ["&nbsp;", " "], ["&lt;", "<"], ["&gt;", ">"],
+    ["&quot;", "\""], ["&apos;", "'"],
+    ["&lsquo;", "'"], ["&rsquo;", "'"], ["&ldquo;", "\""], ["&rdquo;", "\""],
+    ["&ndash;", "-"], ["&mdash;", "-"], ["&hellip;", "..."], ["&bull;", "*"], ["&middot;", "*"],
+    ["&raquo;", ">>"], ["&laquo;", "<<"], ["&rarr;", "->"], ["&larr;", "<-"],
+    ["&copy;", "(c)"], ["&reg;", "(R)"], ["&trade;", "(TM)"],
+    ["&amp;", "&"]
+]
+
+# the tags that do something, each in a string of names with a space round each, so one
+# find() says whether a tag is in it
+let WB_HEADINGS = " h1 h2 h3 h4 h5 h6 "
+let WB_BLOCKS = " p table pre form dl figure "
+let WB_BREAKS = " div tr dt dd section article header footer nav main figcaption "
+let WB_BOLDS = " b strong th "
+let WB_INDENTED = " ul ol blockquote "
+let WB_SKIPPED = " script style svg template select noscript head "
+
+let WB_SEARCH = "http://frogfind.com/?q="    # where words typed in the address bar are searched for
+let WB_MAX_PAGE = 400000      # the most of a page that is read: the rest is left off
+let WB_MAX_PICTURES = 8       # pictures fetched for a page
+let WB_MAX_PICTURE_HEIGHT = 480
+
+# the screen, and what is where on it
+let WB_MARGIN = 16            # space left and right of the page
+let WB_SB_W = 14              # width of the scroll bar
+let WB_INDENT = 24            # how far a list or quote is moved in
+
+# colours (made once the graphics screen is on)
+let WB_C_PAGE = 0
+let WB_C_TEXT = 0
+let WB_C_LINK = 0
+let WB_C_HOVER = 0
+let WB_C_DIM = 0
+let WB_C_BAR = 0
+let WB_C_BAR_TEXT = 0
+let WB_C_EDGE = 0
+let WB_C_BUTTON = 0
+let WB_C_HANDLE = 0
+let WB_C_SUGGEST = 0
+let WB_C_SUGGEST_TEXT = 0
+
+# the page being shown
+let wb_address = ""           # where it came from ("" for the start page)
+let wb_title = ""             # what its <title> says
+let wb_atoms = []             # the page read from its HTML: words and the things between them
+let wb_links = []             # the address of each link: link number n is links[n - 1]
+let wb_imgs = []              # each picture: [address, alt text, its bytes or nil, width, height]
+let wb_rows = []              # the page laid out: each [y, height, boxes]
+let wb_page_h = 0             # how tall it all is
+let wb_scroll = 0             # how far down it is shown
+let wb_history = []           # the pages before it: [address, scroll]
+let wb_status = ""            # a message for the bar at the bottom
+let wb_hits = []              # what can be clicked on the screen now: [x, y, w, h, link number]
+let wb_suggestions = []       # sites the firewall blocks, that could be allowed: [site, port, "page" or "pictures"]
+let wb_retry_url = ""         # a page that wouldn't load, to be tried again once its site is allowed
+let wb_retry_remember = false
+let wb_hover = 0              # the link the pointer is over, or 0
+
+# the address bar
+let wb_editing = false
+let wb_typed = ""
+let wb_selected = false       # all of it is selected, so the next letter typed replaces it
+
+# the pointer, and the scroll bar's handle while it is dragged
+
+# used while the HTML is read
+let wb_P_bold = 0             # how many <b>s deep
+let wb_P_head = 0             # the heading level it is inside, or 0
+let wb_P_link = 0             # the number of the link it is inside, or 0
+let wb_P_indent = 0
+let wb_P_space = false        # was there a space before the next word
+let wb_in_title = false
+
+# used while the page is laid out
+let wb_L_boxes = []           # the line being built
+let wb_L_words = 0
+let wb_L_x = 0
+let wb_L_y = 0
+let wb_L_h = 0
+let wb_L_left = 0
+let wb_L_right = 0
+let wb_L_centre = false
+let wb_L_blank = true         # was there a gap just before
+
+
+# ---- text ------------------------------------------------------------------------------------
+
+func wb_replace(text, old, new)
+    # every old in text swapped for new
+    return join(split(text, old), new)
+end
+
+func wb_flatten(text)
+    # line breaks and tabs turned into spaces (chr(13) is the carriage return Windows puts
+    # before each \n)
+    text = wb_replace(text, chr(13), " ")
+    text = wb_replace(text, "\n", " ")
+    return wb_replace(text, "\t", " ")
+end
+
+func wb_squash(text)
+    # every run of spaces, tabs and line breaks turned into one space, which is what HTML does.
+    # a space at the start or end is kept (as one), so "with <b>bold</b> text" still has its spaces
+    text = wb_flatten(text)
+    let squashed = join(split(text), " ")
+    if squashed == "" then
+        if text != "" then return " " end
+        return ""
+    end
+    if text[0] == " " then squashed = " " + squashed end
+    if text[len(text) - 1] == " " then squashed = squashed + " " end
+    return squashed
+end
+
+func wb_plain_letters(text)
+    # the punctuation that comes as UTF-8 (curly quotes, dashes, "...") turned into what the
+    # screen's font has. Only looked for if a byte that starts one is there at all
+    if find(text, chr(226)) != -1 then
+        text = wb_replace(text, chr(226) + chr(128) + chr(152), "'")
+        text = wb_replace(text, chr(226) + chr(128) + chr(153), "'")
+        text = wb_replace(text, chr(226) + chr(128) + chr(156), "\"")
+        text = wb_replace(text, chr(226) + chr(128) + chr(157), "\"")
+        text = wb_replace(text, chr(226) + chr(128) + chr(147), "-")
+        text = wb_replace(text, chr(226) + chr(128) + chr(148), "-")
+        text = wb_replace(text, chr(226) + chr(128) + chr(166), "...")
+        text = wb_replace(text, chr(226) + chr(128) + chr(162), "*")
+        text = wb_replace(text, chr(226) + chr(134) + chr(146), "->")
+    end
+    if find(text, chr(194)) != -1 then
+        text = wb_replace(text, chr(194) + chr(160), " ")
+        text = wb_replace(text, chr(194) + chr(169), "(c)")
+        text = wb_replace(text, chr(194) + chr(183), "*")
+        text = wb_replace(text, chr(194) + chr(187), ">>")
+    end
+    return text
+end
+
+func wb_number_codes(text)
+    # &#8217; and &#x2019; codes: the ones that are plain letters stay, the curly quotes and dashes
+    # become the plain ones, and anything else a "?"
+    let parts = split(text, "&#")
+    let out = parts[0]
+    for i = 1 to len(parts) - 1 do
+        let part = parts[i]
+        let semi = find(part, ";")
+        let n = nil
+        if semi > 0 and semi <= 6 then
+            let digits = sub(part, 0, semi)
+            if lower(digits[0]) == "x" then digits = "0" + digits end
+            n = int(digits)
+        end
+        if n == nil then
+            out = out + "&#" + part
+        else
+            let shown = "?"
+            if n >= 32 and n < 127 then shown = chr(n) end
+            if n == 8216 or n == 8217 then shown = "'" end
+            if n == 8220 or n == 8221 then shown = "\"" end
+            if n == 8211 or n == 8212 then shown = "-" end
+            if n == 8230 then shown = "..." end
+            if n == 160 then shown = " " end
+            out = out + shown + sub(part, semi + 1)
+        end
+    end
+    return out
+end
+
+func wb_decode(text)
+    # the &...; codes swapped for the characters they stand for
+    if find(text, "&") == -1 then return text end
+    if find(text, "&#") != -1 then text = wb_number_codes(text) end
+    for pair in WB_ENTITIES do
+        text = wb_replace(text, pair[0], pair[1])
+    end
+    return text
+end
+
+
+# ---- addresses -------------------------------------------------------------------------------
+
+func wb_site(url)
+    # the start of an address, up to the site's name: "http://frogfind.com/read.php" gives
+    # "http://frogfind.com"
+    let start = find(url, "://") + 3
+    let slash = find(sub(url, start), "/")
+    if slash == -1 then return url end
+    return sub(url, 0, start + slash)
+end
+
+func wb_host_of(url)
+    # the site's name, for the fw web command: "http://site.com:8080/a" gives "site.com", and
+    # port_of gives its port
+    let name = sub(wb_site(url), find(url, "://") + 3)
+    let colon = find(name, ":")
+    if colon != -1 then name = sub(name, 0, colon) end
+    return name
+end
+
+func wb_port_of(url)
+    let name = sub(wb_site(url), find(url, "://") + 3)
+    let colon = find(name, ":")
+    if colon != -1 then return sub(name, colon + 1) end
+    if sub(lower(url), 0, 8) == "https://" then return "443" end
+    return "80"
+end
+
+func wb_folder(url)
+    # the folder a page is in: "http://site.com/docs/a.html" gives "http://site.com/docs/"
+    let question = find(url, "?")
+    if question != -1 then url = sub(url, 0, question) end
+    let base = wb_site(url)
+    let path = sub(url, len(base))
+    let last = -1
+    let i = 0
+    while i < len(path) do
+        if path[i] == "/" then last = i end
+        i = i + 1
+    end
+    if last == -1 then return base + "/" end
+    return base + sub(path, 0, last + 1)
+end
+
+func wb_resolve(href)
+    # turn a link into a whole address, using the address of the page it's on. gives back ""
+    # for links that can't be followed: to the same page (#top), email, or JavaScript
+    let hash = find(href, "#")
+    if hash != -1 then href = sub(href, 0, hash) end
+    if href == "" or wb_address == "" then
+        if find(href, "://") == -1 then return "" end
+    end
+    let low = lower(href)
+    if sub(low, 0, 7) == "mailto:" or sub(low, 0, 11) == "javascript:" or sub(low, 0, 5) == "data:" then return "" end
+    if find(low, "://") != -1 then return href end
+    if sub(href, 0, 2) == "//" then return sub(wb_address, 0, find(wb_address, ":") + 1) + href end
+    if sub(href, 0, 1) == "/" then return wb_site(wb_address) + href end
+    if sub(href, 0, 1) == "?" then
+        let question = find(wb_address, "?")
+        if question == -1 then return wb_address + href end
+        return sub(wb_address, 0, question) + href
+    end
+    return wb_folder(wb_address) + href
+end
+
+func wb_address_from(text)
+    # what was typed in the address bar, as an address: a site's name or address as it is (with
+    # https:// put in front if there's no http:// or https://), anything else (words, or
+    # something without a dot) is searched for with FrogFind
+    let words = split(text)
+    if len(words) == 0 then return "" end
+    if len(words) == 1 and (find(words[0], ".") != -1 or find(words[0], "://") != -1 or find(words[0], "localhost") == 0) then
+        if find(words[0], "://") == -1 then return "https://" + words[0] end
+        return words[0]
+    end
+    return WB_SEARCH + join(words, "+")
+end
+
+
+# ---- reading the page ------------------------------------------------------------------------
+
+func wb_tag_name(tag)
+    # the tag's name in small letters: "A href=..." gives "a", "/P" gives "/p", "br/" gives "br"
+    let space = find(tag, " ")
+    if space != -1 then tag = sub(tag, 0, space) end
+    if len(tag) > 1 and tag[len(tag) - 1] == "/" then tag = sub(tag, 0, len(tag) - 1) end
+    return lower(tag)
+end
+
+func wb_attribute(tag, name)
+    # one of a tag's settings: attribute("a href=\"/two.html\"", "href") gives "/two.html",
+    # or "" if the tag hasn't got it
+    let at = find(lower(tag), " " + name + "=")
+    if at == -1 then return "" end
+    let value = sub(tag, at + len(name) + 2)
+    let quote = sub(value, 0, 1)
+    let stop = -1
+    if quote == "\"" or quote == "'" then
+        value = sub(value, 1)
+        stop = find(value, quote)
+    else
+        stop = find(value, " ")
+    end
+    if stop != -1 then value = sub(value, 0, stop) end
+    return wb_decode(value)
+end
+
+func wb_word_size()
+    # the size of letters for the words now: 2 (twice as big) in a main heading
+    if wb_P_head == 1 then return 2 end
+    return 1
+end
+
+func wb_word_colour()
+    if wb_P_link > 0 then return WB_C_LINK end
+    return WB_C_TEXT
+end
+
+func wb_add_words(text)
+    # add some of the page's words: each is an atom [word, text, space before it?, size, bold?,
+    # colour, link number]. A word's space is kept so "<b>bold</b>text" stays joined
+    text = wb_decode(wb_squash(text))
+    if wb_in_title then
+        wb_title = wb_title + text
+        return
+    end
+    if text == "" then return end
+    if text[0] == " " then wb_P_space = true end
+    let size = wb_word_size()
+    let bold = wb_P_bold > 0 or wb_P_head > 0
+    let colour = wb_word_colour()
+    for word in split(text) do
+        push(wb_atoms, ["w", word, wb_P_space, size, bold, colour, wb_P_link])
+        wb_P_space = true
+    end
+    wb_P_space = text[len(text) - 1] == " "
+end
+
+func wb_do_tag(tag, name, closing)
+    # what each kind of tag does to the page. closing is true for the end tags, like </h1>
+    let spaced = " " + name + " "
+    if name == "a" then
+        if closing then
+            wb_P_link = 0
+        else
+            let url = wb_resolve(wb_attribute(tag, "href"))
+            if url != "" then
+                push(wb_links, url)
+                wb_P_link = len(wb_links)
+            end
+        end
+    elif find(WB_BOLDS, spaced) != -1 then
+        if closing then
+            if wb_P_bold > 0 then wb_P_bold = wb_P_bold - 1 end
+        else
+            wb_P_bold = wb_P_bold + 1
+        end
+    elif find(WB_HEADINGS, spaced) != -1 then
+        push(wb_atoms, ["gap"])
+        if closing then
+            wb_P_head = 0
+        else
+            wb_P_head = int(sub(name, 1))
+        end
+    elif name == "li" then
+        if not closing then
+            push(wb_atoms, ["nl"])
+            push(wb_atoms, ["bul"])
+        end
+    elif name == "br" then
+        push(wb_atoms, ["br"])
+    elif name == "img" then
+        let source = wb_resolve(wb_attribute(tag, "src"))
+        let alt = wb_squash(wb_attribute(tag, "alt"))
+        let width = int(wb_attribute(tag, "width"))
+        let height = int(wb_attribute(tag, "height"))
+        # one that says it is tiny is a tracking dot, not something to see
+        let tiny = (width != nil and width < 4) or (height != nil and height < 4)
+        if source != "" and not tiny and len(wb_imgs) < 60 then
+            push(wb_imgs, [source, join(split(alt), " "), nil, 0, 0])
+            push(wb_atoms, ["img", len(wb_imgs) - 1, wb_P_link])
+        end
+    elif name == "hr" then
+        push(wb_atoms, ["rule"])
+    elif name == "td" or name == "th" then
+        if not closing then push(wb_atoms, ["tab"]) end
+        if name == "th" then
+            if closing then
+                if wb_P_bold > 0 then wb_P_bold = wb_P_bold - 1 end
+            else
+                wb_P_bold = wb_P_bold + 1
+            end
+        end
+    elif name == "center" then
+        push(wb_atoms, ["nl"])
+        if closing then push(wb_atoms, ["align", false]) else push(wb_atoms, ["align", true]) end
+    elif find(WB_INDENTED, spaced) != -1 then
+        push(wb_atoms, ["gap"])
+        if closing then
+            if wb_P_indent > 0 then wb_P_indent = wb_P_indent - 1 end
+        else
+            wb_P_indent = wb_P_indent + 1
+        end
+        push(wb_atoms, ["indent", wb_P_indent])
+    elif find(WB_BLOCKS, spaced) != -1 then
+        push(wb_atoms, ["gap"])
+    elif find(WB_BREAKS, spaced) != -1 then
+        push(wb_atoms, ["nl"])
+    elif name == "title" then
+        wb_in_title = not closing
+    end
+end
+
+func wb_read_html(html)
+    # read the HTML: fills in title, atoms, links and imgs
+    wb_title = ""
+    wb_atoms = []
+    wb_links = []
+    wb_imgs = []
+    wb_P_bold = 0
+    wb_P_head = 0
+    wb_P_link = 0
+    wb_P_indent = 0
+    wb_P_space = false
+    wb_in_title = false
+    html = wb_plain_letters(html)
+
+    # a plain text page has no tags: its lines are kept as they are
+    if find(html, "<") == -1 then
+        for text in split(wb_replace(html, chr(13), ""), "\n") do
+            wb_P_space = false
+            wb_add_words(text)
+            push(wb_atoms, ["br"])
+        end
+        return
+    end
+
+    let skipping = ""      # inside <script> or <style>: the tag whose end we're waiting for
+    let in_comment = false
+    for piece in split(html, "<") do
+        if in_comment then
+            # inside <!-- ... -->: nothing counts until the end of it
+            let end_at = find(piece, "-->")
+            if end_at == -1 then continue end
+            in_comment = false
+            if skipping == "" then wb_add_words(sub(piece, end_at + 3)) end
+            continue
+        end
+        let close = find(piece, ">")
+        if close == -1 then
+            # no tag here: the text before the first <, or a < that's just a <
+            if skipping == "" then wb_add_words(piece) end
+            continue
+        end
+        if sub(piece, 0, 3) == "!--" then
+            let end_at = find(piece, "-->")
+            if end_at == -1 then in_comment = true else wb_add_words(sub(piece, end_at + 3)) end
+            continue
+        end
+        # tags can go over more than one line, so the line breaks in them become spaces
+        let tag = wb_flatten(sub(piece, 0, close))
+        let name = wb_tag_name(tag)
+        let closing = false
+        if sub(name, 0, 1) == "/" then
+            closing = true
+            name = sub(name, 1)
+        end
+
+        if skipping != "" then
+            if closing and name == skipping then skipping = "" end
+        elif not closing and find(WB_SKIPPED, " " + name + " ") != -1 then
+            if name != "head" then skipping = name end
+        else
+            wb_do_tag(tag, name, closing)
+        end
+        if skipping == "" then wb_add_words(sub(piece, close + 1)) end
+    end
+end
+
+
+# ---- laying the page out ---------------------------------------------------------------------
+
+func wb_flush_line()
+    # finish the line being built: centred if it should be, and put in the page
+    if len(wb_L_boxes) == 0 then return end
+    if wb_L_centre then
+        let shift = (wb_L_right - wb_L_x) / 2
+        if shift > 0 then
+            for box in wb_L_boxes do
+                box[0] = box[0] + shift
+            end
+        end
+    end
+    push(wb_rows, [wb_L_y, wb_L_h, wb_L_boxes])
+    wb_L_y = wb_L_y + wb_L_h
+    wb_L_boxes = []
+    wb_L_words = 0
+    wb_L_x = wb_L_left
+    wb_L_h = 0
+    wb_L_blank = false
+end
+
+func wb_place_word(text, colour, size, bold, link, space)
+    # put a word on the line, on a new line if it doesn't fit. Boxes are [x, width, height, 0,
+    # text, colour, size, bold, link]
+    let cell = 8 * size
+    let width = len(text) * cell
+    let gap = 0
+    if wb_L_words > 0 and space then gap = cell end
+    if wb_L_words > 0 and wb_L_x + gap + width > wb_L_right then
+        wb_flush_line()
+        gap = 0
+    end
+    # a word too long for a whole line (like a long address) is cut up
+    while wb_L_x + width > wb_L_right and len(text) > 1 do
+        let wb_fit = (wb_L_right - wb_L_x) / cell
+        if wb_fit < 1 then wb_fit = 1 end
+        if wb_fit >= len(text) then break end
+        push(wb_L_boxes, [wb_L_x, wb_fit * cell, 16 * size + 4, 0, sub(text, 0, wb_fit), colour, size, bold, link])
+        wb_L_h = 16 * size + 4
+        wb_L_words = wb_L_words + 1
+        wb_L_x = wb_L_right
+        wb_flush_line()
+        text = sub(text, wb_fit)
+        width = len(text) * cell
+    end
+    # the space between two words of one link is part of the link: its underline carries on
+    if gap > 0 and link > 0 then
+        let before = wb_L_boxes[len(wb_L_boxes) - 1]
+        if before[3] == 0 and before[8] == link then before[1] = before[1] + gap end
+    end
+    push(wb_L_boxes, [wb_L_x + gap, width, 16 * size + 4, 0, text, colour, size, bold, link])
+    wb_L_x = wb_L_x + gap + width
+    if 16 * size + 4 > wb_L_h then wb_L_h = 16 * size + 4 end
+    wb_L_words = wb_L_words + 1
+end
+
+func wb_place_picture(number, link)
+    # a picture goes on the line like a big word, as wide as it is (or as the page, if that is less)
+    let picture = wb_imgs[number]
+    if picture[2] == nil then
+        # not fetched (no web rule for where it comes from, or it wasn't a picture): its name instead
+        let label = "[picture]"
+        if picture[1] != "" then label = "[" + picture[1] + "]" end
+        if link > 0 then
+            wb_place_word(label, WB_C_LINK, 1, false, link, true)
+        else
+            wb_place_word(label, WB_C_DIM, 1, false, link, true)
+        end
+        return
+    end
+    let width = picture[3]
+    let height = picture[4]
+    let room = wb_L_right - wb_L_left
+    if width > room then
+        height = height * room / width
+        width = room
+    end
+    if height > WB_MAX_PICTURE_HEIGHT then
+        width = width * WB_MAX_PICTURE_HEIGHT / height
+        height = WB_MAX_PICTURE_HEIGHT
+    end
+    if width < 1 then width = 1 end
+    if height < 1 then height = 1 end
+    let gap = 0
+    if wb_L_words > 0 then gap = 8 end
+    if wb_L_words > 0 and wb_L_x + gap + width > wb_L_right then
+        wb_flush_line()
+        gap = 0
+    end
+    # [x, width, height, 1, picture number, link]
+    push(wb_L_boxes, [wb_L_x + gap, width, height + 4, 1, number, link])
+    wb_L_x = wb_L_x + gap + width
+    if height + 4 > wb_L_h then wb_L_h = height + 4 end
+    wb_L_words = wb_L_words + 1
+end
+
+func wb_layout()
+    # lay the atoms out in lines that fit the screen: rows, and how tall they come to
+    wb_rows = []
+    wb_L_boxes = []
+    wb_L_words = 0
+    wb_L_left = WB_MARGIN
+    wb_L_right = WB_W - WB_SB_W - WB_MARGIN
+    wb_L_x = wb_L_left
+    wb_L_y = 8
+    wb_L_h = 0
+    wb_L_centre = false
+    wb_L_blank = true
+    for atom in wb_atoms do
+        let kind = atom[0]
+        if kind == "w" then
+            wb_place_word(atom[1], atom[5], atom[3], atom[4], atom[6], atom[2])
+        elif kind == "img" then
+            wb_place_picture(atom[1], atom[2])
+        elif kind == "nl" then
+            wb_flush_line()
+        elif kind == "br" then
+            # a line break; on an empty line it makes a blank one
+            if len(wb_L_boxes) == 0 then
+                wb_L_y = wb_L_y + 16
+            else
+                wb_flush_line()
+            end
+        elif kind == "gap" then
+            wb_flush_line()
+            if not wb_L_blank then wb_L_y = wb_L_y + 12 end
+            wb_L_blank = true
+        elif kind == "bul" then
+            # a bullet in the space left of the text
+            wb_flush_line()
+            push(wb_L_boxes, [wb_L_left - 14, 0, 20, 2, WB_C_TEXT])
+            wb_L_h = 20
+        elif kind == "tab" then
+            if wb_L_words > 0 then wb_L_x = wb_L_x + 16 end
+        elif kind == "rule" then
+            wb_flush_line()
+            wb_L_y = wb_L_y + 6
+            push(wb_rows, [wb_L_y, 2, [[wb_L_left, wb_L_right - wb_L_left, 2, 3]]])
+            wb_L_y = wb_L_y + 12
+        elif kind == "indent" then
+            wb_flush_line()
+            wb_L_left = WB_MARGIN + atom[1] * WB_INDENT
+            wb_L_x = wb_L_left
+        elif kind == "align" then
+            wb_flush_line()
+            wb_L_centre = atom[1]
+        end
+    end
+    wb_flush_line()
+    wb_page_h = wb_L_y + 16
+end
+
+
+# ---- loading ---------------------------------------------------------------------------------
+
+func wb_is_picture(data)
+    # is what came back a picture rather than a page? (from the bytes it starts with)
+    if len(data) < 4 then return false end
+    let a = ord(data[0])
+    let b = ord(data[1])
+    return (a == 66 and b == 77) or (a == 137 and b == 80) or (a == 255 and b == 216) or (a == 71 and b == 73)
+end
+
+func wb_say(text)
+    # put a message in the bar at the bottom, now (the next thing, like a page, may take a while)
+    wb_status = text
+    draw_all()
+end
+
+func wb_shows_format(url)
+    # can aerOS show this kind of picture? Judged by the end of its address (before any ?): SVG,
+    # WebP, AVIF and icons are drawn by nothing here, so they aren't fetched at all
+    let question = find(url, "?")
+    if question != -1 then url = sub(url, 0, question) end
+    let dot = -1
+    for i = 0 to len(url) - 1 do
+        if url[i] == "." then dot = i end
+    end
+    if dot == -1 then return true end
+    let kind = lower(sub(url, dot + 1))
+    return kind != "svg" and kind != "svgz" and kind != "webp" and kind != "avif" and kind != "ico"
+end
+
+func wb_load_pictures()
+    # fetch the pictures on the page (the first few that aerOS can show), one at a time, and show
+    # them in their place. What stopped some is told in the bar at the bottom afterwards: most
+    # often a site with no web rule (pictures usually come from another site than the page does:
+    # a picture server)
+    let wanted = 0
+    let unshown = 0        # pictures in a format aerOS can't show
+    for i = 0 to len(wb_imgs) - 1 do
+        let picture = wb_imgs[i]
+        if picture[2] == nil then
+            if not wb_shows_format(picture[0]) then
+                unshown = unshown + 1
+            elif wanted < WB_MAX_PICTURES then
+                wanted = wanted + 1
+                wb_say("Loading picture " + wanted + ": " + picture[0])
+                let data = httpget(picture[0])
+                if data == nil then
+                    # most likely the picture's site isn't allowed: offer to allow it
+                    wb_suggest(wb_host_of(picture[0]), int(wb_port_of(picture[0])), "pictures")
+                elif wb_is_picture(data) then
+                    let size = imgsz(data)
+                    if size != nil then
+                        picture[2] = data
+                        picture[3] = size[0]
+                        picture[4] = size[1]
+                    else
+                        unshown = unshown + 1
+                    end
+                else
+                    unshown = unshown + 1
+                end
+            end
+        end
+    end
+    wb_status = ""
+    if unshown > 0 then wb_status = unshown + " pictures left out: SVG, WebP and some other formats can't be shown" end
+    wb_layout()
+end
+
+func wb_suggest(host, port, kind)
+    # offer to allow a site the firewall blocks (a strip along the bottom: click it, or press A).
+    # Not one that is allowed already, or already offered
+    if fwallowed(host, port) then return end
+    for each in wb_suggestions do
+        if each[0] == host and each[1] == port then return end
+    end
+    push(wb_suggestions, [host, port, kind])
+end
+
+func wb_suggest_for_page(url)
+    # a page wouldn't come: most likely its site isn't allowed. If it is, the page probably
+    # moved to the other kind of address (http to https or back), whose port isn't allowed
+    let host = wb_host_of(url)
+    let port = int(wb_port_of(url))
+    if not fwallowed(host, port) then
+        wb_suggest(host, port, "page")
+    elif sub(lower(url), 0, 8) == "https://" then
+        wb_suggest(host, 80, "page")
+    else
+        wb_suggest(host, 443, "page")
+    end
+end
+
+func wb_problem_with(url)
+    # why a page didn't come: httpget only gives nil, so it's one of these (the get command in the
+    # terminal says which)
+    let message = "Couldn't load " + url + ": no such page, or the site needs fw web " + wb_host_of(url) + " " + wb_port_of(url)
+    if sub(lower(url), 0, 8) == "https://" then message = message + ", or its certificate isn't good" end
+    return message
+end
+
+func wb_show_page(url, page)
+    # make what came back the page: a picture is a page of one picture
+    wb_address = url
+    wb_scroll = 0
+    wb_hover = 0
+    if wb_is_picture(page) then
+        let size = imgsz(page)
+        wb_title = url
+        wb_links = []
+        if size == nil then
+            wb_imgs = []
+            wb_atoms = [["w", "Can't show that picture: aerOS shows BMP, PNG, GIF and JPEG.", false, 1, false, WB_C_TEXT, 0]]
+        else
+            wb_imgs = [[url, "", page, size[0], size[1]]]
+            wb_atoms = [["img", 0, 0]]
+        end
+        wb_layout()
+        return
+    end
+    if len(page) > WB_MAX_PAGE then page = sub(page, 0, WB_MAX_PAGE) end
+    wb_read_html(page)
+    wb_layout()
+end
+
+func wb_navigate(url, remember)
+    # load a new page. remember: put the page now shown in the history, for Back. True if it came
+    wb_suggestions = []
+    wb_status = "Loading " + url + "..."
+    draw_all()
+    let page = httpget(url)
+    if page == nil then
+        wb_status = wb_problem_with(url)
+        wb_retry_url = url
+        wb_retry_remember = remember
+        wb_suggest_for_page(url)
+        return false
+    end
+    wb_status = ""
+    if remember and wb_address != "" then push(wb_history, [wb_address, wb_scroll]) end
+    wb_show_page(url, page)
+    draw_all()
+    if len(wb_imgs) > 0 then
+        wb_load_pictures()
+        draw_all()
+    end
+    return true
+end
+
+func wb_start_page()
+    # the page the browser starts on
+    wb_address = ""
+    wb_scroll = 0
+    wb_read_html("<title>aerOS browser</title><h1>aerOS browser</h1><p>Click the address bar at the top (or press Tab), type an address or some words to search for, and press Enter.</p><h2>First, allow the site</h2><p>aerOS's firewall blocks every site until you allow it, in the terminal: <b>fw web example.com 443</b> for an https:// site, or <b>fw web example.com</b> for http://. Pictures on a page come from a site too, and only show if that is allowed as well.</p><h2>Try</h2><ul><li><a href=\"http://frogfind.com/\">FrogFind</a>: turns big modern sites into simple pages. Allow it with <b>fw web frogfind.com</b></li><li><a href=\"https://example.com/\">example.com</a> (<b>fw web example.com 443</b>)</li></ul><h2>Keys</h2><ul><li>Arrow keys, Page Up and Page Down scroll, space goes down a screen</li><li>Backspace goes back, Esc quits</li></ul>")
+    wb_layout()
+end
+
+# ==== END: copied from browsgui.aer ====
+
+func wb_init_colours()
+    # the browser's colours (rgb needs the graphics screen to be open)
+    WB_C_PAGE = rgb(255, 255, 255)
+    WB_C_TEXT = rgb(30, 30, 30)
+    WB_C_LINK = rgb(0, 0, 204)
+    WB_C_HOVER = rgb(204, 0, 0)
+    WB_C_DIM = rgb(130, 130, 130)
+    WB_C_BAR = rgb(224, 224, 230)
+    WB_C_BAR_TEXT = rgb(50, 50, 60)
+    WB_C_EDGE = rgb(150, 150, 160)
+    WB_C_BUTTON = rgb(246, 246, 250)
+    WB_C_HANDLE = rgb(150, 150, 165)
+    WB_C_SUGGEST = rgb(255, 240, 180)
+    WB_C_SUGGEST_TEXT = rgb(80, 55, 0)
+end
+
+func wb_place(win)
+    # where the Browser window's inside is on the screen now
+    WB_X = win[W_X]
+    WB_Y = win[W_Y] + TITLE_H
+    WB_W = win[W_W]
+    WB_H = win[W_H] - TITLE_H
+end
+
+func wb_window_title()
+    # the window's title: Browser, and the page's own title if it has one
+    let heading = wb_squash(wb_title)
+    if heading == "" or heading == " " then
+        return "Browser"
+    end
+    return "Browser - " + heading
+end
+
+func wb_bottom_height()
+    # how tall what is along the bottom is: the status bar, and the suggestion above it if there is one
+    if len(wb_suggestions) > 0 then
+        return WB_STATUS_H + WB_SUGGEST_H
+    end
+    return WB_STATUS_H
+end
+
+func wb_view_height()
+    # how much of the page is shown at once
+    return WB_H - WB_TOOLBAR - wb_bottom_height()
+end
+
+func wb_max_scroll()
+    let most = wb_page_h - wb_view_height()
+    if most < 0 then
+        return 0
+    end
+    return most
+end
+
+func wb_scroll_to(where)
+    # scroll the page to this place, but not past either end
+    wb_scroll = where
+    if wb_scroll > wb_max_scroll() then
+        wb_scroll = wb_max_scroll()
+    end
+    if wb_scroll < 0 then
+        wb_scroll = 0
+    end
+end
+
+func wb_draw_box(box, top)
+    # one box of a line (top is where the line is on the screen)
+    let kind = box[3]
+    let x = WB_X + box[0]
+    if kind == 0 then
+        let colour = box[5]
+        let link = box[8]
+        if link > 0 and link == wb_hover then
+            colour = WB_C_HOVER
+        end
+        text(x, top, box[4], colour, box[6])
+        if box[7] then
+            text(x + 1, top, box[4], colour, box[6])
+        end
+        if link > 0 then
+            rect(x, top + 16 * box[6] + 1, box[1], 1, colour)
+            push(wb_hits, [x, top, box[1], box[2], link])
+        end
+    elif kind == 1 then
+        let picture = wb_imgs[box[4]]
+        image(picture[2], x, top, box[1], box[2] - 4)
+        if box[5] > 0 then
+            push(wb_hits, [x, top, box[1], box[2], box[5]])
+        end
+    elif kind == 2 then
+        rect(x + 4, top + 8, 5, 5, box[4])
+    else
+        rect(x, top, box[1], 1, WB_C_DIM)
+        rect(x, top + 1, box[1], 1, WB_C_EDGE)
+    end
+end
+
+func wb_draw_page()
+    # the lines of the page that are in view
+    wb_hits = []
+    let page_top = WB_Y + WB_TOOLBAR
+    rect(WB_X, page_top, WB_W, wb_view_height(), WB_C_PAGE)
+    let bottom = wb_scroll + wb_view_height()
+    for row in wb_rows do
+        if row[0] >= bottom then
+            break
+        end
+        if row[0] + row[1] > wb_scroll then
+            let top = page_top + row[0] - wb_scroll
+            # a line that sticks out of the window isn't drawn (see the top of this section)
+            if top >= WB_Y and top + row[1] <= WB_Y + WB_H then
+                for box in row[2] do
+                    wb_draw_box(box, top)
+                end
+            end
+        end
+    end
+end
+
+func wb_handle()
+    # where the scroll bar's handle is, as [top, height]
+    let height = wb_view_height()
+    let handle = height * height / wb_page_h
+    if handle < 24 then
+        handle = 24
+    end
+    return [WB_Y + WB_TOOLBAR + wb_scroll * (height - handle) / wb_max_scroll(), handle]
+end
+
+func wb_draw_scrollbar()
+    # the bar down the right edge, with a handle as long as the part of the page that is shown
+    let x = WB_X + WB_W - WB_SB_W
+    rect(x, WB_Y + WB_TOOLBAR, WB_SB_W, wb_view_height(), WB_C_BAR)
+    if wb_page_h > wb_view_height() then
+        let handle = wb_handle()
+        rect(x + 2, handle[0], WB_SB_W - 4, handle[1], WB_C_HANDLE)
+    end
+end
+
+func wb_draw_button(x, label, width)
+    # a button on the toolbar
+    rect(WB_X + x, WB_Y + 4, width, 24, WB_C_EDGE)
+    rect(WB_X + x + 1, WB_Y + 5, width - 2, 22, WB_C_BUTTON)
+    text(WB_X + x + (width - len(label) * 8) / 2, WB_Y + 8, label, WB_C_BAR_TEXT, 1)
+end
+
+func wb_draw_toolbar()
+    # the bar along the top: buttons, and the address
+    rect(WB_X, WB_Y, WB_W, WB_TOOLBAR, WB_C_BAR)
+    rect(WB_X, WB_Y + WB_TOOLBAR - 1, WB_W, 1, WB_C_EDGE)
+    wb_draw_button(6, "Back", 56)
+    wb_draw_button(68, "Reload", 64)
+    wb_draw_button(138, "Home", 56)
+    let x = 202
+    let width = WB_W - x - 8
+    rect(WB_X + x, WB_Y + 4, width, 24, WB_C_EDGE)
+    rect(WB_X + x + 1, WB_Y + 5, width - 2, 22, WB_C_PAGE)
+    let columns = (width - 12) / 8
+    if wb_editing then
+        let shown = fit(wb_typed, columns - 1)
+        if wb_selected then
+            rect(WB_X + x + 5, WB_Y + 7, len(shown) * 8 + 2, 18, rgb(180, 205, 255))
+        end
+        text(WB_X + x + 6, WB_Y + 8, shown + "_", WB_C_TEXT, 1)
+    else
+        let shown = wb_address
+        if shown == "" then
+            shown = "Type an address, or words to search for"
+        end
+        text(WB_X + x + 6, WB_Y + 8, fit(shown, columns), WB_C_DIM, 1)
+    end
+end
+
+func wb_draw_bottom()
+    # the bars along the bottom: the suggestion to allow a site (if there is one), and the status bar
+    # with where the link under the pointer goes, or a message, or the title, and how far down
+    let y = WB_Y + WB_H - WB_STATUS_H
+    rect(WB_X, y, WB_W, WB_STATUS_H, WB_C_BAR)
+    rect(WB_X, y, WB_W, 1, WB_C_EDGE)
+    let words = ""
+    if wb_hover > 0 and wb_hover <= len(wb_links) then
+        words = wb_links[wb_hover - 1]
+    elif wb_status != "" then
+        words = wb_status
+    else
+        words = wb_squash(wb_title)
+    end
+    text(WB_X + 8, y + 2, fit(words, (WB_W - 16) / 8 - 6), WB_C_BAR_TEXT, 1)
+    if wb_page_h > wb_view_height() then
+        let percent = (wb_scroll + wb_view_height()) * 100 / wb_page_h
+        if percent > 100 then
+            percent = 100
+        end
+        let label = percent + "%"
+        text(WB_X + WB_W - 8 - len(label) * 8, y + 2, label, WB_C_BAR_TEXT, 1)
+    end
+    if len(wb_suggestions) > 0 then
+        # offering to allow a site: click it (or press A) and aerOS asks you whether to
+        let up = y - WB_SUGGEST_H
+        rect(WB_X, up, WB_W, WB_SUGGEST_H, WB_C_SUGGEST)
+        rect(WB_X, up, WB_W, 1, WB_C_EDGE)
+        let first = wb_suggestions[0]
+        let reason = "so its pictures can show"
+        if first[2] == "page" then
+            reason = "so the page can load"
+        end
+        let offer = "Allow " + first[0] + " (port " + first[1] + ") " + reason + "? Click here, or press A."
+        if len(wb_suggestions) > 1 then
+            offer = offer + "  (" + (len(wb_suggestions) - 1) + " more sites after it)"
+        end
+        text(WB_X + 8, up + 3, fit(offer, (WB_W - 16) / 8), WB_C_SUGGEST_TEXT, 1)
+    end
+end
+
+func wb_draw(win)
+    # the Browser window's inside
+    wb_place(win)
+    wb_draw_page()
+    wb_draw_scrollbar()
+    wb_draw_toolbar()
+    wb_draw_bottom()
+end
+
+func wb_link_at(x, y)
+    # the number of the link at this place on the screen, or 0
+    for hit in wb_hits do
+        if inside(x, y, hit[0], hit[1], hit[2], hit[3]) then
+            return hit[4]
+        end
+    end
+    return 0
+end
+
+func wb_update_hover()
+    # which link the pointer is over, in the Browser window when that is in front. True if that
+    # changed (so the screen needs drawing again)
+    let win = front()
+    let over = 0
+    if win != nil and win[W_KIND] == "browser" and menu_open == "" then
+        wb_place(win)
+        if inside(pointer_x, pointer_y, WB_X, WB_Y + WB_TOOLBAR, WB_W - WB_SB_W, wb_view_height()) then
+            over = wb_link_at(pointer_x, pointer_y)
+        end
+    end
+    if over != wb_hover then
+        wb_hover = over
+        return true
+    end
+    return false
+end
+
+func wb_go_back()
+    # the page before this one
+    if len(wb_history) == 0 then
+        wb_status = "There's no page to go back to."
+        return
+    end
+    let before = pop(wb_history)
+    if wb_navigate(before[0], false) then
+        wb_scroll_to(before[1])
+    end
+end
+
+func wb_submit()
+    # Enter in the address bar
+    wb_editing = false
+    let url = wb_address_from(wb_typed)
+    if url != "" then
+        wb_navigate(url, true)
+    end
+end
+
+func wb_accept_suggestion()
+    # the first suggestion was accepted: ask aerOS to allow that site. aerOS asks the person itself
+    # (in a box over the screen: the browser can't answer for them) and only makes the rule if
+    # they say yes, for fetching pages from that one site and port
+    if len(wb_suggestions) == 0 then
+        return
+    end
+    let first = wb_suggestions[0]
+    remove(wb_suggestions, 0)
+    if fwallow(first[0], first[1]) then
+        wb_status = ""
+        if first[2] == "page" and wb_retry_url != "" then
+            wb_navigate(wb_retry_url, wb_retry_remember)
+        elif len(wb_imgs) > 0 then
+            wb_load_pictures()
+        end
+    else
+        wb_status = "Not allowed: " + first[0] + " port " + first[1] + ". Reload to be asked again."
+    end
+end
+
+func wb_click(win, px, py)
+    # a click inside the Browser window
+    wb_place(win)
+    let rx = px - WB_X
+    let ry = py - WB_Y
+    if ry < WB_TOOLBAR then
+        wb_editing = false
+        if rx >= 6 and rx < 62 then
+            wb_go_back()
+        elif rx >= 68 and rx < 132 then
+            if wb_address != "" then
+                wb_navigate(wb_address, false)
+            end
+        elif rx >= 138 and rx < 194 then
+            if wb_address != "" then
+                push(wb_history, [wb_address, wb_scroll])
+            end
+            wb_start_page()
+        elif rx >= 202 then
+            wb_editing = true
+            wb_typed = wb_address
+            wb_selected = true
+        end
+        return
+    end
+    wb_editing = false
+    wb_status = ""
+    if py >= WB_Y + WB_H - wb_bottom_height() then
+        # along the bottom: the suggestion, if there is one (the status bar below it does nothing)
+        if py < WB_Y + WB_H - WB_STATUS_H then
+            wb_accept_suggestion()
+        end
+        return
+    end
+    if rx >= WB_W - WB_SB_W then
+        # the scroll bar: above or below the handle a screen at a time, or take hold of the handle
+        if wb_page_h > wb_view_height() then
+            let handle = wb_handle()
+            if py < handle[0] then
+                wb_scroll_to(wb_scroll - wb_view_height() + 40)
+            elif py >= handle[0] + handle[1] then
+                wb_scroll_to(wb_scroll + wb_view_height() - 40)
+            else
+                wb_dragging = true
+                wb_drag_offset = py - handle[0]
+            end
+        end
+        return
+    end
+    let link = wb_link_at(px, py)
+    if link > 0 then
+        wb_navigate(wb_links[link - 1], true)
+    end
+end
+
+func wb_drag_to(py)
+    # the scroll bar's handle is being dragged: the page follows
+    let height = wb_view_height()
+    let handle = height * height / wb_page_h
+    if handle < 24 then
+        handle = 24
+    end
+    if height > handle then
+        wb_scroll_to((py - wb_drag_offset - WB_Y - WB_TOOLBAR) * wb_max_scroll() / (height - handle))
+    end
+end
+
+func wb_typing(win)
+    # is the address bar waiting for typing, in the Browser window in front?
+    return win != nil and win[W_KIND] == "browser" and wb_editing
+end
+
+func wb_edit_key(k)
+    # a key while the address is being typed
+    if k == KEY_ENTER then
+        wb_submit()
+    elif k == KEY_ESCAPE then
+        wb_editing = false
+    elif k == KEY_BACKSPACE then
+        if wb_selected then
+            wb_typed = ""
+        elif len(wb_typed) > 0 then
+            wb_typed = sub(wb_typed, 0, len(wb_typed) - 1)
+        end
+        wb_selected = false
+    elif k >= 32 and k < 127 then
+        if wb_selected then
+            wb_typed = ""
+        end
+        wb_selected = false
+        wb_typed = wb_typed + chr(k)
+    end
+end
+
+func wb_key(win, k)
+    # a key for the Browser window when the address isn't being typed. True if it used it (the
+    # others, like the left and right arrows, carry on as they do in any window)
+    wb_place(win)
+    wb_status = ""
+    if k == KEY_DOWN then
+        wb_scroll_to(wb_scroll + 40)
+    elif k == KEY_UP then
+        wb_scroll_to(wb_scroll - 40)
+    elif k == KEY_PGDN or k == ord(" ") then
+        wb_scroll_to(wb_scroll + wb_view_height() - 40)
+    elif k == KEY_PGUP then
+        wb_scroll_to(wb_scroll - wb_view_height() + 40)
+    elif k == KEY_END then
+        wb_scroll_to(wb_page_h)
+    elif k == KEY_BACKSPACE then
+        wb_go_back()
+    elif k == ord("/") then
+        wb_editing = true
+        wb_typed = wb_address
+        wb_selected = true
+    elif (k == ord("a") or k == ord("A")) and len(wb_suggestions) > 0 then
+        wb_accept_suggestion()
+    else
+        return false
+    end
+    return true
+end
+
+func open_browser()
+    # open the Browser window (its page is kept from last time, or the start page, with the
+    # address bar ready for typing)
+    let width = DESK_W - 160
+    if width > 880 then
+        width = 880
+    end
+    let height = DESK_H - 50
+    if height > 640 then
+        height = 640
+    end
+    let win = open("browser", "Browser", width, height, [])
+    wb_place(win)
+    if wb_address == "" and len(wb_atoms) == 0 then
+        wb_start_page()
+        wb_editing = true
+        wb_typed = ""
+        wb_selected = false
+    end
+end
+
+
 # ---- the mouse and the keyboard -------------------------------------------------------------
 
 func click(px, py)
@@ -2389,6 +3648,8 @@ func click_window(win, px, py)
         end
     elif kind == "settings" then
         click_settings(win, px, py)
+    elif kind == "browser" then
+        wb_click(win, px, py)
     end
 end
 
@@ -2444,6 +3705,11 @@ end
 func press(k)
     # a key was pressed
     let top = front()
+    # the Browser's address bar, while it is being typed in, has every key (Tab and Esc too)
+    if menu_open == "" and wb_typing(top) then
+        wb_edit_key(k)
+        return
+    end
     # Tab, or a menu open: the menu has the keyboard (Notes keeps Tab for itself)
     if k == KEY_TAB and not (top != nil and top[W_KIND] == "notes" and menu_open == "") then
         if menu_open == "" then
@@ -2489,6 +3755,12 @@ func press(k)
     end
     if top != nil and top[W_KIND] == "settings" then
         if settings_key(top, k) then
+            return
+        end
+    end
+    # the Browser: the arrows and Page Up and Down scroll, Backspace goes back
+    if top != nil and top[W_KIND] == "browser" then
+        if wb_key(top, k) then
             return
         end
     end
@@ -2595,6 +3867,11 @@ func follow_mouse()
     end
     if not left then
         dragging = nil
+        wb_dragging = false
+    end
+    if wb_dragging then
+        wb_drag_to(pointer_y)
+        changed = true
     end
     if dragging != nil then
         # the window follows the pointer, but its title bar stays on the desk
@@ -2603,6 +3880,10 @@ func follow_mouse()
         keep_on_desk(dragging)
     end
     buttons_before = m[2]
+    # the link under the pointer in the Browser
+    if wb_update_hover() then
+        changed = true
+    end
     return changed
 end
 
@@ -2617,6 +3898,7 @@ func main()
     SW = gw()
     SH = gh()
     gbuf(true)
+    wb_init_colours()
     pointer_x = SW / 2
     pointer_y = SH / 2
     NOTES_FILE = cwd() + "notes.txt"

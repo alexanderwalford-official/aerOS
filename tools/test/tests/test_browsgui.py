@@ -7,6 +7,8 @@ types an address in the address bar, and quits with Esc."""
 
 import http.server
 import struct
+import subprocess
+import sys
 import threading
 import time
 import zlib
@@ -234,3 +236,89 @@ def test_browsgui_suggests_allowing_sites(t):
     finally:
         for server in (first, second, site):
             server.shutdown()
+
+
+def test_browser_in_a_desktop_window(t):
+    """The desktop's Browser window (desktop.aer: the browsgui engine in a window): opened from the
+    start menu, an address typed, the page and its picture drawn, a link clicked with the mouse."""
+    asked = []
+    picture = make_png(120, 60, RED)
+    page = (b'<title>In a window</title><h1>Big</h1><p><a href="/two.html">go to page two</a></p>'
+            b'<p><img src="/red.png" alt="red"></p>')
+
+    class Pages(http.server.BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
+        def do_GET(self):
+            asked.append(self.path)
+            body, kind = (picture, 'image/png') if self.path == '/red.png' else (
+                (TWO, 'text/html') if self.path == '/two.html' else (page, 'text/html'))
+            self.send_response(200)
+            self.send_header('Content-Type', kind)
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    def wait(condition, what, seconds=60):
+        for _ in range(int(seconds * 5)):
+            if condition():
+                return
+            time.sleep(0.2)
+        aeros.fail(what)
+
+    port = free_port()
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Pages)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        disk = t.disk(files=t.package('desktop'))
+        aeros = t.boot(graphics=True, network='user,model=e1000', disk=disk)
+        aeros.first_login()
+        aeros.run(f'fw web 10.0.2.2 {port}')
+        aeros.ask('desktop')
+        # aerOS asks before the desktop reads its settings in the home folder: A, always
+        wait(lambda: count_colour(aeros.screenshot('desk'), QUESTION) > 0, "aerOS's question did not come up", 90)
+        aeros.key('a')
+        wait(lambda: count_colour(aeros.screenshot('desk'), QUESTION) == 0, 'the question stayed')
+        time.sleep(1)
+
+        # Tab opens the start menu, and the Browser is the eighth entry (after the seven other windows)
+        aeros.key('tab')
+        time.sleep(0.5)
+        for _ in range(7):
+            aeros.key('down')
+        time.sleep(0.5)
+        aeros.key('ret')
+        time.sleep(1.5)
+        # the address bar is ready for typing
+        aeros.type(f'http://10.0.2.2:{port}/\n')
+        wait(lambda: '/red.png' in asked, 'the Browser never fetched the page and its picture')
+        time.sleep(2)
+        if count_colour(aeros.screenshot('window'), RED) < 120 * 60 // 2:
+            aeros.fail("the page's picture is not drawn in the Browser window")
+
+        # click the link with the mouse (the pointer starts in the middle of the screen): the window is
+        # at 150, 58 with its inside 24 down, a 32 high toolbar, then a heading and the link's line
+        move = [(-100, -100), (-100, -100), (-112, -4)]
+        for dx, dy in move:
+            aeros.mouse_move(dx, dy)
+            time.sleep(0.1)
+        time.sleep(0.5)
+        aeros.mouse_buttons(1)
+        time.sleep(0.2)
+        aeros.mouse_buttons(0)
+        wait(lambda: '/two.html' in asked, 'clicking the link in the Browser window did not fetch its page', 30)
+    finally:
+        server.shutdown()
+
+
+def test_desktop_browser_is_up_to_date(t):
+    """The Browser window in the desktop has a copy of browsgui.aer's engine (made by
+    tools/make_desktop_browser.py): it must be the copy of the engine as it is now."""
+    done = subprocess.run([sys.executable, t.repo('tools', 'make_desktop_browser.py'), '--check'],
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        raise AssertionError(done.stderr or done.stdout)
