@@ -144,3 +144,93 @@ def test_browsgui(t):
         aeros.wait_prompt(before, 30, what='browsgui')
     finally:
         server.shutdown()
+
+
+SUGGEST = (255, 240, 180)    # the colour of the strip that suggests allowing a site (C_SUGGEST)
+QUESTION = (0xFF, 0xD0, 0x80)   # the colour of aerOS's own question box (test_desktop.py has it too)
+
+
+def test_browsgui_suggests_allowing_sites(t):
+    """A page whose pictures come from sites the firewall blocks: the browser offers to allow
+    them, aerOS asks, and only a yes opens the firewall."""
+    asked = {'page': [], 'first': [], 'second': []}
+
+    def serve(name, handler_body):
+        class Pages(http.server.BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def do_GET(self):
+                asked[name].append(self.path)
+                body, kind = handler_body(self.path)
+                self.send_response(200)
+                self.send_header('Content-Type', kind)
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Connection', 'close')
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+        port = free_port()
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Pages)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server, port
+
+    # two other "sites" (ports) for the pictures, found by the page's <img src>
+    first, first_port = serve('first', lambda path: (make_png(120, 60, RED), 'image/png'))
+    second, second_port = serve('second', lambda path: (make_png(80, 80, BLUE), 'image/png'))
+    page = (b'<title>Pictures</title><h1>Pictures from elsewhere</h1><p>Words.</p>'
+            b'<p><img src="http://10.0.2.2:%d/a.png" alt="red"> <img src="http://10.0.2.2:%d/b.png" alt="blue"></p>'
+            % (first_port, second_port))
+    site, site_port = serve('page', lambda path: (page, 'text/html'))
+
+    def wait(condition, what, seconds=40):
+        for _ in range(int(seconds * 5)):
+            if condition():
+                return
+            time.sleep(0.2)
+        aeros.fail(what)
+
+    try:
+        disk = t.disk(files=t.package('browsgui'))
+        aeros = t.boot(graphics=True, network='user,model=e1000', disk=disk)
+        aeros.first_login()
+        aeros.run(f'fw web 10.0.2.2 {site_port}')          # the page's site only
+        before = aeros.prompts()
+        aeros.ask(f'browsgui http://10.0.2.2:{site_port}/')
+
+        # the pictures are blocked: the page comes, they don't, and the browser offers to allow the first site
+        wait(lambda: asked['page'], 'the browser never asked for the page')
+        wait(lambda: count_colour(aeros.screenshot('offer'), SUGGEST) > 5000, 'no suggestion came up')
+        if asked['first'] or asked['second']:
+            aeros.fail('a picture was fetched although its site is not allowed')
+
+        # A: aerOS asks the person itself, and says what for
+        aeros.key('a')
+        wait(lambda: count_colour(aeros.screenshot('question'), QUESTION) > 0, "aerOS's question did not come up")
+        aeros.key('y')
+        wait(lambda: asked['first'], 'allowing the site did not fetch its picture')
+        wait(lambda: count_colour(aeros.screenshot('first'), RED) >= 120 * 60 // 2, 'the first picture is not showing')
+        if asked['second']:
+            aeros.fail('the second site was fetched without being allowed')
+
+        # the second site is offered next: this time the answer is no, and nothing is allowed
+        wait(lambda: count_colour(aeros.screenshot('offer2'), SUGGEST) > 5000, 'the second suggestion did not come up')
+        aeros.key('a')
+        wait(lambda: count_colour(aeros.screenshot('question'), QUESTION) > 0, "aerOS's second question did not come up")
+        aeros.key('n')
+        wait(lambda: count_colour(aeros.screenshot('refused'), SUGGEST) == 0, 'the suggestion stayed after the answer')
+        time.sleep(1)
+        if asked['second']:
+            aeros.fail('the second site was fetched although the answer was no')
+
+        aeros.key('esc')
+        aeros.wait_prompt(before, 30, what='browsgui')
+        # the firewall has the first rule and not the second
+        aeros.cls()
+        aeros.run('fw')
+        aeros.expect(f'port {first_port}')
+        aeros.expect_not(f'port {second_port}')
+    finally:
+        for server in (first, second, site):
+            server.shutdown()

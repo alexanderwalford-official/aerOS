@@ -1,7 +1,8 @@
 /*
     bi_network.c
     AerLang's built-in functions for the network: sending a message to another computer (nsend),
-    waiting for one (nrecv), and fetching a web page (httpget). Messages are sealed
+    waiting for one (nrecv), fetching a web page (httpget), and asking to be allowed to fetch
+    from another site (fwallowed, fwallow). Messages are sealed
     (sys/netseal.c); web pages come over plain TCP (sys/http.h). Both only go to and come
     from computers the firewall allows (sys/firewall.h, the FW command).
 
@@ -16,6 +17,11 @@
 #include "../sys/tcp.h"
 #include "../sys/sys_clck.h"
 #include "../sys/thread.h"
+#include "../sys/perm.h"
+#include "../sys/syslog.h"
+#include "../lib/aer_string.h"
+#include "../lib/aer_stdio.h"
+#include "../lib/aer_ctype.h"
 
 // nsend(host, port, text): send text, sealed, to a computer the firewall allows (FW ALLOW).
 // host is an address ("10.0.2.2") or the name a rule was made for. True if it was sent
@@ -88,6 +94,91 @@ value_t bi_http_get (int argc, value_t* argv, int line) {
     return text;
 }
 
+
+// ---- asking for the firewall to be opened: fwallowed() and fwallow() ----------------------------
+//
+// The firewall (sys/firewall.h) blocks every site until a person allows it, and a program can't
+// type FW (cmd() only works at the prompt). A browser still needs to say "this page's pictures
+// come from another site, shall I allow that?", so these two exist: fwallowed asks if a site is
+// allowed already, and fwallow asks AerOS to ask the person, and only makes the rule if they say
+// yes. The question is AerOS's own (a box over the graphics, or on the text screen, see
+// perm_confirm), so a program can't answer it itself, or make it say something else. It only
+// ever makes a web rule (fetching pages from one computer on one port), never a sealed one (which
+// needs a password) or a serve rule (letting others connect to AerOS)
+
+// The site and port the program gave, checked: a DNS name or an address (letters, digits, dots
+// and dashes) and a real port. Stops the program with an error if not
+static void site_args (value_t* argv, int line, const char* fn, const char** host, uint16_t* port) {
+    *host = str_arg(argv, 0, line, fn)->data.chars;
+    int32_t number = int_arg(argv, 1, line, fn);
+    size_t length = slen(*host);
+    bool good = length > 0 && length < FW_NAME_MAX && number > 0 && number <= 65535;
+    for (size_t i = 0; good && i < length; i++) {
+        good = isalnum((unsigned char)(*host)[i]) || (*host)[i] == '.' || (*host)[i] == '-';
+    }
+    if (!good) {
+        aer_error(line, "%s() takes a site's name (like example.com) and a port from 1 to 65535", fn);
+    }
+    *port = (uint16_t)number;
+}
+
+// Is there a web rule for this site and port? (An address like 10.0.2.2 is looked for by its
+// address, a name by the name the rule was made for: a name is never looked up here)
+static bool web_allowed (const char* host, uint16_t port) {
+    uint32_t address;
+    const fw_rule_t* rule;
+    if (net_parse_address(host, &address)) {
+        rule = fw_find(address, port);
+    } else {
+        rule = fw_find_name(host, port);
+    }
+    return rule != NULL && rule->web;
+}
+
+// fwallowed(host, port): true if fetching web pages from this site on this port is allowed
+// already (FW WEB), so httpget would be let through. Changes nothing, asks nothing
+value_t bi_fw_allowed (int argc, value_t* argv, int line) {
+    (void)argc;
+    const char* host;
+    uint16_t port;
+    site_args(argv, line, "fwallowed", &host, &port);
+    return aer_bool(web_allowed(host, port));
+}
+
+// fwallow(host, port): ask the person to allow fetching web pages from this site on this port,
+// like FW WEB host port. True if it is allowed now (it was already, or they said yes), false if
+// they said no, or the name couldn't be found. Asked every time, never "always", and never
+// without a person to ask (a program in the background gets a no). A name is looked up with DNS
+// once the person has said yes, as FW WEB does, which can't be sealed (sys/net.h)
+value_t bi_fw_allow (int argc, value_t* argv, int line) {
+    (void)argc;
+    const char* host;
+    uint16_t port;
+    site_args(argv, line, "fwallow", &host, &port);
+    if (web_allowed(host, port)) {
+        return aer_bool(true);
+    }
+    // who is asking: the program's name, or the prompt
+    const char* program = perm_program_name();
+    char question[FW_NAME_MAX + 160];
+    sfmt(question, sizeof(question), "%s wants to allow web pages from %s, port %u (FW WEB)",
+         program[0] != '\0' ? program : "The prompt", host, (unsigned int)port);
+    if (!perm_confirm(question)) {
+        return aer_bool(false);
+    }
+    uint32_t address;
+    char name[FW_NAME_MAX] = "";
+    if (!net_parse_address(host, &address)) {
+        if (net_lookup(host, &address) != NET_OK) {
+            return aer_bool(false);
+        }
+        scpy(name, host, sizeof(name));
+    }
+    bool made = fw_allow_web(address, port, name);
+    syslog_add("firewall", "web", "%s allowed web pages from %s port %u (agreed to by the person at the keyboard)",
+               program[0] != '\0' ? program : "the prompt", host, (unsigned int)port);
+    return aer_bool(made);
+}
 
 // ---- plain TCP: connections made by a program, and to it ----------------------------------------
 //

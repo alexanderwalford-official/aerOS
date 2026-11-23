@@ -167,7 +167,9 @@ shows what app mode did for the last program.
 **Network:** `nsend(host, port, text)` sends a sealed message to a computer the firewall
 allows (true if it was sent), and `nrecv(port, ms)` waits up to `ms` milliseconds for one:
 the message, or nil. `httpget(url)` fetches a web page from a computer a web rule allows
-(`fw web`): its text, or nil. See [The network](network.md).
+(`fw web`): its text, or nil. `fwallowed(host, port)` says whether a site is allowed already,
+and `fwallow(host, port)` asks you (AerOS asks, in its own box, Y or N) whether to allow it, and
+only makes the web rule if you say yes. See [The network](network.md).
 
 **Trust:** `verify(data, signature, key)` checks a signature (Ed25519, as hex) made with the
 private key that goes with `key`: true only if `data` is exactly what was signed. `packagekey()`

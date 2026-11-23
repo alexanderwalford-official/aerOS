@@ -70,6 +70,8 @@ static const ability_t abilities[] = {
       "asks before opening yours" },
     { "send and receive over the network", { "nsend", "nrecv", "httpget", "tcpconnect", "tcprecv", "tcpsend", NULL },
       "only to computers the firewall (FW) allows" },
+    { "ask you to open the firewall to a site", { "fwallow", NULL },
+      "AerOS asks you itself, each time, and only fetching web pages from that one site and port" },
     { "let other computers connect to it", { "tcplisten", "tcpaccept", NULL },
       "only on a port you allowed with FW SERVE: it is a server" },
     { "ask you to type a secret",         { "inpw", NULL },

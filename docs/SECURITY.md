@@ -408,6 +408,12 @@ Being clear about the limits is part of good security:
   the next boot ask for a new first account, which means anyone who can log in, or who can
   write to the disk, can take the computer over. Encrypted files stay safe, because their keys
   come from their own passwords, not from the accounts.
+* **A program can ask to open the firewall, and you are the only one who can say yes.**
+  `fwallow(host, port)` makes AerOS (not the program) ask you in its own box, each time, for one
+  web rule: pages from one site on one port. A program can't answer for you, can't make a
+  sealed or serve rule, and `scan` lists the built-in so you can see which programs ask. But a
+  web rule you agree to lets *every* program fetch from that site until you remove it
+  (`FW DEL`), so read the question: it names the site and port.
 * **Network messages can be replayed.** Sealed messages ([NETWORK.md](NETWORK.md)) can't be
   read or changed, but one recorded on the way and sent again is accepted again, and the
   firewall's keys are kept in `/acc/firewall`, which programs can't read but anyone at the

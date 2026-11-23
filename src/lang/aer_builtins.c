@@ -111,6 +111,8 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("nsend", bi_net_send, 3, 3),
     BUILTIN("nrecv", bi_net_receive, 2, 2),
     BUILTIN("httpget", bi_http_get, 1, 1),
+    BUILTIN("fwallowed", bi_fw_allowed, 2, 2),
+    BUILTIN("fwallow", bi_fw_allow, 2, 2),
     BUILTIN("tcplisten", bi_tcp_listen, 1, 1),
     BUILTIN("tcpaccept", bi_tcp_accept, 2, 2),
     BUILTIN("tcpconnect", bi_tcp_connect, 2, 2),
@@ -188,7 +190,7 @@ static const struct {
                       "dbclose", "sync", "mkd", "deld", "disks", "install", "osupdatable",
                       "osupdate", NULL } },
     { APP_NETWORK,  { "nsend", "nrecv", "httpget", "tcplisten", "tcpaccept", "tcpconnect",
-                      "tcprecv", "tcpsend", "tcpclose", "tcpunlisten", NULL } },
+                      "tcprecv", "tcpsend", "tcpclose", "tcpunlisten", "fwallowed", "fwallow", NULL } },
 };
 
 // the part a built-in's name belongs to, 0 for the ones every program has (print, len...)
@@ -225,7 +227,7 @@ uint32_t aer_profile (const token_t* tokens, int count) {
 static const char* const front_only[] = {
     "input", "inpw", "key", "haskey", "keydown", "mouse", "mousemove", "mousedown",
     "cls", "color", "at", "progress", "spinner", "frame", "big", "clip", "setclip",
-    "logclear", "setlogging", "cmd", "queue", "launch", "power", "install", "osupdate", NULL
+    "logclear", "setlogging", "cmd", "queue", "launch", "power", "install", "osupdate", "fwallow", NULL
 };
 
 // the first built-in a program's tokens name that only the program in front can use (see

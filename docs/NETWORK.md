@@ -274,6 +274,16 @@ looking through the boxes on screen), and draws the part in view into the back b
 `image`. Only what changed is drawn again (a mouse move, a key, a click). No JavaScript, no style
 sheets and no tables beyond running the cells along the line.
 
+When the firewall blocks a page, or the site a picture comes from (they are often on another site
+than the page), `browsgui` notices and offers to allow it: a strip along the bottom, which you
+click (or press A). It then calls `fwallow(host, port)` (`lang/bi_network.c`), which makes AerOS
+ask you, in its own question box (`perm_confirm`, `sys/perm.c`: Y or N, never "always", and no
+answer from the program is possible), and only if you say yes makes a *web* rule for that one site
+and port, writes it in the log, and lets the browser carry on. A program can't make any other
+kind of rule (a sealed one needs a password, a serve rule opens AerOS to others), can't ask from
+the background, and can't run `FW` itself (`cmd()` only works at the prompt). `fwallowed(host,
+port)` lets it check first without asking.
+
 ### HTTPS (`sys/tls.c`)
 
 `https://` addresses (port 443) work the same way, with the TCP connection wrapped in TLS first.

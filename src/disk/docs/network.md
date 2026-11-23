@@ -119,7 +119,10 @@ bullet lists and their pictures in place among the words. Click a link, the Back
 buttons, or the address bar (type an address, or some words to search for, and press Enter);
 scroll with the arrow keys, Page Up and Down, or the bar down the right edge; Backspace goes back
 and Esc quits. There is no JavaScript or style sheets, and the pictures (the first 8 on a page)
-come from sites that need their own web rules too.
+come from sites that need their own web rules too. When a page or its pictures are blocked, a
+yellow strip along the bottom offers to allow the site: click it (or press A), and AerOS asks
+you (Y or N) before it makes the rule, the same as `fw web <site> <port>` would. Say N, and
+nothing changes.
 
 ## A web server
 

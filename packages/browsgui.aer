@@ -18,8 +18,11 @@
 #     Backspace                            the page before        Esc                 quit
 #
 # http:// and https:// pages work (https is checked: a site with a bad certificate won't load).
-# Each site has to be allowed first with fw web <site> 80 (or 443 for https), and so does
-# the site a picture comes from, or that picture is left as its name in [brackets].
+# Each site has to be allowed by aerOS's firewall first, and so does the site a picture comes
+# from. The browser tells you when one is blocked: a strip along the bottom offers to allow it
+# (click it, or press A), and then aerOS itself asks you (Y or N, in a box over the screen, so
+# a page can't answer for you) before it makes the rule (the same as fw web <site> <port> in the
+# terminal: fetching pages from that one site and port). Say no and nothing is allowed.
 # There is no JavaScript and no style sheets: a page is drawn the plain way, which is why
 # FrogFind (frogfind.com), which turns big modern sites into simple pages, is a good place to
 # start. The letters are aerOS's own 8 x 16 font (and twice as big for the main heading).
@@ -57,6 +60,7 @@ let SH = 0
 let MARGIN = 16            # space left and right of the page
 let TOOLBAR = 36           # height of the bar along the top
 let STATUS_H = 22          # and the one along the bottom
+let SUGGEST_H = 24         # and the strip above that, when there's a site to suggest allowing
 let SB_W = 14              # width of the scroll bar
 let INDENT = 24            # how far a list or quote is moved in
 
@@ -71,6 +75,8 @@ let C_BAR_TEXT = 0
 let C_EDGE = 0
 let C_BUTTON = 0
 let C_HANDLE = 0
+let C_SUGGEST = 0
+let C_SUGGEST_TEXT = 0
 
 # the page being shown
 let address = ""           # where it came from ("" for the start page)
@@ -84,6 +90,9 @@ let scroll = 0             # how far down it is shown
 let history = []           # the pages before it: [address, scroll]
 let status = ""            # a message for the bar at the bottom
 let hits = []              # what can be clicked on the screen now: [x, y, w, h, link number]
+let suggestions = []       # sites the firewall blocks, that could be allowed: [site, port, "page" or "pictures"]
+let retry_url = ""         # a page that wouldn't load, to be tried again once its site is allowed
+let retry_remember = false
 let hover = 0              # the link the pointer is over, or 0
 let running = true
 
@@ -662,32 +671,81 @@ func say(text)
     draw_all()
 end
 
+func shows_format(url)
+    # can aerOS show this kind of picture? Judged by the end of its address (before any ?): SVG,
+    # WebP, AVIF and icons are drawn by nothing here, so they aren't fetched at all
+    let question = find(url, "?")
+    if question != -1 then url = sub(url, 0, question) end
+    let dot = -1
+    for i = 0 to len(url) - 1 do
+        if url[i] == "." then dot = i end
+    end
+    if dot == -1 then return true end
+    let kind = lower(sub(url, dot + 1))
+    return kind != "svg" and kind != "svgz" and kind != "webp" and kind != "avif" and kind != "ico"
+end
+
 func load_pictures()
-    # fetch the pictures on the page (the first few), one at a time, and show them in their place
+    # fetch the pictures on the page (the first few that aerOS can show), one at a time, and show
+    # them in their place. What stopped some is told in the bar at the bottom afterwards: most
+    # often a site with no web rule (pictures usually come from another site than the page does:
+    # a picture server)
     let wanted = 0
-    let missing = ""
+    let unshown = 0        # pictures in a format aerOS can't show
     for i = 0 to len(imgs) - 1 do
-        if wanted >= MAX_PICTURES then break end
         let picture = imgs[i]
         if picture[2] == nil then
-            wanted = wanted + 1
-            say("Loading picture " + wanted + ": " + picture[0])
-            let data = httpget(picture[0])
-            if data == nil then
-                if missing == "" then missing = "fw web " + host_of(picture[0]) + " " + port_of(picture[0]) end
-            elif is_picture(data) then
-                let size = imgsz(data)
-                if size != nil then
-                    picture[2] = data
-                    picture[3] = size[0]
-                    picture[4] = size[1]
+            if not shows_format(picture[0]) then
+                unshown = unshown + 1
+            elif wanted < MAX_PICTURES then
+                wanted = wanted + 1
+                say("Loading picture " + wanted + ": " + picture[0])
+                let data = httpget(picture[0])
+                if data == nil then
+                    # most likely the picture's site isn't allowed: offer to allow it
+                    suggest(host_of(picture[0]), int(port_of(picture[0])), "pictures")
+                elif is_picture(data) then
+                    let size = imgsz(data)
+                    if size != nil then
+                        picture[2] = data
+                        picture[3] = size[0]
+                        picture[4] = size[1]
+                    else
+                        unshown = unshown + 1
+                    end
+                else
+                    unshown = unshown + 1
                 end
             end
         end
     end
     status = ""
-    if missing != "" then status = "Some pictures couldn't be fetched: they need a web rule, like " + missing end
+    if unshown > 0 then status = unshown + " pictures left out: SVG, WebP and some other formats can't be shown" end
     layout()
+end
+
+func suggest(host, port, kind)
+    # offer to allow a site the firewall blocks (a strip along the bottom: click it, or press A).
+    # Not one that is allowed already, or already offered
+    if fwallowed(host, port) then return end
+    for each in suggestions do
+        if each[0] == host and each[1] == port then return end
+    end
+    push(suggestions, [host, port, kind])
+end
+
+func suggest_for_page(url)
+    # a page wouldn't come: most likely its site isn't allowed. If it is, the page probably
+    # moved to the other kind of address (http to https or back), whose port isn't allowed
+    let host = host_of(url)
+    let port = int(port_of(url))
+    if not fwallowed(host, port) then
+        suggest(host, port, "page")
+    elif sub(lower(url), 0, 8) == "https://" then
+        suggest(host, 80, "page")
+    else
+        suggest(host, 443, "page")
+    end
 end
 
 func problem_with(url)
@@ -724,11 +782,15 @@ end
 
 func navigate(url, remember)
     # load a new page. remember: put the page now shown in the history, for Back. True if it came
+    suggestions = []
     status = "Loading " + url + "..."
     draw_all()
     let page = httpget(url)
     if page == nil then
         status = problem_with(url)
+        retry_url = url
+        retry_remember = remember
+        suggest_for_page(url)
         return false
     end
     status = ""
@@ -760,9 +822,15 @@ func fit(text, columns)
     return sub(text, 0, columns - 3) + "..."
 end
 
+func bottom_height()
+    # how tall what is along the bottom is: the status bar, and the suggestion above it if there is one
+    if len(suggestions) > 0 then return STATUS_H + SUGGEST_H end
+    return STATUS_H
+end
+
 func view_height()
     # how much of the page is shown at once
-    return SH - TOOLBAR - STATUS_H
+    return SH - TOOLBAR - bottom_height()
 end
 
 func max_scroll()
@@ -807,7 +875,7 @@ end
 func draw_page()
     # the rows that are on the screen
     hits = []
-    rect(0, TOOLBAR, SW, SH - TOOLBAR - STATUS_H, C_PAGE)
+    rect(0, TOOLBAR, SW, view_height(), C_PAGE)
     let bottom = scroll + view_height()
     for row in rows do
         if row[0] >= bottom then break end
@@ -894,6 +962,21 @@ func draw_statusbar()
     end
 end
 
+func draw_suggestion()
+    # the strip above the status bar that offers to allow a site: click it (or press A) and aerOS
+    # asks you whether to
+    if len(suggestions) == 0 then return end
+    let y = SH - STATUS_H - SUGGEST_H
+    rect(0, y, SW, SUGGEST_H, C_SUGGEST)
+    rect(0, y, SW, 1, C_EDGE)
+    let first = suggestions[0]
+    let reason = "so its pictures can show"
+    if first[2] == "page" then reason = "so the page can load" end
+    let words = "Allow " + first[0] + " (port " + first[1] + ") " + reason + "? Click here, or press A."
+    if len(suggestions) > 1 then words = words + "  (" + (len(suggestions) - 1) + " more sites after it)" end
+    text(8, y + 4, fit(words, (SW - 16) / 8), C_SUGGEST_TEXT, 1)
+end
+
 func draw_pointer()
     # an arrow at the pointer: white inside, a black edge
     let x = pointer_x
@@ -912,6 +995,7 @@ func draw_all()
     draw_scrollbar()
     draw_toolbar()
     draw_statusbar()
+    draw_suggestion()
     draw_pointer()
     gshow()
 end
@@ -935,6 +1019,25 @@ func go_back()
     end
     let before = pop(history)
     if navigate(before[0], false) then scroll_to(before[1]) end
+end
+
+func accept_suggestion()
+    # the first suggestion was accepted: ask aerOS to allow that site. aerOS asks the person itself
+    # (in a box over the screen: this program can't answer for them) and only makes the rule if
+    # they say yes, for fetching pages from that one site and port
+    if len(suggestions) == 0 then return end
+    let first = suggestions[0]
+    remove(suggestions, 0)
+    if fwallow(first[0], first[1]) then
+        status = ""
+        if first[2] == "page" and retry_url != "" then
+            navigate(retry_url, retry_remember)
+        elif len(imgs) > 0 then
+            load_pictures()
+        end
+    else
+        status = "Not allowed: " + first[0] + " port " + first[1] + ". Reload to be asked again."
+    end
 end
 
 func submit()
@@ -965,6 +1068,11 @@ func click(x, y)
         return
     end
     editing = false
+    if y >= SH - bottom_height() then
+        # along the bottom: the suggestion, if there is one (the status bar below it does nothing)
+        if y < SH - STATUS_H then accept_suggestion() end
+        return
+    end
     if x >= SW - SB_W and y < SH - STATUS_H then
         # the scroll bar: above or below the handle a screen at a time, or take hold of the handle
         if page_h > view_height() then
@@ -1012,7 +1120,7 @@ func follow_mouse()
     buttons_before = m[2]
     # the link under the pointer (the screen as last drawn says where they are)
     let over = 0
-    if pointer_y >= TOOLBAR and pointer_y < SH - STATUS_H and pointer_x < SW - SB_W then over = link_at(pointer_x, pointer_y) end
+    if pointer_y >= TOOLBAR and pointer_y < SH - bottom_height() and pointer_x < SW - SB_W then over = link_at(pointer_x, pointer_y) end
     if over != hover then
         hover = over
         changed = true
@@ -1062,6 +1170,8 @@ func press(code)
         scroll_to(page_h)
     elif code == KEY_BACKSPACE then
         go_back()
+    elif (code == ord("a") or code == ord("A")) and len(suggestions) > 0 then
+        accept_suggestion()
     end
 end
 
@@ -1087,6 +1197,8 @@ func main()
     C_EDGE = rgb(150, 150, 160)
     C_BUTTON = rgb(246, 246, 250)
     C_HANDLE = rgb(150, 150, 165)
+    C_SUGGEST = rgb(255, 240, 180)
+    C_SUGGEST_TEXT = rgb(80, 55, 0)
     pointer_x = SW / 2
     pointer_y = SH / 2
 

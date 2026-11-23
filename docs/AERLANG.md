@@ -261,7 +261,15 @@ prompt it puts away everything it can. `MEM` shows what app mode did for the las
 for) · `nrecv(port, ms)` wait up to ms milliseconds: the message, or nil ·
 `httpget(url)` fetch a web page (http://, or https://, which is encrypted and has the site's
 certificate checked: see NETWORK.md) from a computer a web rule (`FW WEB`, with port 443 for
-https) allows: its text if the status was 2xx, or nil (also if the certificate was refused)
+https) allows: its text if the status was 2xx, or nil (also if the certificate was refused) ·
+`fwallowed(host, port)` true if fetching web pages from that site and port is allowed already ·
+`fwallow(host, port)` ask to be allowed to: AerOS itself asks the person at the keyboard
+("browsgui.aer wants to allow web pages from example.com, port 443 (FW WEB)": Y or N, in a box
+over the graphics), every time, and only if they say yes makes the rule (a web rule, like `FW WEB
+host port`: it looks the name up with DNS, which can't be sealed). True if it is allowed now.
+A program can never make any other kind of rule, or answer the question itself. Only the program
+in front can ask. The `browsgui` package uses it: a strip along the bottom offers to allow the
+site a picture or a page needs
 
 **TCP** (plain connections both ways: a server, or a client for any protocol; see NETWORK.md,
 "Listening, and a web server", and the `webserve` package, `packages/webserve.aer`, for a
