@@ -672,3 +672,62 @@ def test_save_a_picture_in_the_desktop_browser(t):
             aeros.fail(f'the picture was not saved as red....png: {aeros.text()}')
     finally:
         server.shutdown()
+
+
+def test_browsgui_suggests_where_a_page_moved_to(t):
+    """A page that moves to a site the firewall blocks (like example.com to www.example.com): the
+    browser suggests allowing the site it moved to, not the one that was typed."""
+    asked = {'first': [], 'second': []}
+    page = b'<title>Moved</title><h1>You made it</h1>'
+
+    def serve(name, status, headers, body):
+        class Pages(http.server.BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def do_GET(self):
+                asked[name].append(self.path)
+                self.send_response(status)
+                self.send_header('Content-Type', 'text/html')
+                self.send_header('Content-Length', str(len(body)))
+                for header, value in headers():
+                    self.send_header(header, value)
+                self.send_header('Connection', 'close')
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+        port = free_port()
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Pages)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server, port
+
+    second, second_port = serve('second', 200, lambda: [], page)
+    first, first_port = serve('first', 302, lambda: [('Location', f'http://10.0.2.2:{second_port}/')], b'')
+
+    def wait(condition, what, seconds=40):
+        for _ in range(int(seconds * 5)):
+            if condition():
+                return
+            time.sleep(0.2)
+        aeros.fail(what + f' (asked: {asked})')
+
+    try:
+        disk = t.disk(files=t.package('browsgui'))
+        aeros = t.boot(graphics=True, network='user,model=e1000', disk=disk)
+        aeros.first_login()
+        aeros.run(f'fw web 10.0.2.2 {first_port}')          # only the site that was typed
+        aeros.ask(f'browsgui http://10.0.2.2:{first_port}/')
+        wait(lambda: asked['first'], 'the browser never asked for the page')
+        wait(lambda: count_colour(aeros.screenshot('offer'), SUGGEST) > 5000, 'no suggestion came up')
+        if asked['second']:
+            aeros.fail('the site it moved to was fetched although it is not allowed')
+        # A, Y: the rule is for the site it moved to (the second port), and the page loads
+        aeros.key('a')
+        wait(lambda: count_colour(aeros.screenshot('question'), QUESTION) > 0, "aerOS's question did not come up")
+        aeros.key('y')
+        wait(lambda: asked['second'], 'allowing the site it moved to did not load the page')
+        aeros.key('esc')
+    finally:
+        first.shutdown()
+        second.shutdown()

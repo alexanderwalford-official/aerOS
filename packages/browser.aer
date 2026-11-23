@@ -451,18 +451,12 @@ func open(url)
         return false
     end
     if page == nil then
-        # the site's name, for the fw web command, without http:// or a :port
-        let name = sub(site(url), find(url, "://") + 3)
-        let colon = find(name, ":")
-        let port = " 80"
-        if sub(lower(url), 0, 8) == "https://" then port = " 443" end
-        if colon != -1 then
-            port = " " + sub(name, colon + 1)
-            name = sub(name, 0, colon)
-        end
-        # httpget doesn't say why, so it's one of these (the get command in the terminal does)
-        message = "Couldn't load it: no such page, or the site needs fw web " + name + port
-        if port == " 443" then message = message + ", or its certificate isn't good" end
+        # httpwhy() says why: [result, status, words, site, port]. If the firewall blocked a site
+        # (not always the page's own: a page moves, like example.com to www.example.com) it is
+        # the site that needs the fw web command
+        let why = httpwhy()
+        message = "Couldn't load it: " + why[2]
+        if why[0] == -2 then message = message + " (fw web " + why[3] + " " + why[4] + " allows it)" end
         return false
     end
     address = url

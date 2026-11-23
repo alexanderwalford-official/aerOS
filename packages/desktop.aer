@@ -3033,8 +3033,9 @@ func wb_load_pictures()
                 wb_say("Loading picture " + wanted + ": " + picture[0])
                 let data = httpget(picture[0])
                 if data == nil then
-                    # most likely the picture's site isn't allowed: offer to allow it
-                    wb_suggest(wb_host_of(picture[0]), int(wb_port_of(picture[0])), "pictures")
+                    # if the firewall blocked it (the picture's site, or where it moved to), offer to allow that
+                    let why = httpwhy()
+                    if why[0] == -2 then wb_suggest(why[3], why[4], "pictures") end
                 elif wb_is_picture(data) then
                     let size = imgsz(data)
                     if size != nil then
@@ -3066,25 +3067,18 @@ func wb_suggest(host, port, kind)
 end
 
 func wb_suggest_for_page(url)
-    # a page wouldn't come: most likely its site isn't allowed. If it is, the page probably
-    # moved to the other kind of address (http to https or back), whose port isn't allowed
-    let host = wb_host_of(url)
-    let port = int(wb_port_of(url))
-    if not fwallowed(host, port) then
-        wb_suggest(host, port, "page")
-    elif sub(lower(url), 0, 8) == "https://" then
-        wb_suggest(host, 80, "page")
-    else
-        wb_suggest(host, 443, "page")
+    # a page wouldn't come. If the firewall blocked it, httpwhy() says which site and port: not
+    # always the page's own, as a page moves (example.com to www.example.com, http to https) and
+    # each place it moves to needs a rule of its own
+    let why = httpwhy()
+    if why[0] == -2 then
+        wb_suggest(why[3], why[4], "page")
     end
 end
 
 func wb_problem_with(url)
-    # why a page didn't come: httpget only gives nil, so it's one of these (the get command in the
-    # terminal says which)
-    let message = "Couldn't load " + url + ": no such page, or the site needs fw web " + wb_host_of(url) + " " + wb_port_of(url)
-    if sub(lower(url), 0, 8) == "https://" then message = message + ", or its certificate isn't good" end
-    return message
+    # why a page didn't come, in words (httpwhy knows: the firewall, the site's answer, a certificate...)
+    return "Couldn't load " + url + ": " + httpwhy()[2]
 end
 
 func wb_show_page(url, page)

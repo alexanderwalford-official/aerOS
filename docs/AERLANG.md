@@ -262,6 +262,10 @@ for) · `nrecv(port, ms)` wait up to ms milliseconds: the message, or nil ·
 `httpget(url)` fetch a web page (http://, or https://, which is encrypted and has the site's
 certificate checked: see NETWORK.md) from a computer a web rule (`FW WEB`, with port 443 for
 https) allows: its text if the status was 2xx, or nil (also if the certificate was refused) ·
+`httpwhy()` why the last `httpget` gave nil, as `[result, status, words, site, port]`: result is 0 if an
+answer came (status is then its number, 404 say) or the error's number (-2 is the firewall blocking
+the site and port given, which after a redirect may be where the page moved to, not what was asked
+for: that is the one that needs a rule), and words say it in words ·
 `fwallowed(host, port)` true if fetching web pages from that site and port is allowed already ·
 `fwallow(host, port)` ask to be allowed to: AerOS itself asks the person at the keyboard
 ("browsgui.aer wants to allow web pages from example.com, port 443 (FW WEB)": Y or N, in a box

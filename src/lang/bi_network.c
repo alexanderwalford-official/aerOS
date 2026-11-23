@@ -78,6 +78,15 @@ value_t bi_net_receive (int argc, value_t* argv, int line) {
     }
 }
 
+// what the last httpget() came to, kept for httpwhy()
+static struct {
+    int result;                 // NET_OK, or the error (sys/http.h, sys/net.h)
+    int status;                 // the page's status, if an answer came
+    char reason[48];
+    char host[FW_NAME_MAX];     // the site it last asked
+    uint16_t port;
+} last_get;
+
 // httpget(url): fetch a web page (sys/http.h) from a computer a web rule allows (FW WEB): the
 // page's text if it came back with a 2xx status ("OK"), nil if not (no web rule, no answer, no
 // such page...). http:// only: AerOS can't do HTTPS yet
@@ -86,12 +95,48 @@ value_t bi_http_get (int argc, value_t* argv, int line) {
     const char* url = str_arg(argv, 0, line, "httpget")->data.chars;
     http_response_t page;
     int result = http_get(url, &page);
+    // what happened, for httpwhy() (the site is the one it last asked: after a redirect, that is
+    // where the page moved to, and if the firewall blocked it, the one that needs a rule)
+    last_get.result = result;
+    last_get.status = page.status;
+    scpy(last_get.reason, page.reason, sizeof(last_get.reason));
+    scpy(last_get.host, page.host, sizeof(last_get.host));
+    last_get.port = page.port;
     value_t text = aer_nil();
     if (result == NET_OK && page.status >= 200 && page.status <= 299) {
         text = aer_string(page.body, (uint32_t)page.length);
     }
     http_free(&page);
     return text;
+}
+
+
+// httpwhy(): why the last httpget() gave nil, as [result, status, words, site, port]: result is 0
+// if an answer came (then status is its number, 404 say) or the error's number (-2 is the
+// firewall blocking the site: what is blocked is site and port, which after a redirect may not be
+// the one asked for, and is what a web rule is needed for), words say it in words, and site and port
+// are the last one httpget asked
+value_t bi_http_why (int argc, value_t* argv, int line) {
+    (void)argc;
+    (void)argv;
+    (void)line;
+    char words[FW_NAME_MAX + 80];
+    if (last_get.result == NET_ERR_BLOCKED) {
+        sfmt(words, sizeof(words), "the firewall blocks %s port %u", last_get.host, (unsigned int)last_get.port);
+    } else if (last_get.result == NET_OK && last_get.status != 0) {
+        sfmt(words, sizeof(words), "the site answered %d %s", last_get.status, last_get.reason);
+    } else if (last_get.result == NET_OK) {
+        scpy(words, "nothing has been fetched yet", sizeof(words));
+    } else {
+        scpy(words, http_strerror(last_get.result), sizeof(words));
+    }
+    value_t answer = aer_list(5);
+    aer_list_push(answer.as.obj, aer_int(last_get.result));
+    aer_list_push(answer.as.obj, aer_int(last_get.status));
+    aer_list_push(answer.as.obj, aer_string(words, (uint32_t)slen(words)));
+    aer_list_push(answer.as.obj, aer_string(last_get.host, (uint32_t)slen(last_get.host)));
+    aer_list_push(answer.as.obj, aer_int(last_get.port));
+    return answer;
 }
 
 

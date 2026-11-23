@@ -111,6 +111,7 @@ const aer_builtin_t aer_builtins[] = {
     BUILTIN("nsend", bi_net_send, 3, 3),
     BUILTIN("nrecv", bi_net_receive, 2, 2),
     BUILTIN("httpget", bi_http_get, 1, 1),
+    BUILTIN("httpwhy", bi_http_why, 0, 0),
     BUILTIN("fwallowed", bi_fw_allowed, 2, 2),
     BUILTIN("fwallow", bi_fw_allow, 2, 2),
     BUILTIN("tcplisten", bi_tcp_listen, 1, 1),
@@ -190,7 +191,7 @@ static const struct {
                       "dbclose", "sync", "mkd", "deld", "disks", "install", "osupdatable",
                       "osupdate", NULL } },
     { APP_NETWORK,  { "nsend", "nrecv", "httpget", "tcplisten", "tcpaccept", "tcpconnect",
-                      "tcprecv", "tcpsend", "tcpclose", "tcpunlisten", "fwallowed", "fwallow", NULL } },
+                      "tcprecv", "tcpsend", "tcpclose", "tcpunlisten", "httpwhy", "fwallowed", "fwallow", NULL } },
 };
 
 // the part a built-in's name belongs to, 0 for the ones every program has (print, len...)
