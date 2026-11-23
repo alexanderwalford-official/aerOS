@@ -19,7 +19,7 @@ to be written the way they expect:
      function down to the next line that starts with "}".)
 
 Each problem is printed as file:line, so editors can jump to it. It exits with 1 if there are any.
-Other people's code (the MP3 and MPEG decoders) and the two data files are left out, as they are
+Other people's code (the MP3, MPEG and TLS libraries) and the three data files are left out, as they are
 from /src/.
 """
 
@@ -31,7 +31,7 @@ SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
 FOLDERS = ['.', 'lib', 'sys', 'sys/accounts', 'sys/terminal', 'lang', 'db', 'drivers/audio',
            'drivers/input', 'drivers/net', 'drivers/pci', 'drivers/serial', 'drivers/storage',
            'drivers/video']
-LEFT_OUT = {'sys/splash_logo.c', 'drivers/video/font8x16.c'}
+LEFT_OUT = {'sys/splash_logo.c', 'sys/tls_roots.c', 'drivers/video/font8x16.c'}
 
 # a line that could start a function: column 0, a name, and a "(" later on
 STARTS_LIKE_FUNCTION = re.compile(r'^[A-Za-z_][\w \t\*,]*?\b([A-Za-z_]\w*)\s*\(')

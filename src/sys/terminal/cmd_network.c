@@ -173,7 +173,8 @@ static bool rule_address (const char* host, uint32_t* address, char name[FW_NAME
 }
 
 // FW WEB <ADDRESS OR NAME> [PORT]: allow fetching web pages (plain TCP, with GET) from one
-// computer, on port 80 unless another is given. No password: web servers know nothing of seals
+// computer, on port 80 unless another is given (443 for https://). No password: web servers
+// know nothing of seals
 static void allow_web (char* arguments) {
     char* port_text;
     char* host = split_first_word(arguments, &port_text);
@@ -192,7 +193,12 @@ static void allow_web (char* arguments) {
         return;
     }
     prtf("Allowed web pages from %s port %d: %s fetches them.\n", host, port, command_name(cli_get));
-    prtf("They aren't sealed, so anything fetched from it can be read on the way.\n");
+    if (port == 443) {
+        // https:// (sys/tls.h): encrypted, and the site is checked to be who it says it is
+        prtf("https:// pages are encrypted, and the site's certificate is checked.\n");
+    } else {
+        prtf("They aren't sealed, so anything fetched from it can be read on the way (https:// on port 443 is encrypted).\n");
+    }
 }
 
 // FW SERVE <PORT> [ADDRESS]: let other computers connect to AerOS's own port (plain TCP), for a

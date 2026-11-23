@@ -135,9 +135,10 @@ def test_get_and_httpget(t):
         aeros.run(f'msg 10.0.2.2 {port} hello')
         aeros.expect("Can't send to 10.0.2.2: the firewall blocks it")
 
-        # and HTTPS isn't something AerOS can do yet
+        # https needs a web rule too, for port 443 (test_https.py has HTTPS itself)
         aeros.cls()
         aeros.run('get https://example.com/')
-        aeros.expect("AerOS can't do HTTPS yet")
+        aeros.expect('The firewall has no web rule for example.com port 443',
+                     'FW WEB example.com 443 allows fetching from it.')
     finally:
         server.shutdown()

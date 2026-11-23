@@ -259,8 +259,9 @@ prompt it puts away everything it can. `MEM` shows what app mode did for the las
 **Network** (sealed messages, to and from computers the firewall allows: see NETWORK.md)
 `nsend(host, port, text)` true if it was sent (host is an address, or a name a rule was made
 for) · `nrecv(port, ms)` wait up to ms milliseconds: the message, or nil ·
-`httpget(url)` fetch a web page (http:// only) from a computer a web rule (`FW WEB`) allows: its
-text if the status was 2xx, or nil
+`httpget(url)` fetch a web page (http://, or https://, which is encrypted and has the site's
+certificate checked: see NETWORK.md) from a computer a web rule (`FW WEB`, with port 443 for
+https) allows: its text if the status was 2xx, or nil (also if the certificate was refused)
 
 **TCP** (plain connections both ways: a server, or a client for any protocol; see NETWORK.md,
 "Listening, and a web server", and the `webserve` package, `packages/webserve.aer`, for a

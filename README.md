@@ -74,6 +74,7 @@ I've decided to use inline assmembly in C with the GCC GNU99 standard for the mo
 - [x] Scrollback. (Page Up / Page Down in the terminal look back through the last 400 lines of output)
 - [x] Games groundwork. (a back buffer for smooth drawing, held keys, and a mixer playing up to 8 sounds at once)
 - [x] Video. (PLY plays MPEG-1 .mpg videos full screen with their sound in step, using pl_mpeg; see docs/VIDEO.md)
+- [x] HTTPS. (GET, httpget and the browser fetch https:// pages over TLS 1.2 using BearSSL, with the site's certificate checked against a built-in list of root authorities; see docs/NETWORK.md)
 - [x] An OS that explains itself. (WHY explains problems, commands and functions, SRC shows the code, /src/ holds it all, and SHOW narrates what a command did inside)
 - [x] AerLang at the prompt. (variables, sums and code right in the terminal, "did you mean", and cmd() for a command's output)
 - [x] Programs ask first. (apps ask before reading your files or changing any, PERM remembers the answers)

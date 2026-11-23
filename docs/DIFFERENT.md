@@ -28,8 +28,8 @@ built-in apps:
 
 ```
 SOURCE_CODE = every .c and .h AerOS is built from, plus entry.asm, linker.ld, Makefile, grub.cfg
-              (not lib/minimp3 or lib/pl_mpeg, other people's code, nor the logo and the font,
-              which are only data)
+              (not lib/minimp3, lib/pl_mpeg or lib/bearssl, other people's code, nor the logo, the
+              font and the trusted certificate authorities, which are only data)
 
 sys/fat.c --ld -r -b binary--> obj/source/sys/fat.c.o   (symbols _binary_sys_fat_c_start / _end)
 everything --a shell loop--> obj/source_index.c          { "sys/fat.c", start, end }, ...

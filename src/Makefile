@@ -15,6 +15,9 @@ LDFLAGS = -m elf_i386 -nostdlib -T linker.ld -z noexecstack --gc-sections
 
 # every .c file is compiled on its own into obj/, then linked together
 SOURCES = $(wildcard *.c lib/*.c sys/*.c sys/*/*.c drivers/*/*.c lang/*.c db/*.c)
+# BearSSL (HTTPS, sys/tls.c) is a tree of folders, so it is listed on its own: every .c file
+# in lib/bearssl/src, which holds only the files a TLS 1.2 client needs
+BEARSSL_SOURCES = $(wildcard lib/bearssl/src/*.c lib/bearssl/src/*/*.c)
 # the built-in files: everything in disk/ is linked into the kernel as raw data, and sys/apps.c
 # copies it to the same place in AerOS when it starts. disk/ is laid out just like AerOS's own
 # folders, so disk/bin/hello.aer is /bin/hello.aer and disk/docs/index.md is /docs/index.md.
@@ -23,10 +26,11 @@ BUILTIN_FILES = $(sort $(shell find disk -type f))
 
 # AerOS's own source code is linked in too, the same way, and shows up as the read-only folder
 # /src/ (see sys/source.h): every .c and .h file AerOS was built from, plus the files that
-# build and boot it. Left out: other people's code (lib/minimp3, lib/pl_mpeg, which the
-# wildcards don't reach) and two big files that are only data (the logo and the font)
+# build and boot it. Left out: other people's code (lib/minimp3, lib/pl_mpeg, lib/bearssl, which the
+# wildcards don't reach) and three big files that are only data (the logo, the font, and the
+# certificate authorities HTTPS trusts)
 HEADERS = $(wildcard *.h lib/*.h lib/shim/*.h sys/*.h sys/*/*.h drivers/*/*.h lang/*.h db/*.h)
-SOURCE_CODE = $(sort $(filter-out sys/splash_logo.c drivers/video/font8x16.c, \
+SOURCE_CODE = $(sort $(filter-out sys/splash_logo.c sys/tls_roots.c drivers/video/font8x16.c, \
                 $(SOURCES) $(HEADERS)) entry.asm linker.ld Makefile iso/boot/grub/grub.cfg install/grub.cfg)
 SOURCE_OBJECTS = $(patsubst %,obj/source/%.o,$(SOURCE_CODE)) obj/source_index.o
 
@@ -34,7 +38,7 @@ SOURCE_OBJECTS = $(patsubst %,obj/source/%.o,$(SOURCE_CODE)) obj/source_index.o
 # below. (The disk's grub.cfg, install/grub.cfg, is built in already, as part of /src/)
 INSTALL_OBJECTS = obj/install/boot.img.o obj/install/core.img.o
 
-OBJECTS = obj/entry.o $(patsubst %.c,obj/%.o,$(SOURCES)) $(patsubst %,obj/%.o,$(BUILTIN_FILES)) \
+OBJECTS = obj/entry.o $(patsubst %.c,obj/%.o,$(SOURCES) $(BEARSSL_SOURCES)) $(patsubst %,obj/%.o,$(BUILTIN_FILES)) \
           obj/builtin_index.o $(SOURCE_OBJECTS) $(INSTALL_OBJECTS)
 
 QEMU = qemu-system-i386
@@ -177,6 +181,12 @@ obj/install/%.img.o: obj/install/%.img
 # versions (lib/shim), for these two files only
 obj/lib/mp3.o: CFLAGS += -Ilib/shim
 obj/lib/mpg.o: CFLAGS += -Ilib/shim
+
+# BearSSL too: its <string.h> is AerOS's, and its warnings are left alone (it is not our code).
+# The two files of AerOS's that include BearSSL's headers (which include <string.h>) get that too
+obj/sys/tls.o: CFLAGS += -Ilib/shim
+obj/sys/tls_roots.o: CFLAGS += -Ilib/shim
+obj/lib/bearssl/%.o: CFLAGS += -Ilib/shim -Ilib/bearssl/src -Ilib/bearssl/inc -w
 
 # header dependencies written by -MMD
 -include $(OBJECTS:.o=.d)

@@ -19,13 +19,16 @@
     times). The body is sent either all in one, with its length in Content-Length, or in pieces
     ("Transfer-Encoding: chunked"), each with its length in hex first. http_get takes care of both.
 
-    Only plain http://. HTTPS needs TLS (certificates and a whole layer of encryption), which AerOS
-    doesn't have yet, so https:// addresses are turned away with HTTP_ERR_HTTPS. That means a page
-    can be read, or changed, on the way: fine for something checked afterwards (a package with a
-    signature, say), not for anything private.
+    https:// addresses (port 443) work the same, with the connection encrypted by TLS first
+    (sys/tls.h): nobody on the way can read or change the page, and the server's certificate is
+    checked, so it is who it says it is. If that fails there is no page, and the error says why
+    (an expired certificate, one for another name, one from a CA AerOS doesn't know). A plain
+    http:// page can be read, or changed, on the way: fine for something checked afterwards (a
+    package with a signature, say), not for anything private.
 
     Each server needs a web rule first (FW WEB example.com, sys/firewall.h), like everything else
-    on the network.
+    on the network, with the port: 80 for http://, and 443 for https:// (FW WEB example.com 443).
+    A redirect from http to https, or the other way, needs the rule of the port it goes to.
 */
 #ifndef HTTP_H
 #define HTTP_H
@@ -41,8 +44,7 @@
 #define HTTP_REDIRECTS_MAX 5
 
 // what can go wrong besides the network's own NET_ERR_ codes (sys/net.h)
-#define HTTP_ERR_URL        -20   // that isn't an http:// address AerOS understands
-#define HTTP_ERR_HTTPS      -21   // an https:// address: AerOS can't do HTTPS yet
+#define HTTP_ERR_URL        -20   // that isn't an http:// or https:// address AerOS understands
 #define HTTP_ERR_BAD_ANSWER -22   // the server's answer didn't make sense (or was cut short)
 #define HTTP_ERR_TOO_BIG    -23   // more than HTTP_BODY_MAX
 #define HTTP_ERR_REDIRECTS  -24   // moved more than HTTP_REDIRECTS_MAX times
@@ -59,7 +61,7 @@ typedef struct {
 
 // Fetch a page (url: "http://example.com/path", or just "example.com/path"). Fills in *out and
 // gives back NET_OK if an answer came, whatever its status (check out->status), or an HTTP_ERR_
-// or NET_ERR_ code: NET_ERR_BLOCKED means out->host has no web rule. Free the body with http_free
+// or NET_ERR_ code (or a TLS_ERR_ one, sys/tls.h): NET_ERR_BLOCKED means out->host has no web rule. Free the body with http_free
 int http_get (const char* url, http_response_t* out);
 
 // give back a response's body

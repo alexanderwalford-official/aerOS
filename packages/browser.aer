@@ -11,9 +11,9 @@
 # back up, b for the page before, g and an address to go there, s and some words to search
 # the web (with FrogFind), and q to quit
 #
-# only plain http:// pages for now (aerOS can't do https yet), and each site has to be
-# allowed first with fw web <site> 80. FrogFind (frogfind.com) is a good place to start,
-# it turns big modern sites into simple pages over http
+# http:// and https:// pages (https is checked: a site with a bad certificate won't load), and
+# each site has to be allowed first with fw web <site> 80 (or 443 for https). FrogFind
+# (frogfind.com) is a good place to start, it turns big modern sites into simple pages
 
 
 # what the browser does with each tag it knows; any other tag is left out, its words kept
@@ -151,7 +151,7 @@ func resolve(href)
     let low = lower(href)
     if sub(low, 0, 7) == "mailto:" or sub(low, 0, 11) == "javascript:" then return "" end
     if find(low, "://") != -1 then return href end
-    if sub(href, 0, 2) == "//" then return "http:" + href end
+    if sub(href, 0, 2) == "//" then return sub(address, 0, find(address, ":") + 1) + href end
     if sub(href, 0, 1) == "/" then return site(address) + href end
     if sub(href, 0, 1) == "?" then
         let question = find(address, "?")
@@ -440,10 +440,6 @@ end
 
 func open(url)
     # load a page and get it ready to show. false if it couldn't be loaded, with message saying why
-    if sub(lower(url), 0, 8) == "https://" then
-        message = "aerOS can't open https:// pages yet: " + url
-        return false
-    end
     color(LIGHT_CYAN, BLACK)
     print("Loading " + url + "...")
     color(BRIGHT, BLACK)
@@ -458,9 +454,15 @@ func open(url)
         # the site's name, for the fw web command, without http:// or a :port
         let name = sub(site(url), find(url, "://") + 3)
         let colon = find(name, ":")
-        if colon != -1 then name = sub(name, 0, colon) end
-        # httpget doesn't say why, so it's one of the two
-        message = "Couldn't load it: no such page, or the site needs fw web " + name + " 80"
+        let port = " 80"
+        if sub(lower(url), 0, 8) == "https://" then port = " 443" end
+        if colon != -1 then
+            port = " " + sub(name, colon + 1)
+            name = sub(name, 0, colon)
+        end
+        # httpget doesn't say why, so it's one of these (the get command in the terminal does)
+        message = "Couldn't load it: no such page, or the site needs fw web " + name + port
+        if port == " 443" then message = message + ", or its certificate isn't good" end
         return false
     end
     address = url
