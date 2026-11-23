@@ -60,7 +60,7 @@
 #include <stdbool.h>
 #include "netseal.h"
 
-#define FW_RULES_MAX 16   // the most rules there can be
+#define FW_RULES_MAX 64   // the most rules there can be (a web page and its pictures can need several)
 #define FW_NAME_MAX  64   // the longest DNS name a rule can be made for, with its '\0'
 
 typedef struct {

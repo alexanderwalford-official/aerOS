@@ -189,7 +189,8 @@ static void allow_web (char* arguments) {
         return;
     }
     if (!fw_allow_web(address, (uint16_t)port, name)) {
-        prtf("The firewall already has %d rules, the most it can have.\n", FW_RULES_MAX);
+        prtf("The firewall already has %d rules, the most it can have: %s DEL <number> removes one.\n",
+             FW_RULES_MAX, command_name(cli_firewall));
         return;
     }
     prtf("Allowed web pages from %s port %d: %s fetches them.\n", host, port, command_name(cli_get));
@@ -217,7 +218,8 @@ static void allow_serving (char* arguments) {
         return;
     }
     if (!fw_allow_serve(address, (uint16_t)port)) {
-        prtf("The firewall already has %d rules, the most it can have.\n", FW_RULES_MAX);
+        prtf("The firewall already has %d rules, the most it can have: %s DEL <number> removes one.\n",
+             FW_RULES_MAX, command_name(cli_firewall));
         return;
     }
     if (address == 0) {
@@ -265,7 +267,8 @@ static void allow_computer (char* arguments) {
             net_format_address(address, allowed);
             prtf("Allowed %s port %d. Only messages sealed with that password get through.\n", allowed, port);
         } else {
-            prtf("The firewall already has %d rules, the most it can have.\n", FW_RULES_MAX);
+            prtf("The firewall already has %d rules, the most it can have: %s DEL <number> removes one.\n",
+             FW_RULES_MAX, command_name(cli_firewall));
         }
         wipe(key, sizeof(key));
     } else if (!same) {

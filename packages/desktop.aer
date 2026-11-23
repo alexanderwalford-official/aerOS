@@ -3907,7 +3907,7 @@ func wb_accept_suggestion()
             wb_load_pictures()
         end
     else
-        wb_status = "Not allowed: " + first[0] + " port " + first[1] + ". Reload to be asked again."
+        wb_status = "Not allowed: " + first[0] + " port " + first[1] + " (or the firewall is full: fw del removes a rule). Reload to be asked again."
     end
 end
 

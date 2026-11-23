@@ -1556,7 +1556,7 @@ func accept_suggestion()
             load_pictures()
         end
     else
-        status = "Not allowed: " + first[0] + " port " + first[1] + ". Reload to be asked again."
+        status = "Not allowed: " + first[0] + " port " + first[1] + " (or the firewall is full: fw del removes a rule). Reload to be asked again."
     end
 end
 
