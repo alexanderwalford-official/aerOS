@@ -10,6 +10,8 @@
 # package), which this one is built from, but you point and click:
 #
 #     click a link to follow it            the Back, Reload and Home buttons along the top
+#     click a box on a page and type       Enter sends it (a search box, say). Tick boxes, round
+#                                          choices, lists (click for the next) and buttons work too
 #     click the address bar and type       an address (example.com), or words to search for
 #                                          (with FrogFind). Enter goes, Esc stops typing
 #     arrow keys, Page Up / Down, space    scroll (Home and End jump to the top and bottom)
@@ -43,11 +45,12 @@ let ENTITIES = [
 # the tags that do something, each in a string of names with a space round each, so one
 # find() says whether a tag is in it
 let HEADINGS = " h1 h2 h3 h4 h5 h6 "
-let BLOCKS = " p table pre form dl figure "
+let BLOCKS = " p table pre dl figure "
 let BREAKS = " div tr dt dd section article header footer nav main figcaption "
 let BOLDS = " b strong th "
+let FORM_TAGS = " form button textarea select option "
 let INDENTED = " ul ol blockquote "
-let SKIPPED = " script style svg template select noscript head "
+let SKIPPED = " script style svg template noscript head "
 
 let SEARCH = "http://frogfind.com/?q="    # where words typed in the address bar are searched for
 let MAX_PAGE = 400000      # the most of a page that is read: the rest is left off
@@ -63,6 +66,20 @@ let STATUS_H = 22          # and the one along the bottom
 let SUGGEST_H = 24         # and the strip above that, when there's a site to suggest allowing
 let SB_W = 14              # width of the scroll bar
 let INDENT = 24            # how far a list or quote is moved in
+let FIELD_H = 24           # how tall a box or button on a page is
+# what a field is: [form, kind, name, value, label, ticked?, columns, choices, choice]. kind is
+# "text", "password", "area", "checkbox", "radio", "submit", "button", "select" or "hidden"; label
+# is a button's words, or what a text box says when empty; each of the choices of a select is
+# [what is sent, its words]; choice is the one chosen
+let F_FORM = 0
+let F_KIND = 1
+let F_NAME = 2
+let F_VALUE = 3
+let F_LABEL = 4
+let F_ON = 5
+let F_COLS = 6
+let F_OPTIONS = 7
+let F_PICKED = 8
 
 # colours (made once the graphics screen is on)
 let C_PAGE = 0
@@ -93,7 +110,10 @@ let hits = []              # what can be clicked on the screen now: [x, y, w, h,
 let suggestions = []       # sites the firewall blocks, that could be allowed: [site, port, "page" or "pictures"]
 let retry_url = ""         # a page that wouldn't load, to be tried again once its site is allowed
 let retry_remember = false
-let hover = 0              # the link the pointer is over, or 0
+let hover = 0              # the link the pointer is over, or 0 (below 0: a field)
+let forms = []             # the forms on the page: [where it goes, its method]
+let fields = []            # what is in them: see F_ below
+let focus = -1             # the box being typed in, or -1
 let running = true
 
 # the address bar
@@ -115,6 +135,10 @@ let P_link = 0             # the number of the link it is inside, or 0
 let P_indent = 0
 let P_space = false        # was there a space before the next word
 let in_title = false
+let P_form = -1            # the form it is inside, or -1
+let P_button = -1          # the button, text area or select whose words it is reading, or -1
+let P_area = -1
+let P_select = -1
 
 # used while the page is laid out
 let L_boxes = []           # the line being built
@@ -347,6 +371,23 @@ func add_words(text)
         title = title + text
         return
     end
+    # the words inside a select are its choices' labels, in a text area its text, in a button its label
+    if P_select >= 0 then
+        let options = fields[P_select][F_OPTIONS]
+        if len(options) > 0 then
+            let last = options[len(options) - 1]
+            last[1] = last[1] + text
+        end
+        return
+    end
+    if P_area >= 0 then
+        fields[P_area][F_VALUE] = fields[P_area][F_VALUE] + text
+        return
+    end
+    if P_button >= 0 then
+        fields[P_button][F_LABEL] = fields[P_button][F_LABEL] + text
+        return
+    end
     if text == "" then return end
     if text[0] == " " then P_space = true end
     let size = word_size()
@@ -372,6 +413,10 @@ func do_tag(tag, name, closing)
                 P_link = len(links)
             end
         end
+    elif name == "input" then
+        add_input(tag)
+    elif find(FORM_TAGS, spaced) != -1 then
+        read_form_tag(tag, name, closing)
     elif find(BOLDS, spaced) != -1 then
         if closing then
             if P_bold > 0 then P_bold = P_bold - 1 end
@@ -446,6 +491,13 @@ func read_html(html)
     P_indent = 0
     P_space = false
     in_title = false
+    forms = []
+    fields = []
+    focus = -1
+    P_form = -1
+    P_button = -1
+    P_area = -1
+    P_select = -1
     html = plain_letters(html)
 
     # a plain text page has no tags: its lines are kept as they are
@@ -514,6 +566,10 @@ func flush_line()
             end
         end
     end
+    # a line with a box in it is taller than its words: they go down to its middle
+    for box in L_boxes do
+        if box[3] == 0 and L_h > box[2] then box[9] = (L_h - box[2] + 4) / 2 end
+    end
     push(rows, [L_y, L_h, L_boxes])
     L_y = L_y + L_h
     L_boxes = []
@@ -525,7 +581,7 @@ end
 
 func place_word(text, colour, size, bold, link, space)
     # put a word on the line, on a new line if it doesn't fit. Boxes are [x, width, height, 0,
-    # text, colour, size, bold, link]
+    # text, colour, size, bold, link, how far down in a taller line]
     let cell = 8 * size
     let width = len(text) * cell
     let gap = 0
@@ -539,7 +595,7 @@ func place_word(text, colour, size, bold, link, space)
         let fit = (L_right - L_x) / cell
         if fit < 1 then fit = 1 end
         if fit >= len(text) then break end
-        push(L_boxes, [L_x, fit * cell, 16 * size + 4, 0, sub(text, 0, fit), colour, size, bold, link])
+        push(L_boxes, [L_x, fit * cell, 16 * size + 4, 0, sub(text, 0, fit), colour, size, bold, link, 0])
         L_h = 16 * size + 4
         L_words = L_words + 1
         L_x = L_right
@@ -552,7 +608,7 @@ func place_word(text, colour, size, bold, link, space)
         let before = L_boxes[len(L_boxes) - 1]
         if before[3] == 0 and before[8] == link then before[1] = before[1] + gap end
     end
-    push(L_boxes, [L_x + gap, width, 16 * size + 4, 0, text, colour, size, bold, link])
+    push(L_boxes, [L_x + gap, width, 16 * size + 4, 0, text, colour, size, bold, link, 0])
     L_x = L_x + gap + width
     if 16 * size + 4 > L_h then L_h = 16 * size + 4 end
     L_words = L_words + 1
@@ -616,6 +672,8 @@ func layout()
             place_word(atom[1], atom[5], atom[3], atom[4], atom[6], atom[2])
         elif kind == "img" then
             place_picture(atom[1], atom[2])
+        elif kind == "field" then
+            place_field(atom[1])
         elif kind == "nl" then
             flush_line()
         elif kind == "br" then
@@ -813,6 +871,321 @@ func start_page()
 end
 
 
+# ---- forms -----------------------------------------------------------------------------------
+#
+# The boxes and buttons on a page: <input> (text, search, password, checkbox, radio, buttons and
+# hidden ones), <textarea> (as a line), <select> (click to go to the next choice) and <button>.
+# Reading the page makes forms (the address each goes to) and fields (what is in each: see F_ above)
+# and puts a ["field", number] in the page. Click a box to type in it, Enter sends the form. A form
+# is sent the way a link is followed: its address with the answers on the end (?q=hello+world),
+# which is what the GET method does. POST, which sends them out of sight in the request, isn't
+# something aerOS's HTTP does yet.
+
+func has_flag(tag, flag)
+    # does the tag have this setting with no value, like <input checked>?
+    return find(lower(tag), " " + flag) != -1
+end
+
+func new_field(kind, name, value, label, cols)
+    # a field of the form being read (or of none: -1), and its number
+    push(fields, [P_form, kind, name, value, label, false, cols, [], 0])
+    return len(fields) - 1
+end
+
+func add_input(tag)
+    # an <input>: its kind is its type, "text" if it doesn't say
+    let kind = lower(attribute(tag, "type"))
+    let name = attribute(tag, "name")
+    let value = attribute(tag, "value")
+    if kind == "" then kind = "text" end
+    if kind == "hidden" then
+        # not drawn, but sent with the rest
+        new_field("hidden", name, value, "", 0)
+    elif kind == "checkbox" or kind == "radio" then
+        if value == "" then value = "on" end
+        let number = new_field(kind, name, value, "", 0)
+        fields[number][F_ON] = has_flag(tag, "checked")
+        push(atoms, ["field", number])
+    elif kind == "submit" or kind == "button" or kind == "image" or kind == "reset" then
+        let label = value
+        if label == "" then label = attribute(tag, "alt") end
+        if label == "" and kind == "submit" then label = "Submit" end
+        let shown = "submit"
+        if kind == "button" or kind == "reset" then shown = "button" end
+        push(atoms, ["field", new_field(shown, name, value, label, 0)])
+    elif find(" text search email url tel number password ", " " + kind + " ") != -1 then
+        let cols = int(attribute(tag, "size"))
+        if cols == nil or cols < 1 then cols = 20 end
+        if cols > 80 then cols = 80 end
+        let shown = "text"
+        if kind == "password" then shown = "password" end
+        push(atoms, ["field", new_field(shown, name, value, attribute(tag, "placeholder"), cols)])
+    end
+end
+
+func read_form_tag(tag, name, closing)
+    # <form>, <button>, <textarea>, <select> and <option>: what each starts or finishes. The words
+    # inside a button, textarea or select belong to it (add_words puts them there)
+    if name == "form" then
+        push(atoms, ["gap"])
+        if closing then
+            P_form = -1
+        else
+            push(forms, [attribute(tag, "action"), lower(attribute(tag, "method"))])
+            P_form = len(forms) - 1
+        end
+    elif name == "button" then
+        if closing then
+            if P_button >= 0 then
+                let label = join(split(fields[P_button][F_LABEL]), " ")
+                if label == "" then label = "Submit" end
+                fields[P_button][F_LABEL] = label
+                push(atoms, ["field", P_button])
+                P_button = -1
+            end
+        else
+            let kind = "submit"
+            if lower(attribute(tag, "type")) == "button" then kind = "button" end
+            P_button = new_field(kind, attribute(tag, "name"), attribute(tag, "value"), "", 0)
+        end
+    elif name == "textarea" then
+        if closing then
+            if P_area >= 0 then
+                fields[P_area][F_VALUE] = join(split(fields[P_area][F_VALUE]), " ")
+                push(atoms, ["field", P_area])
+                P_area = -1
+            end
+        else
+            let cols = int(attribute(tag, "cols"))
+            if cols == nil or cols < 1 then cols = 30 end
+            if cols > 80 then cols = 80 end
+            P_area = new_field("area", attribute(tag, "name"), "", "", cols)
+        end
+    elif name == "select" then
+        if closing then
+            if P_select >= 0 then
+                # each choice's words are its label, and what is sent if it has no value of its own
+                for option in fields[P_select][F_OPTIONS] do
+                    option[1] = join(split(option[1]), " ")
+                    if option[0] == nil then option[0] = option[1] end
+                end
+                push(atoms, ["field", P_select])
+                P_select = -1
+            end
+        else
+            P_select = new_field("select", attribute(tag, "name"), "", "", 0)
+        end
+    elif name == "option" then
+        if not closing and P_select >= 0 then
+            let value = nil
+            if find(lower(tag), " value=") != -1 then value = attribute(tag, "value") end
+            let options = fields[P_select][F_OPTIONS]
+            push(options, [value, ""])
+            if has_flag(tag, "selected") then fields[P_select][F_PICKED] = len(options) - 1 end
+        end
+    end
+end
+
+func url_encode(text)
+    # text as it goes in an address: letters and digits as they are, a space as +, anything else
+    # as % and its number in hex
+    if text == "" then return "" end
+    let hex = "0123456789ABCDEF"
+    let out = ""
+    for i = 0 to len(text) - 1 do
+        let c = text[i]
+        let n = ord(c)
+        if (n >= 48 and n <= 57) or (n >= 65 and n <= 90) or (n >= 97 and n <= 122) or c == "-" or c == "_" or c == "." or c == "~" then
+            out = out + c
+        elif c == " " then
+            out = out + "+"
+        else
+            out = out + "%" + hex[n / 16] + hex[n % 16]
+        end
+    end
+    return out
+end
+
+func form_submit(form_index, button)
+    # send a form: go to its address with what is in its fields on the end. button is the number of
+    # the button pressed (its name and value are sent too), or -1 for Enter in a text box
+    if form_index < 0 then
+        status = "That box isn't in a form, so there's nowhere to send it."
+        return
+    end
+    let form = forms[form_index]
+    if form[1] == "post" then
+        status = "This form is sent with POST, which aerOS can't do yet: only forms that use GET work."
+        return
+    end
+    # where it goes: its action (the page itself if it has none), without any ? it already has
+    let base = ""
+    if form[0] != "" then base = resolve(form[0]) end
+    if base == "" then base = address end
+    let question = find(base, "?")
+    if question != -1 then base = sub(base, 0, question) end
+    let hash = find(base, "#")
+    if hash != -1 then base = sub(base, 0, hash) end
+
+    let pairs = []
+    for i = 0 to len(fields) - 1 do
+        let field = fields[i]
+        let kind = field[F_KIND]
+        if field[F_FORM] == form_index and field[F_NAME] != "" then
+            let sent = nil
+            if kind == "text" or kind == "password" or kind == "area" or kind == "hidden" then
+                sent = field[F_VALUE]
+            elif (kind == "checkbox" or kind == "radio") and field[F_ON] then
+                sent = field[F_VALUE]
+            elif kind == "select" and len(field[F_OPTIONS]) > 0 then
+                sent = field[F_OPTIONS][field[F_PICKED]][0]
+            elif kind == "submit" and i == button then
+                sent = field[F_VALUE]
+            end
+            if sent != nil then push(pairs, url_encode(field[F_NAME]) + "=" + url_encode(sent)) end
+        end
+    end
+    navigate(base + "?" + join(pairs, "&"), true)
+end
+
+func field_click(number)
+    # a click on a field: a box is typed in, a tick box is ticked or cleared, a round one is chosen
+    # (the others of its group are cleared), a button sends the form, a choice goes to the next
+    let field = fields[number]
+    let kind = field[F_KIND]
+    if kind == "text" or kind == "password" or kind == "area" then
+        focus = number
+        return
+    end
+    focus = -1
+    if kind == "checkbox" then
+        field[F_ON] = not field[F_ON]
+    elif kind == "radio" then
+        for other in fields do
+            if other[F_KIND] == "radio" and other[F_FORM] == field[F_FORM] and other[F_NAME] == field[F_NAME] then
+                other[F_ON] = false
+            end
+        end
+        field[F_ON] = true
+    elif kind == "submit" then
+        form_submit(field[F_FORM], number)
+    elif kind == "select" then
+        if len(field[F_OPTIONS]) > 0 then field[F_PICKED] = (field[F_PICKED] + 1) % len(field[F_OPTIONS]) end
+    end
+end
+
+func field_key(code)
+    # a key, for the box being typed in. True if it used it (Enter sends the form, Esc stops typing)
+    if focus < 0 then return false end
+    let field = fields[focus]
+    if code == KEY_ENTER then
+        # (a text area has no way to show a new line: Enter does nothing there)
+        if field[F_KIND] != "area" then form_submit(field[F_FORM], -1) end
+        return true
+    elif code == KEY_ESCAPE then
+        focus = -1
+        return true
+    elif code == KEY_BACKSPACE then
+        if len(field[F_VALUE]) > 0 then field[F_VALUE] = sub(field[F_VALUE], 0, len(field[F_VALUE]) - 1) end
+        return true
+    elif code >= 32 and code < 127 then
+        if len(field[F_VALUE]) < 300 then field[F_VALUE] = field[F_VALUE] + chr(code) end
+        return true
+    end
+    return false
+end
+
+func field_width(field, room)
+    # how wide a field is on the page (room is the most there is)
+    let kind = field[F_KIND]
+    let width = 18
+    if kind == "text" or kind == "password" or kind == "area" then
+        width = field[F_COLS] * 8 + 12
+    elif kind == "submit" or kind == "button" then
+        width = len(field[F_LABEL]) * 8 + 24
+    elif kind == "select" then
+        let longest = 4
+        for option in field[F_OPTIONS] do
+            if len(option[1]) > longest then longest = len(option[1]) end
+        end
+        width = longest * 8 + 36
+    end
+    if width > room then width = room end
+    return width
+end
+
+func place_field(number)
+    # a field goes on the line like a word, a box 24 high. Its box is [x, width, height, 4, number]
+    let field = fields[number]
+    let width = field_width(field, L_right - L_left)
+    let gap = 0
+    if L_words > 0 then gap = 8 end
+    if L_words > 0 and L_x + gap + width > L_right then
+        flush_line()
+        gap = 0
+    end
+    push(L_boxes, [L_x + gap, width, FIELD_H + 4, 4, number])
+    L_x = L_x + gap + width
+    if FIELD_H + 4 > L_h then L_h = FIELD_H + 4 end
+    L_words = L_words + 1
+end
+
+func field_disc(cx, cy, r, colour)
+    # a filled circle, a row at a time (for a round choice)
+    for dy = -r to r do
+        let half = floor(sqrt(r * r - dy * dy))
+        rect(cx - half, cy + dy, half * 2 + 1, 1, colour)
+    end
+end
+
+func draw_field(box, x, top)
+    # one field of a line, at x on the screen (top is the line's), and the place to click on it
+    let number = box[4]
+    let field = fields[number]
+    let kind = field[F_KIND]
+    let width = box[1]
+    let y = top + (box[2] - FIELD_H) / 2
+    push(hits, [x, y, width, FIELD_H, -(number + 1)])
+    let edge = C_EDGE
+    if number == focus then edge = C_LINK end
+    if kind == "text" or kind == "password" or kind == "area" or kind == "select" then
+        rect(x, y, width, FIELD_H, edge)
+        rect(x + 1, y + 1, width - 2, FIELD_H - 2, C_PAGE)
+        let columns = (width - 12) / 8
+        let shown = field[F_VALUE]
+        if kind == "password" and shown != "" then shown = join(list(len(shown), "*"), "") end
+        if kind == "select" then
+            shown = ""
+            if len(field[F_OPTIONS]) > 0 then shown = field[F_OPTIONS][field[F_PICKED]][1] end
+            columns = columns - 2
+            text(x + width - 18, y + 4, "v", C_DIM, 1)
+        end
+        if number == focus then
+            # the end of what was typed, and where the next letter goes
+            if len(shown) > columns - 1 then shown = sub(shown, len(shown) - columns + 1) end
+            text(x + 6, y + 4, shown + "_", C_TEXT, 1)
+        elif shown == "" then
+            text(x + 6, y + 4, sub(field[F_LABEL], 0, columns), C_DIM, 1)
+        else
+            text(x + 6, y + 4, sub(shown, 0, columns), C_TEXT, 1)
+        end
+    elif kind == "checkbox" then
+        rect(x, y + 4, 16, 16, edge)
+        rect(x + 1, y + 5, 14, 14, C_PAGE)
+        if field[F_ON] then rect(x + 4, y + 8, 8, 8, C_TEXT) end
+    elif kind == "radio" then
+        field_disc(x + 8, y + 12, 8, edge)
+        field_disc(x + 8, y + 12, 7, C_PAGE)
+        if field[F_ON] then field_disc(x + 8, y + 12, 4, C_TEXT) end
+    else
+        # a button
+        rect(x, y, width, FIELD_H, C_EDGE)
+        rect(x + 1, y + 1, width - 2, FIELD_H - 2, C_BUTTON)
+        text(x + (width - len(field[F_LABEL]) * 8) / 2, y + 4, sub(field[F_LABEL], 0, (width - 8) / 8), C_BAR_TEXT, 1)
+    end
+end
+
+
 # ---- drawing ---------------------------------------------------------------------------------
 
 func fit(text, columns)
@@ -854,11 +1227,12 @@ func draw_box(box, top)
         let colour = box[5]
         let link = box[8]
         if link > 0 and link == hover then colour = C_HOVER end
-        text(x, top, box[4], colour, box[6])
-        if box[7] then text(x + 1, top, box[4], colour, box[6]) end
+        let down = top + box[9]
+        text(x, down, box[4], colour, box[6])
+        if box[7] then text(x + 1, down, box[4], colour, box[6]) end
         if link > 0 then
-            rect(x, top + 16 * box[6] + 1, box[1], 1, colour)
-            push(hits, [x, top, box[1], box[2], link])
+            rect(x, down + 16 * box[6] + 1, box[1], 1, colour)
+            push(hits, [x, down, box[1], box[2], link])
         end
     elif kind == 1 then
         let picture = imgs[box[4]]
@@ -866,6 +1240,8 @@ func draw_box(box, top)
         if box[5] > 0 then push(hits, [x, top, box[1], box[2], box[5]]) end
     elif kind == 2 then
         rect(x + 4, top + 8, 5, 5, box[4])
+    elif kind == 4 then
+        draw_field(box, x, top)
     else
         rect(x, top, box[1], 1, C_DIM)
         rect(x, top + 1, box[1], 1, C_EDGE)
@@ -1051,6 +1427,7 @@ func click(x, y)
     # a click of the left button at this place
     if y < TOOLBAR then
         editing = false
+        focus = -1
         if x >= SW - 40 then
             running = false
         elif x >= 6 and x < 62 then
@@ -1089,7 +1466,13 @@ func click(x, y)
         return
     end
     let link = link_at(x, y)
-    if link > 0 then navigate(links[link - 1], true) end
+    if link > 0 then
+        navigate(links[link - 1], true)
+    elif link < 0 then
+        field_click(-link - 1)
+    else
+        focus = -1
+    end
 end
 
 func drag_to(y)
@@ -1149,10 +1532,13 @@ func press(code)
         end
         return
     end
+    # a box on the page being typed in has the keys (Esc stops typing in it, Enter sends the form)
+    if field_key(code) then return end
     status = ""
     if code == KEY_ESCAPE then
         running = false
     elif code == KEY_TAB then
+        focus = -1
         editing = true
         typed = address
         selected = true

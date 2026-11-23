@@ -282,6 +282,15 @@ screen doesn't, drawing inside the window (nothing is drawn outside it: a line o
 fit is left out, and the toolbar and bottom bars are drawn over the rest) and getting the desktop's
 mouse clicks and keys, is written by hand in `desktop.aer` ("The Browser window").
 
+The boxes and buttons on a page are drawn and work (the "forms" section of `browsgui.aer`): `<input>`
+(text, search, password, tick boxes, round choices, buttons, hidden values), `<textarea>` (as one
+line), `<select>` (a click shows the next choice) and `<button>`. Reading the page makes `forms` and
+`fields` lists, and a `["field", n]` in the page, which is laid out like a word (a box 24 high). A
+click on one is found like a link's (its place is a hit with a negative number), and the keys go to the
+box being typed in. A form is sent by following its address with the answers on the end, URL encoded
+(`url_encode`): the GET method, which search boxes use. POST would need a request with a body, which
+`sys/http.c` doesn't send yet, so a POST form is refused with a message saying so.
+
 When the firewall blocks a page, or the site a picture comes from (they are often on another site
 than the page), `browsgui` notices and offers to allow it: a strip along the bottom, which you
 click (or press A). It then calls `fwallow(host, port)` (`lang/bi_network.c`), which makes AerOS

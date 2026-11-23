@@ -118,7 +118,10 @@ same browser with a mouse: pages are drawn with big headings, bold words, blue u
 bullet lists and their pictures in place among the words. Click a link, the Back, Reload and Home
 buttons, or the address bar (type an address, or some words to search for, and press Enter);
 scroll with the arrow keys, Page Up and Down, or the bar down the right edge; Backspace goes back
-and Esc quits. There is no JavaScript or style sheets, and the pictures (the first 8 on a page)
+and Esc quits. The boxes and buttons on a page work: click a search box, type, and press Enter (or
+click its button); tick boxes and round choices are clicked, and a list shows its next choice each
+click. A form is sent as a GET (the answers go on the end of the address, `?q=hello+world`), which is
+what search boxes use; a form that needs POST says so and isn't sent. There is no JavaScript or style sheets, and the pictures (the first 8 on a page)
 come from sites that need their own web rules too. When a page or its pictures are blocked, a
 yellow strip along the bottom offers to allow the site: click it (or press A), and AerOS asks
 you (Y or N) before it makes the rule, the same as `fw web <site> <port>` would. Say N, and

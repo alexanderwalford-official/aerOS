@@ -322,3 +322,166 @@ def test_desktop_browser_is_up_to_date(t):
                           capture_output=True, text=True)
     if done.returncode != 0:
         raise AssertionError(done.stderr or done.stdout)
+
+
+FORM_PAGE = (b'<title>Form</title><h1>Search</h1>'
+             b'<form action="/search"><input type="text" name="q" size="20"> <input type="submit" value="Go"></form>')
+# a tick box (ticked), a list (the second choice picked), a hidden value and a named button
+FORM_PAGE_2 = (b'<title>More</title><form action="/go"><input type="checkbox" name="c" checked>'
+               b'<select name="s"><option value="a">One<option value="b" selected>Two</select>'
+               b'<input type="hidden" name="h" value="x y"><input type="submit" name="go" value="Send"></form>')
+
+
+def test_browsgui_forms(t):
+    """Boxes and buttons on a page: a text box typed in and sent with Enter (the answer on the end of
+    the address), then a tick box, a list and a named button, with a hidden value, sent by the button."""
+    asked = []
+
+    class Pages(http.server.BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
+        def do_GET(self):
+            asked.append(self.path)
+            if self.path.startswith('/search'):
+                body = FORM_PAGE_2
+            elif self.path.startswith('/go'):
+                body = TWO
+            else:
+                body = FORM_PAGE
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    def wait(condition, what, seconds=40):
+        for _ in range(int(seconds * 5)):
+            if condition():
+                return
+            time.sleep(0.2)
+        aeros.fail(what + f' (asked: {asked})')
+
+    def move_pointer(dx, dy):
+        while dx or dy:
+            step_x = max(-100, min(100, dx))
+            step_y = max(-100, min(100, dy))
+            aeros.mouse_move(step_x, step_y)
+            dx -= step_x
+            dy -= step_y
+            time.sleep(0.05)
+        time.sleep(0.4)
+
+    def click():
+        aeros.mouse_buttons(1)
+        time.sleep(0.2)
+        aeros.mouse_buttons(0)
+        time.sleep(0.6)
+
+    port = free_port()
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Pages)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        disk = t.disk(files=t.package('browsgui'))
+        aeros = t.boot(graphics=True, network='user,model=e1000', disk=disk)
+        aeros.first_login()
+        aeros.run(f'fw web 10.0.2.2 {port}')
+        aeros.ask(f'browsgui http://10.0.2.2:{port}/form')
+        wait(lambda: asked, 'the browser never asked for the page')
+        time.sleep(2)
+
+        # the text box is on the first line under the heading, at about (60, 106) on the screen:
+        # click it (it gets a blue edge), type, Enter
+        move_pointer(60 - 512, 106 - 384)
+        click()
+        if count_colour(aeros.screenshot('typing'), LINK) < 100:
+            aeros.fail('the text box did not get the blue edge of a box being typed in')
+        aeros.type('hello world\n')
+        wait(lambda: any(path.startswith('/search') for path in asked), 'Enter did not send the form')
+        if '/search?q=hello+world' not in asked:
+            aeros.fail(f'the form was sent as something else: {asked}')
+
+        # the next page has a tick box, a list and a button on its first line: untick the box, take
+        # the next choice in the list, press the button
+        time.sleep(2)
+        move_pointer(25 - 60, 58 - 106)
+        click()
+        move_pointer(35, 0)
+        click()
+        move_pointer(80, 0)
+        click()
+        wait(lambda: any(path.startswith('/go') for path in asked), 'the button did not send the form')
+        if '/go?s=a&h=x+y&go=Send' not in asked:
+            aeros.fail(f'the second form was sent as something else: {asked}')
+    finally:
+        server.shutdown()
+
+
+def test_forms_in_the_desktop_browser(t):
+    """The Browser window in the desktop: click a text box on a page, type, press Enter."""
+    asked = []
+    page = b'<title>Form</title><form action="/search"><input type="text" name="q" size="20"><input type="submit" value="Go"></form>'
+
+    class Pages(http.server.BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
+        def do_GET(self):
+            asked.append(self.path)
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.send_header('Content-Length', str(len(page)))
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(page)
+
+        def log_message(self, *args):
+            pass
+
+    def wait(condition, what, seconds=60):
+        for _ in range(int(seconds * 5)):
+            if condition():
+                return
+            time.sleep(0.2)
+        aeros.fail(what + f' (asked: {asked})')
+
+    port = free_port()
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Pages)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        disk = t.disk(files=t.package('desktop'))
+        aeros = t.boot(graphics=True, network='user,model=e1000', disk=disk)
+        aeros.first_login()
+        aeros.run(f'fw web 10.0.2.2 {port}')
+        aeros.ask('desktop')
+        wait(lambda: count_colour(aeros.screenshot('desk'), QUESTION) > 0, "aerOS's question did not come up", 90)
+        aeros.key('a')
+        wait(lambda: count_colour(aeros.screenshot('desk'), QUESTION) == 0, 'the question stayed')
+        time.sleep(1)
+        aeros.key('tab')
+        time.sleep(0.5)
+        for _ in range(7):
+            aeros.key('down')
+        time.sleep(0.5)
+        aeros.key('ret')
+        time.sleep(1.5)
+        aeros.type(f'http://10.0.2.2:{port}/\n')
+        wait(lambda: asked, 'the Browser never fetched the page')
+        time.sleep(2)
+
+        # the window is at 150, 58: its inside starts 24 down, then a 32 high toolbar, then the box
+        # (16 across, 8 down in the page, 24 high)
+        for dx, dy in [(-100, -100), (-100, -100), (-112, -48)]:
+            aeros.mouse_move(dx, dy)
+            time.sleep(0.1)
+        time.sleep(0.5)
+        aeros.mouse_buttons(1)
+        time.sleep(0.2)
+        aeros.mouse_buttons(0)
+        time.sleep(0.6)
+        aeros.type('cats\n')
+        wait(lambda: '/search?q=cats' in asked, 'typing in the box and Enter did not send the form')
+    finally:
+        server.shutdown()
