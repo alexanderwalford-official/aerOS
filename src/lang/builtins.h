@@ -192,6 +192,7 @@ value_t bi_net_send (int argc, value_t* argv, int line);
 value_t bi_net_receive (int argc, value_t* argv, int line);
 value_t bi_http_get (int argc, value_t* argv, int line);
 value_t bi_http_why (int argc, value_t* argv, int line);
+value_t bi_http_body (int argc, value_t* argv, int line);
 value_t bi_fw_allowed (int argc, value_t* argv, int line);
 value_t bi_fw_allow (int argc, value_t* argv, int line);
 value_t bi_tcp_listen (int argc, value_t* argv, int line);

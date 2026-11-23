@@ -43,6 +43,8 @@ class Pages(http.server.BaseHTTPRequestHandler):
             self.send(200, TOO_BIG)
         elif self.path == '/moved':
             self.send(302, b'', headers=[('Location', '/hello.txt')])
+        elif self.path == '/forbidden':
+            self.send(403, b'<title>No</title><h1>Access denied</h1><p>Robots are not welcome here.</p>', 'text/html')
         elif self.path == '/chunked':
             # the body in pieces, each with its length in hex first, then a 0 length piece
             self.send_response(200)
@@ -123,6 +125,15 @@ def test_get_and_httpget(t):
         aeros.run(f'get {site}/nothing', timeout=90)
         aeros.expect_line('404 Not Found, 13 bytes, text/plain', 'No such page')
 
+        # a page that says no: httpget gives nil, httpwhy says what the answer was, and httpbody has the
+        # site's own page for it
+        aeros.cls()
+        aeros.run(f'let refused = httpget("{site}/forbidden")')
+        aeros.run('print(refused == nil, httpwhy()[0], httpwhy()[1], httpwhy()[2])')
+        aeros.expect('true 0 403 the site answered 403 Forbidden')
+        aeros.run('print(httpbody())')
+        aeros.expect('Access denied')
+
         # from AerLang: the page's text, or nil if it isn't there
         aeros.cls()
         aeros.run(f'httpget("{site}/hello.txt")', timeout=90)
@@ -140,5 +151,23 @@ def test_get_and_httpget(t):
         aeros.run('get https://example.com/')
         aeros.expect('The firewall has no web rule for example.com port 443',
                      'FW WEB example.com 443 allows fetching from it.')
+    finally:
+        server.shutdown()
+
+
+def test_browser_shows_a_forbidden_page(t):
+    """The text browser (packages/browser.aer): a site that answers 403 has a page of its own, which is
+    shown, with what the answer was underneath, instead of only "couldn't load"."""
+    port = free_port()
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Pages)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        disk = t.disk(files=t.package('browser'))
+        aeros = t.boot(network='user,model=e1000', disk=disk)
+        aeros.first_login()
+        aeros.run(f'fw web 10.0.2.2 {port}')
+        aeros.ask(f'browser http://10.0.2.2:{port}/forbidden')
+        aeros.wait_for('Access denied', 60)
+        aeros.expect('Robots are not welcome here.', 'The site answered 403 Forbidden: its own page is shown.')
     finally:
         server.shutdown()

@@ -85,7 +85,12 @@ static struct {
     char reason[48];
     char host[FW_NAME_MAX];     // the site it last asked
     uint16_t port;
+    char* body;                 // what the site sent when it answered with something other than a page
+    size_t body_length;         // (a 403 or 404's own page), kept for httpbody(), or NULL
 } last_get;
+
+// the biggest answer of that kind that is kept
+#define ERROR_PAGE_MAX (256 * 1024)
 
 // httpget(url): fetch a web page (sys/http.h) from a computer a web rule allows (FW WEB): the
 // page's text if it came back with a 2xx status ("OK"), nil if not (no web rule, no answer, no
@@ -97,6 +102,9 @@ value_t bi_http_get (int argc, value_t* argv, int line) {
     int result = http_get(url, &page);
     // what happened, for httpwhy() (the site is the one it last asked: after a redirect, that is
     // where the page moved to, and if the firewall blocked it, the one that needs a rule)
+    free(last_get.body);
+    last_get.body = NULL;
+    last_get.body_length = 0;
     last_get.result = result;
     last_get.status = page.status;
     scpy(last_get.reason, page.reason, sizeof(last_get.reason));
@@ -105,9 +113,27 @@ value_t bi_http_get (int argc, value_t* argv, int line) {
     value_t text = aer_nil();
     if (result == NET_OK && page.status >= 200 && page.status <= 299) {
         text = aer_string(page.body, (uint32_t)page.length);
+    } else if (result == NET_OK && page.body != NULL && page.length > 0 && page.length <= ERROR_PAGE_MAX) {
+        // the site answered, but not with a page (403, 404...): keep what it sent, for httpbody()
+        last_get.body = page.body;
+        last_get.body_length = page.length;
+        page.body = NULL;
     }
     http_free(&page);
     return text;
+}
+
+// httpbody(): what the site sent the last time httpget() gave nil because it answered with
+// something other than a page (a 403 Forbidden or 404 Not Found has a page of its own, which often
+// says why), or nil if there isn't one. Ask before the next httpget(), which forgets it
+value_t bi_http_body (int argc, value_t* argv, int line) {
+    (void)argc;
+    (void)argv;
+    (void)line;
+    if (last_get.body == NULL) {
+        return aer_nil();
+    }
+    return aer_string(last_get.body, (uint32_t)last_get.body_length);
 }
 
 

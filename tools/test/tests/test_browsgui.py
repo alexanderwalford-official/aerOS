@@ -731,3 +731,48 @@ def test_browsgui_suggests_where_a_page_moved_to(t):
     finally:
         first.shutdown()
         second.shutdown()
+
+
+def test_browsgui_shows_the_page_of_a_403(t):
+    """A site that answers 403 Forbidden but sends a page of its own: browsgui shows that page (here
+    it has a picture on it, which is then fetched and drawn) instead of only saying it couldn't load."""
+    asked = []
+    picture = make_png(120, 60, RED)
+    page = b'<title>No</title><h1>Access denied</h1><p><img src="/red.png" alt="red"></p>'
+
+    class Pages(http.server.BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
+        def do_GET(self):
+            asked.append(self.path)
+            status, body, kind = (200, picture, 'image/png') if self.path == '/red.png' else (403, page, 'text/html')
+            self.send_response(status)
+            self.send_header('Content-Type', kind)
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    port = free_port()
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Pages)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        disk = t.disk(files=t.package('browsgui'))
+        aeros = t.boot(graphics=True, network='user,model=e1000', disk=disk)
+        aeros.first_login()
+        aeros.run(f'fw web 10.0.2.2 {port}')
+        aeros.ask(f'browsgui http://10.0.2.2:{port}/')
+        for _ in range(300):
+            if '/red.png' in asked:
+                break
+            time.sleep(0.2)
+        else:
+            aeros.fail(f"the 403's own page was not shown: its picture was never fetched (asked: {asked})")
+        time.sleep(2)
+        if count_colour(aeros.screenshot('forbidden'), RED) < 120 * 60 // 2:
+            aeros.fail("the picture on the 403's own page is not drawn")
+    finally:
+        server.shutdown()

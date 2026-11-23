@@ -3112,6 +3112,15 @@ func wb_navigate(url, remember)
     wb_status = "Loading " + url + "..."
     draw_all()
     let page = httpget(url)
+    # a site that answered with something other than a page (403, 404...) usually has a page of its
+    # own saying why: it is shown, with what the answer was in the status bar
+    let note = ""
+    if page == nil and httpwhy()[0] == 0 then
+        let words = httpwhy()[2]
+        note = upper(sub(words, 0, 1)) + sub(words, 1) + ": its own page is shown."
+        page = httpbody()
+        if page == nil then note = "" end
+    end
     if page == nil then
         wb_status = wb_problem_with(url)
         wb_retry_url = url
@@ -3125,6 +3134,10 @@ func wb_navigate(url, remember)
     draw_all()
     if len(wb_imgs) > 0 then
         wb_load_pictures()
+        draw_all()
+    end
+    if note != "" then
+        wb_status = note
         draw_all()
     end
     return true

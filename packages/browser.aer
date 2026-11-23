@@ -450,6 +450,15 @@ func open(url)
         show_picture(page, url)
         return false
     end
+    let note = ""
+    if page == nil and httpwhy()[0] == 0 then
+        # the site answered, but not with a page (403, 404...): it usually has a page of its own
+        # saying why, which is shown, with what the answer was underneath
+        let words = httpwhy()[2]
+        note = upper(sub(words, 0, 1)) + sub(words, 1) + ": its own page is shown."
+        page = httpbody()
+        if page == nil then note = "" end
+    end
     if page == nil then
         # httpwhy() says why: [result, status, words, site, port]. If the firewall blocked a site
         # (not always the page's own: a page moves, like example.com to www.example.com) it is
@@ -461,6 +470,7 @@ func open(url)
     end
     address = url
     convert_html(page)
+    if note != "" then message = note end
     return true
 end
 
