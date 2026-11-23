@@ -131,7 +131,8 @@ The first time, let AerOS reach the server: `fw web packages.intercon.network 80
 | `viewer` | a picture viewer, with two pictures to try it on |
 | `clip` | a 6 second [video](video.md) |
 | `webserve` | a web server: show a folder to web browsers ([network](network.md)) |
-| `browser` | a web browser for http:// pages: `browser frogfind.com` ([network](network.md)) |
+| `browser` | a text web browser for http:// and https:// pages: `browser frogfind.com` ([network](network.md)) |
+| `browsgui` | a graphical web browser, with a mouse and pictures in the page: `browsgui frogfind.com` ([network](network.md)) |
 | `bench` | how fast the disk is |
 | `anim` | the animations AerLang can draw |
 | `desktop` | a desktop with windows: a clock, files, notes, a calculator, your installed apps, Sleep / Restart / Shut down, Settings for its colours, background picture and taskbar, and a live system monitor (from the CD, for its graphics screen) |

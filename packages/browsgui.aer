@@ -1,0 +1,1116 @@
+# a graphical web browser for aerOS (browsgui: a package name can only be 8 letters)
+# Alexander Walford 2026
+#
+#     browsgui                 start on the start page
+#     browsgui frogfind.com    open that address straight away
+#
+# Pages are drawn on the graphics screen: headings in big letters, bold words, links in blue
+# and underlined, bullet lists, centred text, and the pictures on the page (BMP, PNG, GIF and
+# JPEG) in their place among the words. It is the same idea as the text browser (the browser
+# package), which this one is built from, but you point and click:
+#
+#     click a link to follow it            the Back, Reload and Home buttons along the top
+#     click the address bar and type       an address (example.com), or words to search for
+#                                          (with FrogFind). Enter goes, Esc stops typing
+#     arrow keys, Page Up / Down, space    scroll (Home and End jump to the top and bottom)
+#     the bar down the right edge          click above or below its handle to scroll by a
+#                                          screen, or drag the handle
+#     Backspace                            the page before        Esc                 quit
+#
+# http:// and https:// pages work (https is checked: a site with a bad certificate won't load).
+# Each site has to be allowed first with fw web <site> 80 (or 443 for https), and so does
+# the site a picture comes from, or that picture is left as its name in [brackets].
+# There is no JavaScript and no style sheets: a page is drawn the plain way, which is why
+# FrogFind (frogfind.com), which turns big modern sites into simple pages, is a good place to
+# start. The letters are aerOS's own 8 x 16 font (and twice as big for the main heading).
+# Needs a graphics screen: start aerOS from its CD (main.iso).
+
+
+# what the pages' &...; codes stand for. &amp; is done last, so "&amp;lt;" comes out as "&lt;"
+let ENTITIES = [
+    ["&nbsp;", " "], ["&lt;", "<"], ["&gt;", ">"],
+    ["&quot;", "\""], ["&apos;", "'"],
+    ["&lsquo;", "'"], ["&rsquo;", "'"], ["&ldquo;", "\""], ["&rdquo;", "\""],
+    ["&ndash;", "-"], ["&mdash;", "-"], ["&hellip;", "..."], ["&bull;", "*"], ["&middot;", "*"],
+    ["&raquo;", ">>"], ["&laquo;", "<<"], ["&rarr;", "->"], ["&larr;", "<-"],
+    ["&copy;", "(c)"], ["&reg;", "(R)"], ["&trade;", "(TM)"],
+    ["&amp;", "&"]
+]
+
+# the tags that do something, each in a string of names with a space round each, so one
+# find() says whether a tag is in it
+let HEADINGS = " h1 h2 h3 h4 h5 h6 "
+let BLOCKS = " p table pre form dl figure "
+let BREAKS = " div tr dt dd section article header footer nav main figcaption "
+let BOLDS = " b strong th "
+let INDENTED = " ul ol blockquote "
+let SKIPPED = " script style svg template select noscript head "
+
+let SEARCH = "http://frogfind.com/?q="    # where words typed in the address bar are searched for
+let MAX_PAGE = 400000      # the most of a page that is read: the rest is left off
+let MAX_PICTURES = 8       # pictures fetched for a page
+let MAX_PICTURE_HEIGHT = 480
+
+# the screen, and what is where on it
+let SW = 0
+let SH = 0
+let MARGIN = 16            # space left and right of the page
+let TOOLBAR = 36           # height of the bar along the top
+let STATUS_H = 22          # and the one along the bottom
+let SB_W = 14              # width of the scroll bar
+let INDENT = 24            # how far a list or quote is moved in
+
+# colours (made once the graphics screen is on)
+let C_PAGE = 0
+let C_TEXT = 0
+let C_LINK = 0
+let C_HOVER = 0
+let C_DIM = 0
+let C_BAR = 0
+let C_BAR_TEXT = 0
+let C_EDGE = 0
+let C_BUTTON = 0
+let C_HANDLE = 0
+
+# the page being shown
+let address = ""           # where it came from ("" for the start page)
+let title = ""             # what its <title> says
+let atoms = []             # the page read from its HTML: words and the things between them
+let links = []             # the address of each link: link number n is links[n - 1]
+let imgs = []              # each picture: [address, alt text, its bytes or nil, width, height]
+let rows = []              # the page laid out: each [y, height, boxes]
+let page_h = 0             # how tall it all is
+let scroll = 0             # how far down it is shown
+let history = []           # the pages before it: [address, scroll]
+let status = ""            # a message for the bar at the bottom
+let hits = []              # what can be clicked on the screen now: [x, y, w, h, link number]
+let hover = 0              # the link the pointer is over, or 0
+let running = true
+
+# the address bar
+let editing = false
+let typed = ""
+let selected = false       # all of it is selected, so the next letter typed replaces it
+
+# the pointer, and the scroll bar's handle while it is dragged
+let pointer_x = 0
+let pointer_y = 0
+let buttons_before = 0
+let dragging = false
+let drag_offset = 0
+
+# used while the HTML is read
+let P_bold = 0             # how many <b>s deep
+let P_head = 0             # the heading level it is inside, or 0
+let P_link = 0             # the number of the link it is inside, or 0
+let P_indent = 0
+let P_space = false        # was there a space before the next word
+let in_title = false
+
+# used while the page is laid out
+let L_boxes = []           # the line being built
+let L_words = 0
+let L_x = 0
+let L_y = 0
+let L_h = 0
+let L_left = 0
+let L_right = 0
+let L_centre = false
+let L_blank = true         # was there a gap just before
+
+
+# ---- text ------------------------------------------------------------------------------------
+
+func replace(text, old, new)
+    # every old in text swapped for new
+    return join(split(text, old), new)
+end
+
+func flatten(text)
+    # line breaks and tabs turned into spaces (chr(13) is the carriage return Windows puts
+    # before each \n)
+    text = replace(text, chr(13), " ")
+    text = replace(text, "\n", " ")
+    return replace(text, "\t", " ")
+end
+
+func squash(text)
+    # every run of spaces, tabs and line breaks turned into one space, which is what HTML does.
+    # a space at the start or end is kept (as one), so "with <b>bold</b> text" still has its spaces
+    text = flatten(text)
+    let squashed = join(split(text), " ")
+    if squashed == "" then
+        if text != "" then return " " end
+        return ""
+    end
+    if text[0] == " " then squashed = " " + squashed end
+    if text[len(text) - 1] == " " then squashed = squashed + " " end
+    return squashed
+end
+
+func plain_letters(text)
+    # the punctuation that comes as UTF-8 (curly quotes, dashes, "...") turned into what the
+    # screen's font has. Only looked for if a byte that starts one is there at all
+    if find(text, chr(226)) != -1 then
+        text = replace(text, chr(226) + chr(128) + chr(152), "'")
+        text = replace(text, chr(226) + chr(128) + chr(153), "'")
+        text = replace(text, chr(226) + chr(128) + chr(156), "\"")
+        text = replace(text, chr(226) + chr(128) + chr(157), "\"")
+        text = replace(text, chr(226) + chr(128) + chr(147), "-")
+        text = replace(text, chr(226) + chr(128) + chr(148), "-")
+        text = replace(text, chr(226) + chr(128) + chr(166), "...")
+        text = replace(text, chr(226) + chr(128) + chr(162), "*")
+        text = replace(text, chr(226) + chr(134) + chr(146), "->")
+    end
+    if find(text, chr(194)) != -1 then
+        text = replace(text, chr(194) + chr(160), " ")
+        text = replace(text, chr(194) + chr(169), "(c)")
+        text = replace(text, chr(194) + chr(183), "*")
+        text = replace(text, chr(194) + chr(187), ">>")
+    end
+    return text
+end
+
+func number_codes(text)
+    # &#8217; and &#x2019; codes: the ones that are plain letters stay, the curly quotes and dashes
+    # become the plain ones, and anything else a "?"
+    let parts = split(text, "&#")
+    let out = parts[0]
+    for i = 1 to len(parts) - 1 do
+        let part = parts[i]
+        let semi = find(part, ";")
+        let n = nil
+        if semi > 0 and semi <= 6 then
+            let digits = sub(part, 0, semi)
+            if lower(digits[0]) == "x" then digits = "0" + digits end
+            n = int(digits)
+        end
+        if n == nil then
+            out = out + "&#" + part
+        else
+            let shown = "?"
+            if n >= 32 and n < 127 then shown = chr(n) end
+            if n == 8216 or n == 8217 then shown = "'" end
+            if n == 8220 or n == 8221 then shown = "\"" end
+            if n == 8211 or n == 8212 then shown = "-" end
+            if n == 8230 then shown = "..." end
+            if n == 160 then shown = " " end
+            out = out + shown + sub(part, semi + 1)
+        end
+    end
+    return out
+end
+
+func decode(text)
+    # the &...; codes swapped for the characters they stand for
+    if find(text, "&") == -1 then return text end
+    if find(text, "&#") != -1 then text = number_codes(text) end
+    for pair in ENTITIES do
+        text = replace(text, pair[0], pair[1])
+    end
+    return text
+end
+
+
+# ---- addresses -------------------------------------------------------------------------------
+
+func site(url)
+    # the start of an address, up to the site's name: "http://frogfind.com/read.php" gives
+    # "http://frogfind.com"
+    let start = find(url, "://") + 3
+    let slash = find(sub(url, start), "/")
+    if slash == -1 then return url end
+    return sub(url, 0, start + slash)
+end
+
+func host_of(url)
+    # the site's name, for the fw web command: "http://site.com:8080/a" gives "site.com", and
+    # port_of gives its port
+    let name = sub(site(url), find(url, "://") + 3)
+    let colon = find(name, ":")
+    if colon != -1 then name = sub(name, 0, colon) end
+    return name
+end
+
+func port_of(url)
+    let name = sub(site(url), find(url, "://") + 3)
+    let colon = find(name, ":")
+    if colon != -1 then return sub(name, colon + 1) end
+    if sub(lower(url), 0, 8) == "https://" then return "443" end
+    return "80"
+end
+
+func folder(url)
+    # the folder a page is in: "http://site.com/docs/a.html" gives "http://site.com/docs/"
+    let question = find(url, "?")
+    if question != -1 then url = sub(url, 0, question) end
+    let base = site(url)
+    let path = sub(url, len(base))
+    let last = -1
+    let i = 0
+    while i < len(path) do
+        if path[i] == "/" then last = i end
+        i = i + 1
+    end
+    if last == -1 then return base + "/" end
+    return base + sub(path, 0, last + 1)
+end
+
+func resolve(href)
+    # turn a link into a whole address, using the address of the page it's on. gives back ""
+    # for links that can't be followed: to the same page (#top), email, or JavaScript
+    let hash = find(href, "#")
+    if hash != -1 then href = sub(href, 0, hash) end
+    if href == "" or address == "" then
+        if find(href, "://") == -1 then return "" end
+    end
+    let low = lower(href)
+    if sub(low, 0, 7) == "mailto:" or sub(low, 0, 11) == "javascript:" or sub(low, 0, 5) == "data:" then return "" end
+    if find(low, "://") != -1 then return href end
+    if sub(href, 0, 2) == "//" then return sub(address, 0, find(address, ":") + 1) + href end
+    if sub(href, 0, 1) == "/" then return site(address) + href end
+    if sub(href, 0, 1) == "?" then
+        let question = find(address, "?")
+        if question == -1 then return address + href end
+        return sub(address, 0, question) + href
+    end
+    return folder(address) + href
+end
+
+func address_from(text)
+    # what was typed in the address bar, as an address: a site's name or address as it is (with
+    # https:// put in front if there's no http:// or https://), anything else (words, or
+    # something without a dot) is searched for with FrogFind
+    let words = split(text)
+    if len(words) == 0 then return "" end
+    if len(words) == 1 and (find(words[0], ".") != -1 or find(words[0], "://") != -1 or find(words[0], "localhost") == 0) then
+        if find(words[0], "://") == -1 then return "https://" + words[0] end
+        return words[0]
+    end
+    return SEARCH + join(words, "+")
+end
+
+
+# ---- reading the page ------------------------------------------------------------------------
+
+func tag_name(tag)
+    # the tag's name in small letters: "A href=..." gives "a", "/P" gives "/p", "br/" gives "br"
+    let space = find(tag, " ")
+    if space != -1 then tag = sub(tag, 0, space) end
+    if len(tag) > 1 and tag[len(tag) - 1] == "/" then tag = sub(tag, 0, len(tag) - 1) end
+    return lower(tag)
+end
+
+func attribute(tag, name)
+    # one of a tag's settings: attribute("a href=\"/two.html\"", "href") gives "/two.html",
+    # or "" if the tag hasn't got it
+    let at = find(lower(tag), " " + name + "=")
+    if at == -1 then return "" end
+    let value = sub(tag, at + len(name) + 2)
+    let quote = sub(value, 0, 1)
+    let stop = -1
+    if quote == "\"" or quote == "'" then
+        value = sub(value, 1)
+        stop = find(value, quote)
+    else
+        stop = find(value, " ")
+    end
+    if stop != -1 then value = sub(value, 0, stop) end
+    return decode(value)
+end
+
+func word_size()
+    # the size of letters for the words now: 2 (twice as big) in a main heading
+    if P_head == 1 then return 2 end
+    return 1
+end
+
+func word_colour()
+    if P_link > 0 then return C_LINK end
+    return C_TEXT
+end
+
+func add_words(text)
+    # add some of the page's words: each is an atom [word, text, space before it?, size, bold?,
+    # colour, link number]. A word's space is kept so "<b>bold</b>text" stays joined
+    text = decode(squash(text))
+    if in_title then
+        title = title + text
+        return
+    end
+    if text == "" then return end
+    if text[0] == " " then P_space = true end
+    let size = word_size()
+    let bold = P_bold > 0 or P_head > 0
+    let colour = word_colour()
+    for word in split(text) do
+        push(atoms, ["w", word, P_space, size, bold, colour, P_link])
+        P_space = true
+    end
+    P_space = text[len(text) - 1] == " "
+end
+
+func do_tag(tag, name, closing)
+    # what each kind of tag does to the page. closing is true for the end tags, like </h1>
+    let spaced = " " + name + " "
+    if name == "a" then
+        if closing then
+            P_link = 0
+        else
+            let url = resolve(attribute(tag, "href"))
+            if url != "" then
+                push(links, url)
+                P_link = len(links)
+            end
+        end
+    elif find(BOLDS, spaced) != -1 then
+        if closing then
+            if P_bold > 0 then P_bold = P_bold - 1 end
+        else
+            P_bold = P_bold + 1
+        end
+    elif find(HEADINGS, spaced) != -1 then
+        push(atoms, ["gap"])
+        if closing then
+            P_head = 0
+        else
+            P_head = int(sub(name, 1))
+        end
+    elif name == "li" then
+        if not closing then
+            push(atoms, ["nl"])
+            push(atoms, ["bul"])
+        end
+    elif name == "br" then
+        push(atoms, ["br"])
+    elif name == "img" then
+        let source = resolve(attribute(tag, "src"))
+        let alt = squash(attribute(tag, "alt"))
+        let width = int(attribute(tag, "width"))
+        let height = int(attribute(tag, "height"))
+        # one that says it is tiny is a tracking dot, not something to see
+        let tiny = (width != nil and width < 4) or (height != nil and height < 4)
+        if source != "" and not tiny and len(imgs) < 60 then
+            push(imgs, [source, join(split(alt), " "), nil, 0, 0])
+            push(atoms, ["img", len(imgs) - 1, P_link])
+        end
+    elif name == "hr" then
+        push(atoms, ["rule"])
+    elif name == "td" or name == "th" then
+        if not closing then push(atoms, ["tab"]) end
+        if name == "th" then
+            if closing then
+                if P_bold > 0 then P_bold = P_bold - 1 end
+            else
+                P_bold = P_bold + 1
+            end
+        end
+    elif name == "center" then
+        push(atoms, ["nl"])
+        if closing then push(atoms, ["align", false]) else push(atoms, ["align", true]) end
+    elif find(INDENTED, spaced) != -1 then
+        push(atoms, ["gap"])
+        if closing then
+            if P_indent > 0 then P_indent = P_indent - 1 end
+        else
+            P_indent = P_indent + 1
+        end
+        push(atoms, ["indent", P_indent])
+    elif find(BLOCKS, spaced) != -1 then
+        push(atoms, ["gap"])
+    elif find(BREAKS, spaced) != -1 then
+        push(atoms, ["nl"])
+    elif name == "title" then
+        in_title = not closing
+    end
+end
+
+func read_html(html)
+    # read the HTML: fills in title, atoms, links and imgs
+    title = ""
+    atoms = []
+    links = []
+    imgs = []
+    P_bold = 0
+    P_head = 0
+    P_link = 0
+    P_indent = 0
+    P_space = false
+    in_title = false
+    html = plain_letters(html)
+
+    # a plain text page has no tags: its lines are kept as they are
+    if find(html, "<") == -1 then
+        for text in split(replace(html, chr(13), ""), "\n") do
+            P_space = false
+            add_words(text)
+            push(atoms, ["br"])
+        end
+        return
+    end
+
+    let skipping = ""      # inside <script> or <style>: the tag whose end we're waiting for
+    let in_comment = false
+    for piece in split(html, "<") do
+        if in_comment then
+            # inside <!-- ... -->: nothing counts until the end of it
+            let end_at = find(piece, "-->")
+            if end_at == -1 then continue end
+            in_comment = false
+            if skipping == "" then add_words(sub(piece, end_at + 3)) end
+            continue
+        end
+        let close = find(piece, ">")
+        if close == -1 then
+            # no tag here: the text before the first <, or a < that's just a <
+            if skipping == "" then add_words(piece) end
+            continue
+        end
+        if sub(piece, 0, 3) == "!--" then
+            let end_at = find(piece, "-->")
+            if end_at == -1 then in_comment = true else add_words(sub(piece, end_at + 3)) end
+            continue
+        end
+        # tags can go over more than one line, so the line breaks in them become spaces
+        let tag = flatten(sub(piece, 0, close))
+        let name = tag_name(tag)
+        let closing = false
+        if sub(name, 0, 1) == "/" then
+            closing = true
+            name = sub(name, 1)
+        end
+
+        if skipping != "" then
+            if closing and name == skipping then skipping = "" end
+        elif not closing and find(SKIPPED, " " + name + " ") != -1 then
+            if name != "head" then skipping = name end
+        else
+            do_tag(tag, name, closing)
+        end
+        if skipping == "" then add_words(sub(piece, close + 1)) end
+    end
+end
+
+
+# ---- laying the page out ---------------------------------------------------------------------
+
+func flush_line()
+    # finish the line being built: centred if it should be, and put in the page
+    if len(L_boxes) == 0 then return end
+    if L_centre then
+        let shift = (L_right - L_x) / 2
+        if shift > 0 then
+            for box in L_boxes do
+                box[0] = box[0] + shift
+            end
+        end
+    end
+    push(rows, [L_y, L_h, L_boxes])
+    L_y = L_y + L_h
+    L_boxes = []
+    L_words = 0
+    L_x = L_left
+    L_h = 0
+    L_blank = false
+end
+
+func place_word(text, colour, size, bold, link, space)
+    # put a word on the line, on a new line if it doesn't fit. Boxes are [x, width, height, 0,
+    # text, colour, size, bold, link]
+    let cell = 8 * size
+    let width = len(text) * cell
+    let gap = 0
+    if L_words > 0 and space then gap = cell end
+    if L_words > 0 and L_x + gap + width > L_right then
+        flush_line()
+        gap = 0
+    end
+    # a word too long for a whole line (like a long address) is cut up
+    while L_x + width > L_right and len(text) > 1 do
+        let fit = (L_right - L_x) / cell
+        if fit < 1 then fit = 1 end
+        if fit >= len(text) then break end
+        push(L_boxes, [L_x, fit * cell, 16 * size + 4, 0, sub(text, 0, fit), colour, size, bold, link])
+        L_h = 16 * size + 4
+        L_words = L_words + 1
+        L_x = L_right
+        flush_line()
+        text = sub(text, fit)
+        width = len(text) * cell
+    end
+    # the space between two words of one link is part of the link: its underline carries on
+    if gap > 0 and link > 0 then
+        let before = L_boxes[len(L_boxes) - 1]
+        if before[3] == 0 and before[8] == link then before[1] = before[1] + gap end
+    end
+    push(L_boxes, [L_x + gap, width, 16 * size + 4, 0, text, colour, size, bold, link])
+    L_x = L_x + gap + width
+    if 16 * size + 4 > L_h then L_h = 16 * size + 4 end
+    L_words = L_words + 1
+end
+
+func place_picture(number, link)
+    # a picture goes on the line like a big word, as wide as it is (or as the page, if that is less)
+    let picture = imgs[number]
+    if picture[2] == nil then
+        # not fetched (no web rule for where it comes from, or it wasn't a picture): its name instead
+        let label = "[picture]"
+        if picture[1] != "" then label = "[" + picture[1] + "]" end
+        if link > 0 then
+            place_word(label, C_LINK, 1, false, link, true)
+        else
+            place_word(label, C_DIM, 1, false, link, true)
+        end
+        return
+    end
+    let width = picture[3]
+    let height = picture[4]
+    let room = L_right - L_left
+    if width > room then
+        height = height * room / width
+        width = room
+    end
+    if height > MAX_PICTURE_HEIGHT then
+        width = width * MAX_PICTURE_HEIGHT / height
+        height = MAX_PICTURE_HEIGHT
+    end
+    if width < 1 then width = 1 end
+    if height < 1 then height = 1 end
+    let gap = 0
+    if L_words > 0 then gap = 8 end
+    if L_words > 0 and L_x + gap + width > L_right then
+        flush_line()
+        gap = 0
+    end
+    # [x, width, height, 1, picture number, link]
+    push(L_boxes, [L_x + gap, width, height + 4, 1, number, link])
+    L_x = L_x + gap + width
+    if height + 4 > L_h then L_h = height + 4 end
+    L_words = L_words + 1
+end
+
+func layout()
+    # lay the atoms out in lines that fit the screen: rows, and how tall they come to
+    rows = []
+    L_boxes = []
+    L_words = 0
+    L_left = MARGIN
+    L_right = SW - SB_W - MARGIN
+    L_x = L_left
+    L_y = 8
+    L_h = 0
+    L_centre = false
+    L_blank = true
+    for atom in atoms do
+        let kind = atom[0]
+        if kind == "w" then
+            place_word(atom[1], atom[5], atom[3], atom[4], atom[6], atom[2])
+        elif kind == "img" then
+            place_picture(atom[1], atom[2])
+        elif kind == "nl" then
+            flush_line()
+        elif kind == "br" then
+            # a line break; on an empty line it makes a blank one
+            if len(L_boxes) == 0 then
+                L_y = L_y + 16
+            else
+                flush_line()
+            end
+        elif kind == "gap" then
+            flush_line()
+            if not L_blank then L_y = L_y + 12 end
+            L_blank = true
+        elif kind == "bul" then
+            # a bullet in the space left of the text
+            flush_line()
+            push(L_boxes, [L_left - 14, 0, 20, 2, C_TEXT])
+            L_h = 20
+        elif kind == "tab" then
+            if L_words > 0 then L_x = L_x + 16 end
+        elif kind == "rule" then
+            flush_line()
+            L_y = L_y + 6
+            push(rows, [L_y, 2, [[L_left, L_right - L_left, 2, 3]]])
+            L_y = L_y + 12
+        elif kind == "indent" then
+            flush_line()
+            L_left = MARGIN + atom[1] * INDENT
+            L_x = L_left
+        elif kind == "align" then
+            flush_line()
+            L_centre = atom[1]
+        end
+    end
+    flush_line()
+    page_h = L_y + 16
+end
+
+
+# ---- loading ---------------------------------------------------------------------------------
+
+func is_picture(data)
+    # is what came back a picture rather than a page? (from the bytes it starts with)
+    if len(data) < 4 then return false end
+    let a = ord(data[0])
+    let b = ord(data[1])
+    return (a == 66 and b == 77) or (a == 137 and b == 80) or (a == 255 and b == 216) or (a == 71 and b == 73)
+end
+
+func say(text)
+    # put a message in the bar at the bottom, now (the next thing, like a page, may take a while)
+    status = text
+    draw_all()
+end
+
+func load_pictures()
+    # fetch the pictures on the page (the first few), one at a time, and show them in their place
+    let wanted = 0
+    let missing = ""
+    for i = 0 to len(imgs) - 1 do
+        if wanted >= MAX_PICTURES then break end
+        let picture = imgs[i]
+        if picture[2] == nil then
+            wanted = wanted + 1
+            say("Loading picture " + wanted + ": " + picture[0])
+            let data = httpget(picture[0])
+            if data == nil then
+                if missing == "" then missing = "fw web " + host_of(picture[0]) + " " + port_of(picture[0]) end
+            elif is_picture(data) then
+                let size = imgsz(data)
+                if size != nil then
+                    picture[2] = data
+                    picture[3] = size[0]
+                    picture[4] = size[1]
+                end
+            end
+        end
+    end
+    status = ""
+    if missing != "" then status = "Some pictures couldn't be fetched: they need a web rule, like " + missing end
+    layout()
+end
+
+func problem_with(url)
+    # why a page didn't come: httpget only gives nil, so it's one of these (the get command in the
+    # terminal says which)
+    let message = "Couldn't load " + url + ": no such page, or the site needs fw web " + host_of(url) + " " + port_of(url)
+    if sub(lower(url), 0, 8) == "https://" then message = message + ", or its certificate isn't good" end
+    return message
+end
+
+func show_page(url, page)
+    # make what came back the page: a picture is a page of one picture
+    address = url
+    scroll = 0
+    hover = 0
+    if is_picture(page) then
+        let size = imgsz(page)
+        title = url
+        links = []
+        if size == nil then
+            imgs = []
+            atoms = [["w", "Can't show that picture: aerOS shows BMP, PNG, GIF and JPEG.", false, 1, false, C_TEXT, 0]]
+        else
+            imgs = [[url, "", page, size[0], size[1]]]
+            atoms = [["img", 0, 0]]
+        end
+        layout()
+        return
+    end
+    if len(page) > MAX_PAGE then page = sub(page, 0, MAX_PAGE) end
+    read_html(page)
+    layout()
+end
+
+func navigate(url, remember)
+    # load a new page. remember: put the page now shown in the history, for Back. True if it came
+    status = "Loading " + url + "..."
+    draw_all()
+    let page = httpget(url)
+    if page == nil then
+        status = problem_with(url)
+        return false
+    end
+    status = ""
+    if remember and address != "" then push(history, [address, scroll]) end
+    show_page(url, page)
+    draw_all()
+    if len(imgs) > 0 then
+        load_pictures()
+        draw_all()
+    end
+    return true
+end
+
+func start_page()
+    # the page the browser starts on
+    address = ""
+    scroll = 0
+    read_html("<title>aerOS browser</title><h1>aerOS browser</h1><p>Click the address bar at the top (or press Tab), type an address or some words to search for, and press Enter.</p><h2>First, allow the site</h2><p>aerOS's firewall blocks every site until you allow it, in the terminal: <b>fw web example.com 443</b> for an https:// site, or <b>fw web example.com</b> for http://. Pictures on a page come from a site too, and only show if that is allowed as well.</p><h2>Try</h2><ul><li><a href=\"http://frogfind.com/\">FrogFind</a>: turns big modern sites into simple pages. Allow it with <b>fw web frogfind.com</b></li><li><a href=\"https://example.com/\">example.com</a> (<b>fw web example.com 443</b>)</li></ul><h2>Keys</h2><ul><li>Arrow keys, Page Up and Page Down scroll, space goes down a screen</li><li>Backspace goes back, Esc quits</li></ul>")
+    layout()
+end
+
+
+# ---- drawing ---------------------------------------------------------------------------------
+
+func fit(text, columns)
+    # text cut to fit this many letters across
+    if len(text) <= columns then return text end
+    if columns < 4 then return sub(text, 0, columns) end
+    return sub(text, 0, columns - 3) + "..."
+end
+
+func view_height()
+    # how much of the page is shown at once
+    return SH - TOOLBAR - STATUS_H
+end
+
+func max_scroll()
+    let most = page_h - view_height()
+    if most < 0 then return 0 end
+    return most
+end
+
+func scroll_to(where)
+    # scroll the page to this place, but not past either end
+    scroll = where
+    if scroll > max_scroll() then scroll = max_scroll() end
+    if scroll < 0 then scroll = 0 end
+end
+
+func draw_box(box, top)
+    # one box of a line (top is where the line is on the screen)
+    let kind = box[3]
+    let x = box[0]
+    if kind == 0 then
+        let colour = box[5]
+        let link = box[8]
+        if link > 0 and link == hover then colour = C_HOVER end
+        text(x, top, box[4], colour, box[6])
+        if box[7] then text(x + 1, top, box[4], colour, box[6]) end
+        if link > 0 then
+            rect(x, top + 16 * box[6] + 1, box[1], 1, colour)
+            push(hits, [x, top, box[1], box[2], link])
+        end
+    elif kind == 1 then
+        let picture = imgs[box[4]]
+        image(picture[2], x, top, box[1], box[2] - 4)
+        if box[5] > 0 then push(hits, [x, top, box[1], box[2], box[5]]) end
+    elif kind == 2 then
+        rect(x + 4, top + 8, 5, 5, box[4])
+    else
+        rect(x, top, box[1], 1, C_DIM)
+        rect(x, top + 1, box[1], 1, C_EDGE)
+    end
+end
+
+func draw_page()
+    # the rows that are on the screen
+    hits = []
+    rect(0, TOOLBAR, SW, SH - TOOLBAR - STATUS_H, C_PAGE)
+    let bottom = scroll + view_height()
+    for row in rows do
+        if row[0] >= bottom then break end
+        if row[0] + row[1] > scroll then
+            let top = TOOLBAR + row[0] - scroll
+            for box in row[2] do
+                draw_box(box, top)
+            end
+        end
+    end
+end
+
+func draw_scrollbar()
+    # the bar down the right edge, with a handle as long as the part of the page that is shown
+    let x = SW - SB_W
+    let height = view_height()
+    rect(x, TOOLBAR, SB_W, height, C_BAR)
+    if page_h > height then
+        let handle = height * height / page_h
+        if handle < 24 then handle = 24 end
+        let at = TOOLBAR + scroll * (height - handle) / max_scroll()
+        rect(x + 2, at, SB_W - 4, handle, C_HANDLE)
+    end
+end
+
+func handle_box()
+    # where the scroll bar's handle is, as [top, height]
+    let height = view_height()
+    let handle = height * height / page_h
+    if handle < 24 then handle = 24 end
+    return [TOOLBAR + scroll * (height - handle) / max_scroll(), handle]
+end
+
+func draw_button(x, label, width)
+    # a button on the toolbar
+    rect(x, 6, width, 24, C_EDGE)
+    rect(x + 1, 7, width - 2, 22, C_BUTTON)
+    text(x + (width - len(label) * 8) / 2, 10, label, C_BAR_TEXT, 1)
+end
+
+func draw_toolbar()
+    # the bar along the top: buttons, and the address
+    rect(0, 0, SW, TOOLBAR, C_BAR)
+    rect(0, TOOLBAR - 1, SW, 1, C_EDGE)
+    draw_button(6, "Back", 56)
+    draw_button(68, "Reload", 64)
+    draw_button(138, "Home", 56)
+    let x = 202
+    let width = SW - x - 46
+    rect(x, 6, width, 24, C_EDGE)
+    rect(x + 1, 7, width - 2, 22, C_PAGE)
+    let columns = (width - 12) / 8
+    if editing then
+        let shown = fit(typed, columns - 1)
+        if selected then rect(x + 5, 9, len(shown) * 8 + 2, 18, rgb(180, 205, 255)) end
+        text(x + 6, 10, shown + "_", C_TEXT, 1)
+    else
+        let shown = address
+        if shown == "" then shown = "Type an address, or words to search for" end
+        text(x + 6, 10, fit(shown, columns), C_DIM, 1)
+    end
+    draw_button(SW - 40, "X", 34)
+end
+
+func draw_statusbar()
+    # the bar along the bottom: where the link under the pointer goes, or a message, or the title
+    let y = SH - STATUS_H
+    rect(0, y, SW, STATUS_H, C_BAR)
+    rect(0, y, SW, 1, C_EDGE)
+    let words = ""
+    if hover > 0 and hover <= len(links) then
+        words = links[hover - 1]
+    elif status != "" then
+        words = status
+    else
+        words = squash(title)
+    end
+    text(8, y + 3, fit(words, (SW - 16) / 8 - 6), C_BAR_TEXT, 1)
+    if page_h > view_height() then
+        let percent = (scroll + view_height()) * 100 / page_h
+        if percent > 100 then percent = 100 end
+        let label = percent + "%"
+        text(SW - 8 - len(label) * 8, y + 3, label, C_BAR_TEXT, 1)
+    end
+end
+
+func draw_pointer()
+    # an arrow at the pointer: white inside, a black edge
+    let x = pointer_x
+    let y = pointer_y
+    for r = 0 to 13 do
+        rect(x, y + r, 3 + r * 2 / 3, 1, 0)
+    end
+    for r = 2 to 11 do
+        rect(x + 1, y + r, 1 + r * 2 / 3, 1, 0xFFFFFF)
+    end
+end
+
+func draw_all()
+    # the whole screen, into the back buffer, and then put on the screen in one go
+    draw_page()
+    draw_scrollbar()
+    draw_toolbar()
+    draw_statusbar()
+    draw_pointer()
+    gshow()
+end
+
+
+# ---- the mouse and the keyboard --------------------------------------------------------------
+
+func link_at(x, y)
+    # the number of the link at this place on the screen, or 0
+    for hit in hits do
+        if x >= hit[0] and x < hit[0] + hit[2] and y >= hit[1] and y < hit[1] + hit[3] then return hit[4] end
+    end
+    return 0
+end
+
+func go_back()
+    # the page before this one
+    if len(history) == 0 then
+        status = "There's no page to go back to."
+        return
+    end
+    let before = pop(history)
+    if navigate(before[0], false) then scroll_to(before[1]) end
+end
+
+func submit()
+    # Enter in the address bar
+    editing = false
+    let url = address_from(typed)
+    if url != "" then navigate(url, true) end
+end
+
+func click(x, y)
+    # a click of the left button at this place
+    if y < TOOLBAR then
+        editing = false
+        if x >= SW - 40 then
+            running = false
+        elif x >= 6 and x < 62 then
+            go_back()
+        elif x >= 68 and x < 132 then
+            if address != "" then navigate(address, false) end
+        elif x >= 138 and x < 194 then
+            if address != "" then push(history, [address, scroll]) end
+            start_page()
+        elif x >= 202 then
+            editing = true
+            typed = address
+            selected = true
+        end
+        return
+    end
+    editing = false
+    if x >= SW - SB_W and y < SH - STATUS_H then
+        # the scroll bar: above or below the handle a screen at a time, or take hold of the handle
+        if page_h > view_height() then
+            let handle = handle_box()
+            if y < handle[0] then
+                scroll_to(scroll - view_height() + 40)
+            elif y >= handle[0] + handle[1] then
+                scroll_to(scroll + view_height() - 40)
+            else
+                dragging = true
+                drag_offset = y - handle[0]
+            end
+        end
+        return
+    end
+    let link = link_at(x, y)
+    if link > 0 then navigate(links[link - 1], true) end
+end
+
+func drag_to(y)
+    # the scroll bar's handle is being dragged: the page follows
+    let height = view_height()
+    let handle = height * height / page_h
+    if handle < 24 then handle = 24 end
+    if height > handle then
+        scroll_to((y - drag_offset - TOOLBAR) * max_scroll() / (height - handle))
+    end
+end
+
+func follow_mouse()
+    # read the mouse: move the pointer, and click. True if anything changed
+    let m = mouse()
+    if m == nil then return false end
+    let changed = m[0] != pointer_x or m[1] != pointer_y or m[2] != buttons_before
+    pointer_x = m[0]
+    pointer_y = m[1]
+    let left = m[2] % 2 == 1
+    let was_left = buttons_before % 2 == 1
+    if left and not was_left then
+        status = ""
+        click(pointer_x, pointer_y)
+    end
+    if not left then dragging = false end
+    if dragging then drag_to(pointer_y) end
+    buttons_before = m[2]
+    # the link under the pointer (the screen as last drawn says where they are)
+    let over = 0
+    if pointer_y >= TOOLBAR and pointer_y < SH - STATUS_H and pointer_x < SW - SB_W then over = link_at(pointer_x, pointer_y) end
+    if over != hover then
+        hover = over
+        changed = true
+    end
+    return changed
+end
+
+func press(code)
+    # a key
+    if editing then
+        if code == KEY_ENTER then
+            submit()
+        elif code == KEY_ESCAPE then
+            editing = false
+        elif code == KEY_BACKSPACE then
+            if selected then
+                typed = ""
+            elif len(typed) > 0 then
+                typed = sub(typed, 0, len(typed) - 1)
+            end
+            selected = false
+        elif code >= 32 and code < 127 then
+            if selected then typed = "" end
+            selected = false
+            typed = typed + chr(code)
+        end
+        return
+    end
+    status = ""
+    if code == KEY_ESCAPE then
+        running = false
+    elif code == KEY_TAB then
+        editing = true
+        typed = address
+        selected = true
+    elif code == KEY_DOWN then
+        scroll_to(scroll + 40)
+    elif code == KEY_UP then
+        scroll_to(scroll - 40)
+    elif code == KEY_PGDN or code == ord(" ") then
+        scroll_to(scroll + view_height() - 40)
+    elif code == KEY_PGUP then
+        scroll_to(scroll - view_height() + 40)
+    elif code == KEY_HOME then
+        scroll_to(0)
+    elif code == KEY_END then
+        scroll_to(page_h)
+    elif code == KEY_BACKSPACE then
+        go_back()
+    end
+end
+
+
+# ---- the browser -----------------------------------------------------------------------------
+
+func main()
+    if not gopen() then
+        print("The browser needs a graphics screen: start aerOS from its CD (main.iso).")
+        print("(browser is the one for a text screen.)")
+        return
+    end
+    SW = gw()
+    SH = gh()
+    gbuf(true)
+    C_PAGE = rgb(255, 255, 255)
+    C_TEXT = rgb(30, 30, 30)
+    C_LINK = rgb(0, 0, 204)
+    C_HOVER = rgb(204, 0, 0)
+    C_DIM = rgb(130, 130, 130)
+    C_BAR = rgb(224, 224, 230)
+    C_BAR_TEXT = rgb(50, 50, 60)
+    C_EDGE = rgb(150, 150, 160)
+    C_BUTTON = rgb(246, 246, 250)
+    C_HANDLE = rgb(150, 150, 165)
+    pointer_x = SW / 2
+    pointer_y = SH / 2
+
+    if len(args) > 0 then
+        start_page()
+        navigate(address_from(join(args, " ")), false)
+    else
+        start_page()
+        editing = true
+        typed = ""
+        selected = false
+    end
+    draw_all()
+
+    while running do
+        let changed = follow_mouse()
+        while haskey() and running do
+            press(key())
+            changed = true
+        end
+        if changed and running then draw_all() end
+        frame(30)
+    end
+    gclose()
+end
+
+main()

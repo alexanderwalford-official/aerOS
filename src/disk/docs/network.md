@@ -108,9 +108,18 @@ browser frogfind.com                   open a page
 Under each page, type a link's number to follow it, Enter for more of the page, `u` to go
 back up, `b` for the page before, `g` and an address to go there, `s` and some words to search
 the web, and `q` to quit. Pictures are numbered too: typing one's number shows it on the
-graphics screen (BMP, PNG, GIF and JPEG). It can only open `http://` pages, and each site
-needs its own web rule. FrogFind is a good start: it turns modern `https://` sites into simple
-pages on its own `http://` address, so they need no rules of their own.
+graphics screen (BMP, PNG, GIF and JPEG). It opens `http://` and `https://` pages (the web
+rule needs port 443 for https: `fw web example.com 443`), and each site needs its own web rule.
+FrogFind is a good start: it turns modern sites into simple pages on its own `http://` address,
+so they need no rules of their own.
+
+On a graphics screen (start AerOS from its CD), `browsgui` (`pkg install browsgui`) is the
+same browser with a mouse: pages are drawn with big headings, bold words, blue underlined links,
+bullet lists and their pictures in place among the words. Click a link, the Back, Reload and Home
+buttons, or the address bar (type an address, or some words to search for, and press Enter);
+scroll with the arrow keys, Page Up and Down, or the bar down the right edge; Backspace goes back
+and Esc quits. There is no JavaScript or style sheets, and the pictures (the first 8 on a page)
+come from sites that need their own web rules too.
 
 ## A web server
 

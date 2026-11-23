@@ -111,7 +111,8 @@ description:
 | `viewer` | a picture viewer (BMP) that zooms | `aeros.bmp`, `colours.bmp` |
 | `clip` | plays a 6 second video, to try the video player on | `sample.mpg` |
 | `webserve` | a small web server, in AerLang (see [the network](NETWORK.md)) | |
-| `browser` | a text web browser for plain `http://` pages: numbered links, back, paging, `s` to search with FrogFind, and pictures (BMP, PNG, GIF, JPEG) on a graphics screen | |
+| `browsgui` | a graphical web browser for `http://` and `https://` pages, for the graphics screen: click links, Back / Reload / Home buttons, an address bar that also searches with FrogFind, scrolling (keys or the bar on the right), and the pictures on the page in place among the words | |
+| `browser` | a text web browser for `http://` and `https://` pages: numbered links, back, paging, `s` to search with FrogFind, and pictures (BMP, PNG, GIF, JPEG) on a graphics screen | |
 | `bench` | how fast AerOS reads and writes its disk | |
 | `anim` | spinners, progress bars and moving text | |
 | `desktop` | a desktop with windows, a taskbar and a start menu: Clock (with a calendar), Files and a text Viewer, Notes, Calculator, System, Settings and About, an icon for every app installed, and a live system monitor on the taskbar, by mouse or keyboard | |

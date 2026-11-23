@@ -265,7 +265,14 @@ never needs room for two copies of itself.
 `httpget(url)` gives AerLang the body as a string, which holds any bytes, so a picture fetched
 this way can be saved with `wrf` or drawn straight away with `image`. The `browser` package
 (`packages/browser.aer`) is a text web browser built on it: it reads the HTML itself, a tag at
-a time, and shows pictures (BMP, PNG, GIF and JPEG) on the graphics screen.
+a time, and shows pictures (BMP, PNG, GIF and JPEG) on the graphics screen. `browsgui`
+(`packages/browsgui.aer`) is the same idea drawn on the graphics screen with the mouse: it reads
+the HTML into words and the things between them (headings, links, list bullets, pictures), lays
+them out in lines that fit the screen (every word is a box with a place, so a click is found by
+looking through the boxes on screen), and draws the part in view into the back buffer, with
+`text` (8 x 16 letters, twice as big for the main heading, bold by drawing twice), `rect` and
+`image`. Only what changed is drawn again (a mouse move, a key, a click). No JavaScript, no style
+sheets and no tables beyond running the cells along the line.
 
 ### HTTPS (`sys/tls.c`)
 
