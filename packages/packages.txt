@@ -20,3 +20,4 @@ viewer 1.0 A picture viewer (BMP), with two pictures to try it on
 webserve 1.0 A small web server: shows a folder of files to web browsers
 browser 1.1 A basic text based web browser
 knocks 1.0 Four Knocks: a horror game in a pitch black observatory, where something blind hunts you by the sounds you make. Use headphones
+lantern 1.0 Lantern: a pixel art adventure in a new valley every game, made from a seed you can replay. Save your village from a villain by day and by lantern light; raids, rescues and choices change which of five endings you get

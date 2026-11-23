@@ -1,0 +1,4782 @@
+# Lantern: a pixel art adventure in a new world every game, for AerOS
+# Run it with:
+#     lantern
+#
+# Controls:
+#     Arrows or W A S D   - walk
+#     Space or J          - swing your sword (it cuts bushes too)
+#     E or Enter          - talk, open, take, pray, read (whatever is in front of you)
+#     Q                   - drink a potion
+#     Tab or I            - your journal: what you carry, what you know, what has happened
+#     M                   - the map of the vale
+#     Escape              - pause: save, or quit (you can quit at any time)
+#
+# THE GAME
+#
+#   You are the lamplighter of a village in a valley, and something has come to threaten it.
+#   Each game is a new valley, worked out from a "seed" (a number, shown on the title, in the
+#   journal and at the end): the land, the villages, the people and their names, the villain,
+#   what they want and why, the relic that can stop them and where it lies. The same seed
+#   always makes the same valley, so a good one can be played again ("Choose a seed").
+#
+#   A run is 15 to 30 minutes: find out from the one who asks for help what is wrong, find the
+#   sage who knows where the relic is, fetch it from a cave, and take it to the villain's lair.
+#   What you do on the way matters:
+#
+#   - Time passes. Each day is about four and a half minutes; at night it is dark but for your
+#     lantern, the fires and the windows, and the monsters are bolder.
+#   - From the second night the villain raids your village. Be there and fight, and it stands;
+#     be away, and a house burns and someone is taken. Lose three times and it is razed.
+#   - Someone is lost in the wild. Save them in time, or they are found too late.
+#   - A traveller on the road asks for a few coins. Crates in the village belong to people:
+#     you can take what is in them, but you may be seen. The shrine's offering bowl is full.
+#   - The villain was not always a villain. The sage, or the traveller, can tell you why, and
+#     what was lost; if you find it, you can choose not to fight.
+#
+#   There are five endings, depending on what you did and what you choose at the end.
+#
+# HOW IT WORKS, for anyone who wants to build on it
+#
+#   - The picture is a low resolution one (256 x 192 "pixels" on a 1024 x 768 screen) blown
+#     up SCALE times. Every tile and sprite is a 16 x 16 picture in a "sheet" (a row of them in
+#     one BMP), drawn with imgcol(): imgcol draws a range of a picture's columns stretched over
+#     a box, so picture n of a sheet is its columns n * 16 to n * 16 + 16. It is all done in C,
+#     a whole tile in one call, with a light level (1 bright, 0 black) and, for sprites, the
+#     see-through parts left out.
+#   - Light: each sheet comes in four lights (day, golden, dusk and a blue night). By day
+#     everything is drawn from the day sheet. In the dark each tile is lit by whichever is
+#     brightest: the darkness, your lantern (worked out from how far the tile is from you), or
+#     the "light map" of fires, torches and windows worked out when the map was made. Tiles lit
+#     by a flame are drawn from the golden sheet, the rest from the blue night one, so lamplight
+#     looks warm and the dark looks cold.
+#   - The world is made from the seed with a random number generator written here (so it is
+#     the same on every computer): "value noise" for height and wetness gives water, sand,
+#     grass, forest, swamp and mountains; the villages, ruins, cave, shrine and lair are
+#     stamped on; then roads are found between them with Dijkstra's shortest path (cheap over
+#     grass, dear through forest, rock and water), and paved, with bridges over water. Every
+#     place the story needs is joined to the village by a road, so a world is always playable.
+#   - The caves are rooms joined by corridors, each room to the next, so they are always
+#     joined up too.
+#   - The story is made from parts: four villains, each with a deed, a weakness, a lair, a
+#     past and a lost one, names made from syllables, and who in the village asks for help.
+#   - The pictures are drawn by tools/make_lantern_art.py and the music and sounds made by
+#     tools/make_lantern_sounds.py; they are loaded from the game's folder, /apps/lantern/.
+#
+#   For testing: "lantern seed 1234" starts a new game in that world straight away, "lantern
+#   world 1234" only makes the world and prints what it made, and "lantern demo 1234" plays a
+#   game by itself to an ending (add "mercy" or "join" for those endings, and "fast" for days a
+#   minute long), printing what it does. The game is saved in /apps/lantern/save.txt.
+
+# ---------------------------------------------------------------------------
+# Numbers the game is built on
+# ---------------------------------------------------------------------------
+
+let FOLDER = "/apps/lantern/"
+let SAVE_FILE = FOLDER + "save.txt"
+
+let TILE = 16          # a tile is 16 x 16 pixels of the low resolution picture
+let W = 80             # the overworld is 80 x 60 tiles
+let H = 60
+let DW = 44            # a cave is 44 x 32
+let DH = 32
+
+let SPEED = 64.0       # how fast you walk, in pixels a second
+let LANTERN = 76.0     # how far your lantern lights, in pixels
+let DAY_MS = 270000    # a day and a night: 4.5 minutes
+let NIGHT_FROM = 0.70  # the share of a day after which it is night...
+let NIGHT_TO = 0.96    # ...until dawn
+
+# The land's tiles, in the order tools/make_lantern_art.py draws them (its list "tiles")
+let T_GRASS = 0
+let T_GRASS2 = 1
+let T_FLOWERS = 2
+let T_SAND = 3
+let T_ROAD = 4
+let T_WATER = 5        # 5, 6 and 7 are its three frames, as the water ripples
+let T_SHORE = 8        # 8, 9, 10: water with the bank along its top
+let T_BRIDGE = 11
+let T_BRIDGEV = 12
+let T_TREE = 13
+let T_PINE = 14
+let T_BUSH = 15
+let T_ROCK = 16
+let T_MOUNT = 17
+let T_CLIFF = 18
+let T_SWAMP = 19
+let T_REEDS = 20
+let T_DEADTREE = 21
+let T_BLIGHT = 22
+let T_BLIGHTTREE = 23
+let T_ROOFL = 24
+let T_ROOFR = 25
+let T_WALLWIN = 26
+let T_WALLDOOR = 27
+let T_WINLIT = 28
+let T_BURNROOF = 29
+let T_BURNWALL = 30
+let T_WELL = 31
+let T_FENCE = 32
+let T_PLAZA = 33
+let T_RUINFL = 34
+let T_RUINWALL = 35
+let T_CAVE = 36
+let T_GATE = 37
+let T_GATEOPEN = 38
+let T_DFLOOR = 39
+let T_DFLOOR2 = 40
+let T_DWALLTOP = 41
+let T_DWALL = 42
+let T_TORCH = 43       # 43 and 44, its flame flickering
+let T_STAIRS = 45
+let T_SHRINE = 46
+let T_GRAVE = 47
+let T_FIRE = 48        # 48 and 49
+let T_LFLOOR = 50
+let T_LWALLTOP = 51
+let T_LWALL = 52
+let T_CROPS = 53
+let TILE_COUNT = 54
+
+# The sprites, in the order of make_lantern_art.py's list "sprites". People have six
+# pictures each, in this order: front, front stepping, back, back stepping, side, side stepping
+let S_PLAYER = 0
+let S_ELDER = 6
+let S_SMITH = 12
+let S_FARMER = 18
+let S_CHILD = 24
+let S_MERCHANT = 30
+let S_GUARD = 36
+let S_SAGE = 42
+let S_TRAVELLER = 48
+let S_SKELETON = 54
+let S_BANDIT = 60
+let S_SLIME = 66       # the other monsters have two pictures each, facing right
+let S_WOLF = 68
+let S_BAT = 70
+let S_WISP = 72
+let S_DRAKE = 74
+let S_SLASH_DOWN = 76
+let S_SLASH_UP = 77
+let S_SLASH_SIDE = 78
+let S_CHEST = 79
+let S_CHESTOPEN = 80
+let S_CRATE = 81
+let S_COIN = 82
+let S_HEART = 83
+let S_POTION = 84
+let S_SWORD = 85
+let S_SUNSTONE = 86
+let S_BELL = 87
+let S_ARROW = 88
+let S_SEAL = 89
+let S_LOCKET = 90
+let S_CHARM = 91
+let S_SPARK = 92       # 92, 93
+let S_POOF = 94        # 94, 95
+let S_FIREBALL = 96
+let S_MARK = 97
+let S_SIGN = 98
+let S_BONES = 99
+
+# The little signs on the screen (hud.bmp, 8 x 8 each)
+let U_HEART = 0
+let U_HALF = 1
+let U_EMPTY = 2
+let U_COIN = 3
+let U_POTION = 4
+let U_SUN = 5
+let U_MOON = 6
+let U_SWORD = 7
+let U_RELIC = 8
+let U_LOCKET = 9
+let U_CHARM = 10
+let U_SKULL = 11
+let U_ARROW = 12
+let U_DOT = 13
+
+# What each tile is like, filled in by tile_kinds(): SOLID can't be walked through (FLYOVER:
+# but bats and wisps fly over it), ANIM is how many frames it has, NATURE can be cleared to
+# make a road, MAPCOL is its colour on the map
+let SOLID = []
+let FLYOVER = []
+let ANIM = []
+let NATURE = []
+let MAPCOL = []
+
+# An entity (anything that moves, or that you can talk to or open) is a list; these are the
+# places in it
+let E_KIND = 0         # "npc", "mon", "boss", "chest", "crate", "sign", "item", "shot", "fx"
+let E_X = 1            # where its feet are, in pixels
+let E_Y = 2
+let E_HP = 3
+let E_STATE = 4
+let E_TIMER = 5
+let E_DIR = 6          # which way it faces: 0 down, 1 up, 2 left, 3 right
+let E_ANIM = 7         # time spent walking, for its steps
+let E_VX = 8
+let E_VY = 9
+let E_DATA = 10        # what it is: a person's number, a monster's name, a chest's name...
+let E_EXTRA = 11       # what is in a chest, whom a crate belongs to...
+let E_HURT = 12        # until when it shows it was hit
+let E_HX = 13          # where it lives (monsters wander round it)
+let E_HY = 14
+let E_SWING = 15       # the last of your swings that hit it (so one swing hits once)
+let E_SIZE = 16
+
+# Monsters: name, hit points, speed, damage (in half hearts), first picture, kind of
+# pictures ("blob" two facing right, "person" six), flies
+let MONSTERS = [
+    ["slime", 2, 22.0, 1, 66, "blob", false],
+    ["wolf", 3, 48.0, 1, 68, "blob", false],
+    ["bat", 1, 52.0, 1, 70, "blob", true],
+    ["wisp", 2, 30.0, 1, 72, "blob", true],
+    ["drake", 3, 34.0, 2, 74, "blob", false],
+    ["skeleton", 4, 30.0, 2, 54, "person", false],
+    ["bandit", 4, 38.0, 2, 60, "person", false]
+]
+
+# Where to go from a tile: down, up, left, right (in the order of E_DIR)
+let STEP_X = [0, 0, -1, 1]
+let STEP_Y = [1, -1, 0, 0]
+
+# Colours
+let INK = 0xF4F0E6          # writing
+let DIM = 0x9A94A8
+let GOLD = 0xF2C94C
+let RED = 0xE0554A
+let GREEN = 0x8FCF4A
+let BLUE = 0x9EE6F0
+let PANEL = 0x1A1423        # the boxes words are shown in
+let PANEL_EDGE = 0x7A4BB0
+let NIGHT_SKY = 0x0E0A18
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
+func smaller(a, b)
+    if a < b then return a end
+    return b
+end
+
+func bigger(a, b)
+    if a > b then return a end
+    return b
+end
+
+func clamp(x, low, high)
+    return bigger(low, smaller(high, x))
+end
+
+func sign(x)
+    if x > 0 then return 1 end
+    if x < 0 then return -1 end
+    return 0
+end
+
+# The place of `item` in `items`, or -1
+func index_of(items, item)
+    for i = 0 to len(items) - 1 do
+        if items[i] == item then return i end
+    end
+    return -1
+end
+
+# Words broken into lines at most `width` letters long, at spaces (and at every \n)
+func wrap_words(words, width)
+    let lines = []
+    for paragraph in split(words, "\n") do
+        let line = ""
+        for word in split(paragraph, " ") do
+            if line == "" then
+                line = word
+            elif len(line) + 1 + len(word) <= width then
+                line = line + " " + word
+            else
+                push(lines, line)
+                line = word
+            end
+        end
+        push(lines, line)
+    end
+    return lines
+end
+
+# "word" with its first letter a capital
+func capital(word)
+    if word == "" then return word end
+    return upper(sub(word, 0, 1)) + sub(word, 1, len(word) - 1)
+end
+
+# Say what just happened, for the tests (which read the serial log, where print() goes), only
+# when testing, as print() writes over the picture for a moment
+func note_event(words)
+    if testing then print(words) end
+end
+
+# ---------------------------------------------------------------------------
+# Random numbers that come out the same everywhere
+# ---------------------------------------------------------------------------
+#
+# The world must be the same every time for the same seed, so it can't use random() (which
+# differs from run to run). This is the "minimal standard" generator of Park and Miller:
+# state = state * 16807 mod (2^31 - 1). Multiplying would overflow 32 bits, so it is done with
+# Schrage's trick, which splits the sum so that nothing gets bigger than 2^31.
+
+let rng_state = 1
+
+func seed_rng(seed)
+    rng_state = seed % 2147483646 + 1
+    # the first few numbers from nearby seeds are alike: stir it a little
+    for i = 1 to 4 do rnd() end
+end
+
+# a number from 1 to 2147483646
+func rnd()
+    let high = rng_state / 127773
+    let low = rng_state % 127773
+    rng_state = 16807 * low - 2836 * high
+    if rng_state <= 0 then rng_state = rng_state + 2147483647 end
+    return rng_state
+end
+
+# a whole number from 0 to n - 1
+func rint(n)
+    return rnd() % n
+end
+
+# true `percent` times in a hundred
+func chance(percent)
+    return rint(100) < percent
+end
+
+# one of a list's items
+func pick(items)
+    return items[rint(len(items))]
+end
+
+# Set `flags` to `value` at each of the given places
+func mark_all(flags, places, value)
+    for p in places do flags[p] = value end
+end
+
+# Fill in what each tile is like (see SOLID and the rest above)
+func tile_kinds()
+    SOLID = list(TILE_COUNT, false)
+    FLYOVER = list(TILE_COUNT, false)
+    ANIM = list(TILE_COUNT, 0)
+    NATURE = list(TILE_COUNT, false)
+    mark_all(SOLID, [5, 6, 7, 8, 9, 10, T_TREE, T_PINE, T_BUSH, T_ROCK, T_MOUNT, T_CLIFF,
+                     T_DEADTREE, T_BLIGHTTREE, T_ROOFL, T_ROOFR, T_WALLWIN, T_WALLDOOR, T_WINLIT,
+                     T_BURNROOF, T_BURNWALL, T_WELL, T_FENCE, T_RUINWALL, T_GATE, T_DWALLTOP,
+                     T_DWALL, T_TORCH, T_TORCH + 1, T_SHRINE, T_GRAVE, T_FIRE, T_FIRE + 1,
+                     T_LWALLTOP, T_LWALL], true)
+    mark_all(FLYOVER, [5, 6, 7, 8, 9, 10, T_BUSH, T_ROCK, T_FENCE, T_GRAVE], true)
+    mark_all(NATURE, [T_TREE, T_PINE, T_BUSH, T_ROCK, T_MOUNT, T_CLIFF, T_DEADTREE,
+                      T_BLIGHTTREE, T_WATER, T_SHORE], true)
+    ANIM[T_WATER] = 3
+    ANIM[T_SHORE] = 3
+    ANIM[T_TORCH] = 2
+    ANIM[T_FIRE] = 2
+    # the map's colours, roughly each tile's own
+    MAPCOL = list(TILE_COUNT, [79, 154, 63])
+    let colours = [[T_GRASS2, 72, 142, 58], [T_FLOWERS, 96, 160, 70], [T_SAND, 232, 207, 143],
+                   [T_ROAD, 210, 160, 102], [T_WATER, 62, 92, 154], [T_SHORE, 62, 92, 154],
+                   [T_BRIDGE, 156, 106, 60], [T_BRIDGEV, 156, 106, 60], [T_TREE, 46, 107, 58],
+                   [T_PINE, 31, 80, 50], [T_BUSH, 60, 130, 60], [T_ROCK, 122, 122, 142],
+                   [T_MOUNT, 110, 108, 124], [T_CLIFF, 74, 74, 94], [T_SWAMP, 70, 96, 56],
+                   [T_REEDS, 70, 96, 56], [T_DEADTREE, 59, 50, 40], [T_BLIGHT, 70, 50, 84],
+                   [T_BLIGHTTREE, 50, 30, 64], [T_ROOFL, 168, 50, 62], [T_ROOFR, 168, 50, 62],
+                   [T_WALLWIN, 244, 236, 194], [T_WALLDOOR, 244, 236, 194], [T_BURNROOF, 40, 34, 44],
+                   [T_BURNWALL, 40, 34, 44], [T_WELL, 122, 122, 142], [T_FENCE, 156, 106, 60],
+                   [T_PLAZA, 150, 150, 165], [T_RUINFL, 140, 140, 150], [T_RUINWALL, 176, 176, 192],
+                   [T_CAVE, 20, 16, 26], [T_GATE, 185, 139, 224], [T_GATEOPEN, 185, 139, 224],
+                   [T_SHRINE, 158, 230, 240], [T_GRAVE, 176, 176, 192], [T_FIRE, 245, 154, 106],
+                   [T_CROPS, 156, 106, 60], [T_DFLOOR, 90, 86, 104], [T_DFLOOR2, 90, 86, 104],
+                   [T_DWALLTOP, 30, 24, 36], [T_DWALL, 74, 74, 94], [T_TORCH, 242, 201, 76],
+                   [T_STAIRS, 244, 240, 230], [T_LFLOOR, 80, 56, 100], [T_LWALLTOP, 30, 18, 40],
+                   [T_LWALL, 75, 42, 107]]
+    for c in colours do
+        MAPCOL[c[0]] = [c[1], c[2], c[3]]
+    end
+    for t in [T_WATER, T_SHORE] do
+        MAPCOL[t + 1] = MAPCOL[t]
+        MAPCOL[t + 2] = MAPCOL[t]
+    end
+    MAPCOL[T_TORCH + 1] = MAPCOL[T_TORCH]
+    MAPCOL[T_FIRE + 1] = MAPCOL[T_FIRE]
+    MAPCOL[T_WINLIT] = MAPCOL[T_WALLWIN]
+end
+
+func is_water(t)
+    return t >= T_WATER and t <= T_SHORE + 2
+end
+
+# ---------------------------------------------------------------------------
+# The story's parts
+# ---------------------------------------------------------------------------
+#
+# Four villains (the "threats"). Everything about each is a list with one entry per threat,
+# and {V} in the words is the villain's name, {K} the one they lost, {home} your village,
+# and so on (see fill()).
+
+let THREAT_TITLE = ["{V} the Hollow", "{V}, the Ember Witch", "{V} the Wolf Lord", "Baron {V}"]
+let THREAT_DEED = [
+    "raises the dead from the old barrows and sends them against the farms by night",
+    "has cursed the wells and set fire drakes loose in the fields",
+    "leads the wolf packs out of the deep woods, and they grow bolder every night",
+    "has taken the old fort, and his raiders burn whatever they cannot carry off"
+]
+let THREAT_MINIONS = [["skeleton", "bat", "wisp"], ["wisp", "drake", "slime"],
+                      ["wolf", "bat", "wolf"], ["bandit", "wolf", "bandit"]]
+let RELIC_NAMES = ["the Sunstone", "the Silver Bell", "the Moonsilver Arrow", "the Old Seal"]
+let RELIC_SPRITES = [86, 87, 88, 89]
+let RELIC_WHY = [
+    "Its light is the sun's own. The dead cannot bear it, and nor can his magic.",
+    "Its toll breaks any curse. Ring it at her door and her wards will fall.",
+    "Moonsilver is the one thing his cursed hide cannot turn.",
+    "It is the seal of the old lords of the vale. His men will remember whom they swore to serve."
+]
+let LAIR_NAMES = ["the Bone Spire", "the Thorn Tower", "the Black Den", "Fort Iron"]
+let KIN_WORDS = ["daughter", "sister", "wife", "son"]
+let BACKSTORY = [
+    "{V} was the vale's healer once. When the grey fever took his daughter {K}, he went looking for a way to bring her back. He is still looking.",
+    "{V} grew up in {home}. When she and her sister {K} were caught reading the old books, the village drove them out into the snow. {K} did not live to see the spring.",
+    "{V} was the warden of the woods, until a hunter's curse made a beast of him. His wife {K} waited for him at the forest's edge every night until she died.",
+    "{V} was captain of the vale's guard. When the granary burned, the elders blamed him, and his son {K} died in the cells waiting for a trial that never came."
+]
+let WRONG = ["turned him away when he begged for help to save {K}",
+             "was one of those who drove {V} and {K} out into the snow",
+             "was the hunter who laid the curse on {V}",
+             "was the elder who blamed {V} for the fire"]
+let BOSS_INTRO = [
+    "So. The vale sends its lamplighter. Tell me, do you know what it is to lose the one thing you love?",
+    "{home} sends you? The same {home} that left two girls out in the snow? I remember every face.",
+    "You smell of woodsmoke and fear. I knew a woman once who smelled of woodsmoke.",
+    "Another hero. The last one cried for his mother. Turn round while you can still walk."
+]
+let BOSS_JOIN = [
+    "Stand with me, and no one you love will ever stay dead.",
+    "Burn it all with me, and you will never be cold again.",
+    "Run with the pack. The night will be ours, and the vale will learn to fear the dark.",
+    "Kneel, and you will ride at my right hand. The vale needs an iron hand, not a lantern."
+]
+let BOSS_MERCY = [
+    "{K}'s locket. I gave her this. She would have hated what I have become. Take it back to the living, lamplighter. Let the dead sleep.",
+    "This was hers. {K} always said fire was for warmth. I forgot. Go, tell them their wells are clean.",
+    "{K}. Her face. I had forgotten her face. The curse... I can feel it letting go. Go, before I forget again.",
+    "{K} wore this the day they took him. ...Enough. My men will stand down. Let the vale have its peace."
+]
+let BOSS_DEFEAT = [
+    "{K}... I only wanted... to hear her laugh again.",
+    "Tell {K}... I kept the fire going...",
+    "The moon... is so bright tonight...",
+    "I should have... burned the cells... not the farms..."
+]
+
+let NAME_A = ["Ma", "El", "Bry", "Os", "Ta", "Ren", "Wil", "Ho", "I", "Cor", "Fen", "Lu", "A",
+              "Gar", "Mi", "Tho", "Ny", "Sa", "Ed", "Be", "Ro", "Ka", "Ve", "Jo", "Hal", "Di"]
+let NAME_B = ["ra", "win", "dric", "la", "ren", "mund", "ric", "eth", "na", "lo", "bert", "ssa",
+              "del", "mir", "rin", "wen", "ta", "lyn", "sa", "ka", "rek", "nor", "via", "dan"]
+let PLACE_A = ["Thorn", "Ash", "Elder", "Mill", "Brook", "Raven", "Oak", "Wolf", "Fern", "Stone",
+               "Moss", "Glen", "Bram", "Cold", "Wynd", "Marsh", "Heath", "Bright"]
+let PLACE_B = ["by", "ford", "wick", "stead", "holm", "dale", "ton", "mere", "well", "bury",
+               "combe", "ley"]
+
+# What each kind of person in the village is called, and looks like
+let ROLE_WORDS = ["the elder", "the smith", "the farmer"]
+let ROLE_SPRITES = [6, 12, 18]
+
+# The story's words: TAGS[i] in a text is replaced by TAG_VALUES[i] (see fill)
+let TAGS = ["{V}", "{K}", "{home}", "{hamlet}", "{relic}", "{lair}", "{sage}", "{giver}",
+            "{cave}", "{ruin}", "{vale}", "{kin}", "{lost}", "{rel}", "{title}"]
+let TAG_VALUES = []
+
+# Every {tag} in text replaced by its value
+func fill(text)
+    for i = 0 to len(TAGS) - 1 do
+        text = replace(text, TAGS[i], TAG_VALUES[i])
+    end
+    return text
+end
+
+# text with every `old` in it replaced by `new`
+func replace(text, old, new)
+    let out = ""
+    let at = find(text, old)
+    while at >= 0 do
+        out = out + sub(text, 0, at) + new
+        text = sub(text, at + len(old), len(text) - at - len(old))
+        at = find(text, old)
+    end
+    return out + text
+end
+
+let used_names = []
+
+# A new name for a person, one nobody else in this world has
+func person_name()
+    let name = ""
+    let tries = 0
+    while name == "" or (index_of(used_names, name) >= 0 and tries < 20) do
+        name = pick(NAME_A) + pick(NAME_B)
+        tries = tries + 1
+    end
+    push(used_names, name)
+    return name
+end
+
+func place_name()
+    let name = ""
+    let tries = 0
+    while name == "" or (index_of(used_names, name) >= 0 and tries < 20) do
+        name = pick(PLACE_A) + pick(PLACE_B)
+        tries = tries + 1
+    end
+    push(used_names, name)
+    return name
+end
+
+# Which way something is, from one place to another: "north", "south-east"...
+func direction(fx, fy, tx, ty)
+    let dx = tx - fx
+    let dy = ty - fy
+    let ns = ""
+    let ew = ""
+    if dy < 0 and abs(dy) * 2 > abs(dx) then ns = "north" end
+    if dy > 0 and abs(dy) * 2 > abs(dx) then ns = "south" end
+    if dx > 0 and abs(dx) * 2 > abs(dy) then ew = "east" end
+    if dx < 0 and abs(dx) * 2 > abs(dy) then ew = "west" end
+    if ns != "" and ew != "" then return ns + "-" + ew end
+    if ns == "" and ew == "" then return "nearby" end
+    return ns + ew
+end
+
+# ---------------------------------------------------------------------------
+# Making the world
+# ---------------------------------------------------------------------------
+#
+# The overworld is a list of W * H tile numbers, a row at a time: tile x, y is world[y * W + x].
+
+let world = []
+let protect = []       # tiles of the places stamped on, which roads must go round
+let world_light = []   # the light map: how much each tile is lit by fires and windows (0 to 100)
+let world_ents = []
+
+# where things are, in tiles (each site is the tile in front of its door or entrance)
+let home_x = 0
+let home_y = 0
+let hamlet_x = 0
+let hamlet_y = 0
+let cave_x = 0
+let cave_y = 0
+let lair_x = 0
+let lair_y = 0
+let ruin_x = 0
+let ruin_y = 0
+let shrine_x = 0
+let shrine_y = 0
+let lost_x = 0
+let lost_y = 0
+let beggar_x = 0
+let beggar_y = 0
+let houses = []        # the top left tile of each house in the village, [x, y]
+let sites = []         # every place stamped so far, [x, y], so new ones keep their distance
+let home_road = []     # the road from the village to the hamlet (the traveller waits on it)
+let blight_radius = 5  # how far the villain's blight has spread round the lair
+
+# "Value noise": random values on a coarse grid, `cell` tiles apart, blended smoothly between.
+# Several sizes added up make hills and valleys with detail on them
+func value_noise(cell)
+    let gw = W / cell + 2
+    let gh = H / cell + 2
+    let grid = list(gw * gh, 0)
+    for i = 0 to gw * gh - 1 do
+        grid[i] = rint(256)
+    end
+    let out = list(W * H, 0)
+    let whole = cell * cell
+    for y = 0 to H - 1 do
+        let gy = y / cell
+        let fy = y % cell
+        for x = 0 to W - 1 do
+            let gx = x / cell
+            let fx = x % cell
+            let i = gy * gw + gx
+            # blend along x on the grid rows above and below, then between them along y
+            let top = grid[i] * (cell - fx) + grid[i + 1] * fx
+            let bottom = grid[i + gw] * (cell - fx) + grid[i + gw + 1] * fx
+            out[y * W + x] = (top * (cell - fy) + bottom * fy) / whole
+        end
+    end
+    return out
+end
+
+# Noise of three sizes added up, stretched to run from 0 to 255
+func land_noise()
+    let a = value_noise(16)
+    let b = value_noise(8)
+    let c = value_noise(4)
+    let out = list(W * H, 0)
+    let low = 9999
+    let high = -9999
+    for i = 0 to W * H - 1 do
+        let v = a[i] * 4 + b[i] * 2 + c[i]
+        out[i] = v
+        if v < low then low = v end
+        if v > high then high = v end
+    end
+    let span = bigger(1, high - low)
+    for i = 0 to W * H - 1 do
+        out[i] = (out[i] - low) * 255 / span
+    end
+    return out
+end
+
+# The land: height and wetness decide what grows where
+func make_land()
+    let height = land_noise()
+    let wet = land_noise()
+    let river = list(W * H, false)
+    make_river(river)
+    for y = 0 to H - 1 do
+        for x = 0 to W - 1 do
+            let i = y * W + x
+            # mountains round the edge, rising in the last few tiles, keep you in the vale
+            let edge = smaller(smaller(x, y), smaller(W - 1 - x, H - 1 - y))
+            let h = height[i]
+            if edge < 5 then h = h + (5 - edge) * 28 end
+            let m = wet[i]
+            let t = T_GRASS
+            if edge < 2 then
+                t = T_MOUNT
+            elif river[i] and h < 200 then
+                t = T_WATER
+            elif h < 62 then
+                t = T_WATER
+            elif h < 76 then
+                t = T_SAND
+            elif h > 205 then
+                t = T_MOUNT
+            elif h > 182 then
+                t = T_GRASS2
+                if chance(25) then t = T_ROCK end
+            elif m > 178 and h < 140 then
+                t = T_SWAMP
+                if chance(15) then t = T_REEDS end
+                if chance(6) then t = T_DEADTREE end
+            elif m > 140 then
+                t = T_GRASS2
+                if chance(58) then
+                    t = T_TREE
+                    if h > 140 then t = T_PINE end
+                end
+            elif m > 118 then
+                t = T_GRASS
+                if chance(10) then t = T_TREE end
+                if chance(5) then t = T_BUSH end
+            else
+                t = T_GRASS
+                if chance(7) then t = T_FLOWERS end
+                if chance(3) then t = T_BUSH end
+            end
+            if t == T_GRASS and chance(35) then t = T_GRASS2 end
+            world[i] = t
+        end
+    end
+end
+
+# A river across the vale, from one side to the other, wandering as it goes
+func make_river(river)
+    # it runs either from west to east or from north to south
+    let across = chance(50)
+    let length = H
+    let breadth = W
+    if across then
+        length = W
+        breadth = H
+    end
+    let pos = 18 + rint(breadth - 36)
+    for along = 0 to length - 1 do
+        if chance(30) then pos = pos + rint(3) - 1 end
+        for wide = 0 to 1 do
+            let x = pos + wide
+            let y = along
+            if across then
+                x = along
+                y = pos + wide
+            end
+            if x >= 0 and x < W and y >= 0 and y < H then river[y * W + x] = true end
+        end
+    end
+end
+
+# The distance between two points, squared
+func distance2(ax, ay, bx, by)
+    return (ax - bx) * (ax - bx) + (ay - by) * (ay - by)
+end
+
+# Far enough from every site so far?
+func far_from_sites(x, y, distance)
+    for s in sites do
+        let dx = s[0] - x
+        let dy = s[1] - y
+        if dx * dx + dy * dy < distance * distance then return false end
+    end
+    return true
+end
+
+# A spot for a place `radius` tiles round, inside x0..x1, y0..y1, at least `distance` from the
+# other places, with little water: the best of many tries
+func find_spot(x0, y0, x1, y1, radius, distance)
+    let best = [(x0 + x1) / 2, (y0 + y1) / 2]
+    let best_score = -1
+    for attempt = 1 to 120 do
+        let x = x0 + rint(bigger(1, x1 - x0))
+        let y = y0 + rint(bigger(1, y1 - y0))
+        let score = 0
+        if far_from_sites(x, y, distance) then score = 1000 end
+        # count the dry tiles round it
+        for dy = -radius to radius step 2 do
+            for dx = -radius to radius step 2 do
+                let t = world[(y + dy) * W + x + dx]
+                if not is_water(t) and t != T_MOUNT then score = score + 3 end
+                if t == T_GRASS or t == T_GRASS2 or t == T_FLOWERS then score = score + 1 end
+            end
+        end
+        if score > best_score then
+            best_score = score
+            best = [x, y]
+        end
+    end
+    push(sites, best)
+    return best
+end
+
+# Set a tile, and keep roads from it
+func stamp(x, y, t)
+    world[y * W + x] = t
+    protect[y * W + x] = true
+end
+
+# Clear a box of land to grass (and protect it), so a place can be built on it
+func clear_land(x0, y0, x1, y1)
+    for y = y0 to y1 do
+        for x = x0 to x1 do
+            stamp(x, y, rint(3) == 0 and T_GRASS2 or T_GRASS)
+        end
+    end
+end
+
+# A house: two tiles of roof over a window and a door
+func house(x, y)
+    stamp(x, y, T_ROOFL)
+    stamp(x + 1, y, T_ROOFR)
+    stamp(x, y + 1, T_WALLWIN)
+    stamp(x + 1, y + 1, T_WALLDOOR)
+    push(houses, [x, y])
+end
+
+# Your village: a square of cobbles with a well, four houses round it, a field and a fence
+func stamp_village(cx, cy)
+    clear_land(cx - 7, cy - 6, cx + 7, cy + 6)
+    for y = cy - 2 to cy + 2 do
+        for x = cx - 3 to cx + 3 do stamp(x, y, T_PLAZA) end
+    end
+    stamp(cx, cy, T_WELL)
+    house(cx - 6, cy - 5)
+    house(cx + 4, cy - 5)
+    house(cx - 6, cy + 2)
+    house(cx + 4, cy + 2)
+    house(cx - 1, cy - 6)
+    for x = cx - 6 to cx - 3 do
+        stamp(x, cy + 5, T_CROPS)
+        stamp(x, cy + 6, T_CROPS)
+    end
+    for x = cx + 3 to cx + 6 do stamp(x, cy + 6, T_FENCE) end
+end
+
+# The hamlet: a fire to sit round, and two houses
+func stamp_hamlet(cx, cy)
+    clear_land(cx - 5, cy - 5, cx + 5, cy + 4)
+    for y = cy - 1 to cy + 1 do
+        for x = cx - 2 to cx + 2 do stamp(x, y, T_PLAZA) end
+    end
+    stamp(cx, cy, T_FIRE)
+    house(cx - 4, cy - 4)
+    house(cx + 2, cy - 4)
+    for x = cx - 4 to cx - 2 do stamp(x, cy + 3, T_FENCE) end
+end
+
+# Ruins: a broken square of old wall round a court, open to the south
+func stamp_ruin(cx, cy)
+    for y = cy - 4 to cy + 4 do
+        for x = cx - 4 to cx + 4 do
+            let edge = abs(x - cx) == 4 or abs(y - cy) == 4
+            let t = T_RUINFL
+            if edge and chance(70) and not (y == cy + 4 and abs(x - cx) <= 1) then t = T_RUINWALL end
+            stamp(x, y, t)
+        end
+    end
+    for p in [[-2, -2], [2, -2], [-2, 2], [2, 2]] do stamp(cx + p[0], cy + p[1], T_RUINWALL) end
+    clear_land(cx - 1, cy + 5, cx + 1, cy + 5)
+end
+
+# The cave: a lump of mountain with a dark mouth in its face
+func stamp_cave(cx, cy)
+    for y = cy - 3 to cy - 1 do
+        for x = cx - 2 to cx + 2 do stamp(x, y, T_MOUNT) end
+    end
+    for x = cx - 2 to cx + 2 do stamp(x, cy, T_CLIFF) end
+    stamp(cx, cy, T_CAVE)
+    clear_land(cx - 2, cy + 1, cx + 2, cy + 1)
+end
+
+# The lair: a black wall with a sealed gate, on blighted ground
+func stamp_lair(cx, cy)
+    for x = cx - 3 to cx + 3 do stamp(x, cy - 3, T_LWALLTOP) end
+    for y = cy - 2 to cy do
+        for x = cx - 3 to cx + 3 do stamp(x, y, T_LWALL) end
+    end
+    stamp(cx, cy, T_GATE)
+    for y = cy + 1 to cy + 2 do
+        for x = cx - 3 to cx + 3 do stamp(x, y, T_BLIGHT) end
+    end
+end
+
+func stamp_shrine(cx, cy)
+    for y = cy - 1 to cy + 1 do
+        for x = cx - 1 to cx + 1 do stamp(x, y, T_PLAZA) end
+    end
+    stamp(cx, cy, T_SHRINE)
+    stamp(cx - 2, cy - 1, T_GRAVE)
+    stamp(cx + 2, cy - 1, T_GRAVE)
+end
+
+# How dear it is for a road to cross a tile: cheap along roads, dearer over grass, dearer still
+# through forest, rock or water (which must be cut, or bridged), -1 if it can't (a building)
+func road_cost(i)
+    let t = world[i]
+    if t == T_ROAD or t == T_BRIDGE or t == T_BRIDGEV or t == T_PLAZA then return 1 end
+    if protect[i] then
+        if SOLID[t] then return -1 end
+        return 3
+    end
+    if not SOLID[t] then
+        if t == T_SWAMP or t == T_REEDS then return 5 end
+        return 3
+    end
+    if t == T_TREE or t == T_PINE or t == T_BUSH or t == T_DEADTREE then return 8 end
+    if is_water(t) then return 10 end
+    if t == T_ROCK or t == T_MOUNT or t == T_CLIFF then return 14 end
+    return -1
+end
+
+# The cheapest way from one tile to another (Dijkstra's algorithm), as a list of tile numbers
+# from the far end back to the start, or [] if there is none. The tiles still to look at are
+# kept in "buckets" by how dear it was to reach them, and the cheapest bucket is always done
+# first, so each tile is first reached by its cheapest way
+func find_road(sx, sy, tx, ty)
+    let size = W * H
+    let cost = list(size, 999999)
+    let came = list(size, -1)
+    let start = sy * W + sx
+    let goal = ty * W + tx
+    cost[start] = 0
+    let buckets = [[start]]
+    let c = 0
+    while c < len(buckets) do
+        let bucket = buckets[c]
+        let n = 0
+        while n < len(bucket) do
+            let at = bucket[n]
+            n = n + 1
+            if cost[at] == c then
+                if at == goal then
+                    let path = []
+                    while at != -1 do
+                        push(path, at)
+                        at = came[at]
+                    end
+                    return path
+                end
+                let x = at % W
+                let y = at / W
+                for d = 0 to 3 do
+                    let nx = x + STEP_X[d]
+                    let ny = y + STEP_Y[d]
+                    if nx >= 2 and ny >= 2 and nx < W - 2 and ny < H - 2 then
+                        let next = ny * W + nx
+                        let price = road_cost(next)
+                        if next == goal then price = 1 end
+                        if price > 0 and c + price < cost[next] then
+                            cost[next] = c + price
+                            came[next] = at
+                            while len(buckets) <= c + price do push(buckets, []) end
+                            push(buckets[c + price], next)
+                        end
+                    end
+                end
+            end
+        end
+        c = c + 1
+    end
+    return []
+end
+
+# Lay a road along a path: water gets a bridge (planks across the way you cross), anything else
+# in the way is cleared. A "trail" only clears what is in the way, leaving the grass as it is
+func pave(path, trail)
+    for k = 0 to len(path) - 1 do
+        let i = path[k]
+        let t = world[i]
+        if is_water(t) then
+            # which way the road crosses here: along x if its neighbours on the path are
+            let other = path[bigger(0, k - 1)]
+            if k == 0 then other = path[smaller(len(path) - 1, k + 1)] end
+            if abs(other - i) == 1 then
+                world[i] = T_BRIDGE
+            else
+                world[i] = T_BRIDGEV
+            end
+        elif protect[i] and not trail and (t == T_GRASS or t == T_GRASS2) then
+            # the grass round a place: the road runs on in to its door
+            world[i] = T_ROAD
+        elif protect[i] or t == T_ROAD or t == T_BRIDGE or t == T_BRIDGEV or t == T_PLAZA then
+            # a place's own tiles, or already a road
+        elif trail then
+            if SOLID[t] then world[i] = T_GRASS2 end
+        else
+            world[i] = T_ROAD
+        end
+    end
+end
+
+func road(ax, ay, bx, by)
+    let path = find_road(ax, ay, bx, by)
+    pave(path, false)
+    return path
+end
+
+# Spread the villain's blight `radius` tiles round the lair: grass and earth turn grey, trees
+# die. Roads, water and buildings are left
+func spread_blight(radius)
+    let r2 = radius * radius
+    for y = bigger(1, lair_y - radius) to smaller(H - 2, lair_y + radius) do
+        for x = bigger(1, lair_x - radius) to smaller(W - 2, lair_x + radius) do
+            let dx = x - lair_x
+            let dy = y - lair_y
+            if dx * dx + dy * dy <= r2 then
+                let i = y * W + x
+                let t = world[i]
+                if t == T_GRASS or t == T_GRASS2 or t == T_FLOWERS or t == T_SAND or t == T_SWAMP or t == T_REEDS or t == T_CROPS or t == T_BUSH then
+                    world[i] = T_BLIGHT
+                elif t == T_TREE or t == T_PINE or t == T_DEADTREE then
+                    world[i] = T_BLIGHTTREE
+                end
+            end
+        end
+    end
+end
+
+# The tidying up: water with land above it shows its bank, and mountains with something else
+# below them show their face
+func shape_edges(map, mw, mh)
+    for y = 1 to mh - 1 do
+        for x = 0 to mw - 1 do
+            let i = y * mw + x
+            let above = map[i - mw]
+            if map[i] == T_WATER and not is_water(above) and above != T_BRIDGEV then map[i] = T_SHORE end
+        end
+    end
+    for y = 0 to mh - 2 do
+        for x = 0 to mw - 1 do
+            let i = y * mw + x
+            let below = map[i + mw]
+            if map[i] == T_MOUNT and below != T_MOUNT and below != T_CLIFF and below != T_CAVE then map[i] = T_CLIFF end
+        end
+    end
+end
+
+# The light map of a map: fires, torches, the shrine, the lair's gate and (at night) the
+# windows light the tiles round them, brightest close by. 0 to 100 a tile
+func light_map(map, mw, mh)
+    let light = list(mw * mh, 0)
+    for y = 0 to mh - 1 do
+        for x = 0 to mw - 1 do
+            let t = map[y * mw + x]
+            let radius = 0
+            let power = 0
+            if t == T_FIRE or t == T_TORCH then
+                radius = 4
+                power = 100
+            elif t == T_WALLWIN then
+                radius = 2
+                power = 60
+            elif t == T_SHRINE or t == T_GATE or t == T_STAIRS then
+                radius = 3
+                power = 65
+            end
+            if radius > 0 then
+                let r2 = (radius + 1) * (radius + 1)
+                for dy = -radius to radius do
+                    for dx = -radius to radius do
+                        let lx = x + dx
+                        let ly = y + dy
+                        if lx >= 0 and ly >= 0 and lx < mw and ly < mh then
+                            let d2 = dx * dx + dy * dy
+                            let v = power * (r2 - d2) / r2
+                            let at = ly * mw + lx
+                            if v > light[at] then light[at] = v end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return light
+end
+
+# Can you walk from the village to every place the story needs? (a check, for the tests: the
+# roads should always make it so)
+func check_reachable()
+    let seen = list(W * H, false)
+    let queue = [home_y * W + home_x]
+    seen[queue[0]] = true
+    let n = 0
+    while n < len(queue) do
+        let at = queue[n]
+        n = n + 1
+        let x = at % W
+        let y = at / W
+        for d = 0 to 3 do
+            let next = (y + STEP_Y[d]) * W + x + STEP_X[d]
+            let t = world[next]
+            if not seen[next] and (not SOLID[t] or t == T_GATE) then
+                seen[next] = true
+                push(queue, next)
+            end
+        end
+    end
+    let missing = []
+    let names = ["hamlet", "cave", "lair", "ruin", "shrine", "lost", "beggar"]
+    let spots = [[hamlet_x, hamlet_y + 2], [cave_x, cave_y], [lair_x, lair_y], [ruin_x, ruin_y + 5],
+                 [shrine_x, shrine_y + 2], [lost_x, lost_y], [beggar_x, beggar_y]]
+    for k = 0 to len(spots) - 1 do
+        if not seen[spots[k][1] * W + spots[k][0]] then push(missing, names[k]) end
+    end
+    return missing
+end
+
+# Make the whole overworld for a seed: land, places, roads, then the story and the people
+func make_world(seed)
+    seed_rng(seed)
+    used_names = []
+    blight_radius = 5
+    world = list(W * H, T_GRASS)
+    protect = list(W * H, false)
+    houses = []
+    sites = []
+    make_land()
+
+    # where everything goes: the village near the middle, the lair in the corner furthest
+    # from it, the rest spread out between
+    let spot = find_spot(W / 2 - 14, H / 2 - 9, W / 2 + 14, H / 2 + 9, 6, 0)
+    home_x = spot[0]
+    home_y = spot[1]
+    let corners = [[11, 10], [W - 12, 10], [11, H - 10], [W - 12, H - 10]]
+    let far = corners[0]
+    for c in corners do
+        if distance2(c[0], c[1], home_x, home_y) > distance2(far[0], far[1], home_x, home_y) then far = c end
+    end
+    spot = find_spot(far[0] - 5, far[1] - 4, far[0] + 5, far[1] + 4, 4, 30)
+    lair_x = spot[0]
+    lair_y = spot[1]
+    spot = find_spot(9, 9, W - 10, H - 10, 5, 24)
+    hamlet_x = spot[0]
+    hamlet_y = spot[1]
+    spot = find_spot(9, 9, W - 10, H - 10, 3, 20)
+    cave_x = spot[0]
+    cave_y = spot[1]
+    spot = find_spot(9, 9, W - 10, H - 12, 5, 17)
+    ruin_x = spot[0]
+    ruin_y = spot[1]
+    spot = find_spot(8, 8, W - 9, H - 9, 2, 14)
+    shrine_x = spot[0]
+    shrine_y = spot[1]
+    spot = find_spot(7, 7, W - 8, H - 8, 2, 12)
+    lost_x = spot[0]
+    lost_y = spot[1]
+
+    stamp_village(home_x, home_y)
+    stamp_hamlet(hamlet_x, hamlet_y)
+    stamp_cave(cave_x, cave_y)
+    stamp_lair(lair_x, lair_y)
+    stamp_ruin(ruin_x, ruin_y)
+    stamp_shrine(shrine_x, shrine_y)
+    clear_land(lost_x - 2, lost_y - 2, lost_x + 2, lost_y + 2)
+
+    # roads from the village to everywhere (they share the way where they can, as a road
+    # already there is the cheapest way to go)
+    home_road = road(home_x, home_y + 3, hamlet_x, hamlet_y + 2)
+    let to_cave = road(home_x, home_y + 3, cave_x, cave_y + 1)
+    road(home_x, home_y + 3, ruin_x, ruin_y + 5)
+    road(home_x, home_y + 3, shrine_x, shrine_y + 2)
+    road(home_x, home_y + 3, lair_x, lair_y + 1)
+    road(hamlet_x, hamlet_y + 2, cave_x, cave_y + 1)
+    pave(find_road(home_x, home_y + 3, lost_x, lost_y), true)
+    let middle = home_road[len(home_road) / 2]
+    beggar_x = middle % W
+    beggar_y = middle / W
+
+    spread_blight(blight_radius)
+    shape_edges(world, W, H)
+    world_light = light_map(world, W, H)
+    make_story()
+    make_people()
+end
+
+# ---------------------------------------------------------------------------
+# The story, and the people in it
+# ---------------------------------------------------------------------------
+
+let world_seed = 0
+let threat = 0
+let villain = ""
+let villain_title = ""
+let kin_name = ""
+let relic_name = ""
+let relic_sprite = 0
+let lair_name = ""
+let vale_name = ""
+let home_name = ""
+let hamlet_name = ""
+let cave_name = ""
+let ruin_name = ""
+let giver_role = 0
+let lost_relation = ""
+let complicit = false  # did the one who asks for your help wrong the villain, long ago?
+
+# People: each is [name, role, first picture, where they live, state, x, y, times talked to]
+let P_NAME = 0
+let P_ROLE = 1         # "giver", "merchant", "guard", "villager", "sage", "hamletfolk", "lost", "beggar"
+let P_SPRITE = 2
+let P_TOWN = 3         # 0 the village, 1 the hamlet, 2 out in the wild
+let P_STATE = 4        # "here", "lost", "saved", "dead", "taken" (in a raid), "gone"
+let P_X = 5
+let P_Y = 6
+let P_TALKED = 7
+let people = []
+let giver = 0          # the numbers in people of those the story needs
+let sage = 0
+let lost = 0
+let beggar = 0
+let merchant = 0
+let guard = 0
+
+func make_story()
+    threat = rint(4)
+    vale_name = "the Vale of " + pick(["Ember", "Whisper", "Amber", "Gloam", "Mist", "Bright", "Thistle", "Willow"]) + pick(["mere", "fall", "reach", "wood", "dell", "water"])
+    home_name = place_name()
+    hamlet_name = place_name()
+    ruin_name = "the ruins of Old " + place_name()
+    cave_name = "the " + pick(["Weeping", "Sunken", "Old", "Howling", "Glimmer", "Echoing"]) + " " + pick(["Caves", "Deeps", "Mine", "Grotto", "Hollows"])
+    villain = person_name()
+    kin_name = person_name()
+    relic_name = RELIC_NAMES[threat]
+    relic_sprite = RELIC_SPRITES[threat]
+    lair_name = LAIR_NAMES[threat]
+    giver_role = rint(3)
+    lost_relation = pick(["daughter", "son", "sister", "brother"])
+    complicit = chance(50)
+    people = []
+    giver = add_person(person_name(), "giver", ROLE_SPRITES[giver_role], 0)
+    sage = add_person(person_name(), "sage", S_SAGE, 1)
+    let lost_sprite = S_CHILD
+    if lost_relation == "sister" then lost_sprite = S_FARMER end
+    if lost_relation == "brother" then lost_sprite = S_TRAVELLER end
+    lost = add_person(person_name(), "lost", lost_sprite, 2)
+    beggar = add_person(person_name(), "beggar", S_TRAVELLER, 2)
+    merchant = add_person(person_name(), "merchant", S_MERCHANT, 0)
+    guard = add_person(person_name(), "guard", S_GUARD, 0)
+    # two more villagers, not dressed like the one who asks for help
+    let looks = [S_FARMER, S_CHILD, S_ELDER, S_SMITH]
+    remove(looks, index_of(looks, ROLE_SPRITES[giver_role]))
+    for k = 0 to 1 do
+        let look = looks[rint(len(looks))]
+        remove(looks, index_of(looks, look))
+        add_person(person_name(), "villager", look, 0)
+    end
+    add_person(person_name(), "hamletfolk", pick([S_FARMER, S_SMITH, S_GUARD]), 1)
+    TAG_VALUES = [villain, kin_name, home_name, hamlet_name, relic_name, lair_name,
+                  people[sage][P_NAME], people[giver][P_NAME], cave_name, ruin_name, vale_name,
+                  KIN_WORDS[threat], people[lost][P_NAME], lost_relation, ""]
+    villain_title = fill(THREAT_TITLE[threat])
+    TAG_VALUES[14] = villain_title
+end
+
+func add_person(name, role, sprite, town)
+    push(people, [name, role, sprite, town, "here", 0, 0, 0])
+    return len(people) - 1
+end
+
+# What someone is called, with what they do: "Marena the elder"
+func who(p)
+    let role = people[p][P_ROLE]
+    let name = people[p][P_NAME]
+    if role == "giver" then return name + " " + ROLE_WORDS[giver_role] end
+    if role == "sage" then return name + " the sage" end
+    if role == "merchant" then return name + " the merchant" end
+    if role == "guard" then return name + " the guard" end
+    if role == "beggar" then return name + " the traveller" end
+    return name
+end
+
+# A new entity (see E_KIND and the rest): kind, where its feet are in pixels, what it is
+func new_ent(kind, x, y, data)
+    let e = list(E_SIZE, 0)
+    e[E_KIND] = kind
+    e[E_X] = x
+    e[E_Y] = y
+    e[E_DATA] = data
+    e[E_HX] = x
+    e[E_HY] = y
+    e[E_HP] = 1
+    e[E_STATE] = 0
+    e[E_EXTRA] = ""
+    e[E_SWING] = -1
+    e[E_HURT] = 0
+    return e
+end
+
+# The middle of a tile's floor, in pixels: where something standing on it has its feet
+func tile_x(tx)
+    return tx * TILE + 8
+end
+
+func tile_y(ty)
+    return ty * TILE + 12
+end
+
+func monster_info(name)
+    for m in MONSTERS do
+        if m[0] == name then return m end
+    end
+    return MONSTERS[0]
+end
+
+func new_monster(name, x, y)
+    let e = new_ent("mon", x, y, name)
+    e[E_HP] = monster_info(name)[1]
+    e[E_TIMER] = rint(2000)
+    return e
+end
+
+# Put a person on the map, standing at a tile
+func place_person(ents, p, tx, ty)
+    people[p][P_X] = tile_x(tx)
+    people[p][P_Y] = tile_y(ty)
+    push(ents, new_ent("npc", people[p][P_X], people[p][P_Y], p))
+end
+
+# Everyone and everything on the overworld at the start: people, signs, chests, crates and
+# monsters
+func make_people()
+    world_ents = []
+    let ents = world_ents
+    let home_people = []
+    let hamlet_people = []
+    for p = 0 to len(people) - 1 do
+        if people[p][P_TOWN] == 0 then push(home_people, p) end
+        if people[p][P_TOWN] == 1 then push(hamlet_people, p) end
+    end
+    # the village: the one who asks for help by the well, the merchant at their door, the
+    # guard at the gate, the others about the place
+    place_person(ents, giver, home_x + 1, home_y + 1)
+    place_person(ents, merchant, houses[1][0], houses[1][1] + 2)
+    place_person(ents, guard, home_x + 2, home_y + 4)
+    let spots = [[home_x - 4, home_y + 4], [home_x - 2, home_y - 2]]
+    let k = 0
+    for p in home_people do
+        if people[p][P_ROLE] == "villager" then
+            place_person(ents, p, spots[k][0], spots[k][1])
+            k = k + 1
+        end
+    end
+    place_person(ents, sage, hamlet_x - 1, hamlet_y + 1)
+    for p in hamlet_people do
+        if people[p][P_ROLE] == "hamletfolk" then place_person(ents, p, hamlet_x + 2, hamlet_y) end
+    end
+    place_person(ents, lost, lost_x, lost_y)
+    people[lost][P_STATE] = "lost"
+    place_person(ents, beggar, beggar_x, beggar_y)
+
+    # signs at the edges of places
+    push(ents, new_ent("sign", tile_x(home_x + 2), tile_y(home_y + 4), "Welcome to " + home_name + "."))
+    push(ents, new_ent("sign", tile_x(hamlet_x + 2), tile_y(hamlet_y + 3), hamlet_name + ". Mind the fire."))
+    push(ents, new_ent("sign", tile_x(cave_x + 2), tile_y(cave_y + 1), capital(cave_name) + ". Keep out!"))
+    push(ents, new_ent("sign", tile_x(ruin_x + 2), tile_y(ruin_y + 5), capital(ruin_name) + "."))
+
+    # the crates in the village, each belonging to someone
+    for h = 0 to 2 do
+        let crate = new_ent("crate", tile_x(houses[h][0] - 1), tile_y(houses[h][1] + 1), "crate" + h)
+        crate[E_EXTRA] = home_people[(h + 1) % len(home_people)]
+        crate[E_HP] = 6 + rint(8)          # the coins in it
+        push(ents, crate)
+    end
+    # the chest in the ruins holds the lost one's locket; others hold coins or a potion
+    let chest = new_ent("chest", tile_x(ruin_x), tile_y(ruin_y), "w0")
+    chest[E_EXTRA] = "locket"
+    push(ents, chest)
+    push(ents, new_monster(THREAT_MINIONS[threat][0], tile_x(ruin_x - 1), tile_y(ruin_y + 2)))
+    push(ents, new_monster(THREAT_MINIONS[threat][1], tile_x(ruin_x + 1), tile_y(ruin_y - 2)))
+    for n = 1 to 3 do
+        let spot = open_tile(10)
+        let c = new_ent("chest", tile_x(spot[0]), tile_y(spot[1]), "w" + n)
+        c[E_EXTRA] = pick(["gold", "gold", "potion"])
+        push(ents, c)
+    end
+    # the lost one is surrounded
+    for n = 0 to 2 do
+        let m = new_monster(THREAT_MINIONS[threat][n], tile_x(lost_x + STEP_X[n + 1] * 2), tile_y(lost_y + STEP_Y[n + 1] * 2))
+        m[E_EXTRA] = "lostguard"
+        push(ents, m)
+    end
+    # monsters about the vale: slimes and bats anywhere, wolves in the woods, the villain's
+    # own creatures more often the nearer the lair
+    for n = 1 to 26 do
+        let spot = open_tile(12)
+        let t = world[spot[1] * W + spot[0]]
+        let name = pick(["slime", "slime", "bat"])
+        if t == T_GRASS2 and chance(50) then name = "wolf" end
+        if t == T_SWAMP or t == T_REEDS then name = pick(["slime", "wisp"]) end
+        let dx = spot[0] - lair_x
+        let dy = spot[1] - lair_y
+        if dx * dx + dy * dy < 400 or chance(25) then name = pick(THREAT_MINIONS[threat]) end
+        push(ents, new_monster(name, tile_x(spot[0]), tile_y(spot[1])))
+    end
+end
+
+# A tile out in the open, away from the village (at least `distance` tiles), not on a road
+func open_tile(distance)
+    for tries = 1 to 300 do
+        let x = 3 + rint(W - 6)
+        let y = 3 + rint(H - 6)
+        let t = world[y * W + x]
+        let dx = x - home_x
+        let dy = y - home_y
+        if not SOLID[t] and not protect[y * W + x] and t != T_ROAD and t != T_BRIDGE and t != T_BRIDGEV and dx * dx + dy * dy > distance * distance then
+            return [x, y]
+        end
+    end
+    return [home_x, home_y + 5]
+end
+
+# A number standing for the whole world, for the tests to see the same seed makes the same
+# world (every tile, and the story)
+func world_checksum()
+    let sum = 0
+    for i = 0 to W * H - 1 do
+        sum = (sum * 31 + world[i] + 1) % 1000003
+    end
+    for words in [villain, home_name, relic_name, people[giver][P_NAME]] do
+        for c = 0 to len(words) - 1 do
+            sum = (sum * 31 + ord(words[c])) % 1000003
+        end
+    end
+    return sum
+end
+
+# ---------------------------------------------------------------------------
+# Caves: the one the relic is in, and the lair
+# ---------------------------------------------------------------------------
+#
+# Rooms, placed where they fit, then joined: each new room to the nearest room already joined,
+# by a corridor two tiles wide that turns once. So every room can be reached. You come in by
+# the stairs in the room furthest from the first room, which holds the relic (or the villain).
+
+let rooms = []         # [x, y, w, h], in tiles. Room 0 holds the treasure, or the villain
+let start_room = 0
+let stairs_x = 0
+let stairs_y = 0
+
+func make_dungeon(kind)
+    seed_rng(world_seed * 7 + 101 + kind * 977)
+    let floor_tile = T_DFLOOR
+    let face = T_DWALL
+    let top = T_DWALLTOP
+    if kind == 1 then
+        floor_tile = T_LFLOOR
+        face = T_LWALL
+    end
+    let map = list(DW * DH, -1)
+    rooms = []
+    if kind == 1 then
+        # the villain's hall: big, at the top
+        push(rooms, [3 + rint(DW - 19), 2 + rint(3), 14, 9])
+    end
+    for tries = 1 to 150 do
+        if len(rooms) < 8 then
+            let w = 5 + rint(5)
+            let h = 4 + rint(3)
+            let x = 2 + rint(DW - w - 4)
+            let y = 3 + rint(DH - h - 5)
+            let fits = true
+            for r in rooms do
+                if x < r[0] + r[2] + 2 and r[0] < x + w + 2 and y < r[1] + r[3] + 2 and r[1] < y + h + 2 then fits = false end
+            end
+            if fits then push(rooms, [x, y, w, h]) end
+        end
+    end
+    for r in rooms do
+        for y = r[1] to r[1] + r[3] - 1 do
+            for x = r[0] to r[0] + r[2] - 1 do
+                map[y * DW + x] = floor_tile
+                if kind == 0 and chance(8) then map[y * DW + x] = T_DFLOOR2 end
+            end
+        end
+    end
+    # join them up: each room in turn to the nearest one already joined
+    for n = 1 to len(rooms) - 1 do
+        let best = 0
+        let best_d = 999999
+        for m = 0 to n - 1 do
+            let d = room_distance(rooms[n], rooms[m])
+            if d < best_d then
+                best = m
+                best_d = d
+            end
+        end
+        corridor(map, rooms[n], rooms[best], floor_tile)
+    end
+    # you come in at the room furthest from room 0
+    start_room = 0
+    let far = -1
+    for n = 1 to len(rooms) - 1 do
+        let d = room_distance(rooms[n], rooms[0])
+        if d > far then
+            far = d
+            start_room = n
+        end
+    end
+    let s = rooms[start_room]
+    stairs_x = s[0] + s[2] / 2
+    stairs_y = s[1]
+    map[stairs_y * DW + stairs_x] = T_STAIRS
+    # the walls: a wall with floor below it shows its face (sometimes with a torch on it), the
+    # rest are dark tops
+    for y = 0 to DH - 1 do
+        for x = 0 to DW - 1 do
+            let i = y * DW + x
+            if map[i] == -1 then
+                let below = -1
+                if y < DH - 1 then below = map[i + DW] end
+                if below != -1 and below != face and below != top and below != T_TORCH then
+                    map[i] = face
+                    if chance(16) then map[i] = T_TORCH end
+                else
+                    map[i] = top
+                end
+            end
+        end
+    end
+    return map
+end
+
+func room_distance(a, b)
+    let dx = (a[0] + a[2] / 2) - (b[0] + b[2] / 2)
+    let dy = (a[1] + a[3] / 2) - (b[1] + b[3] / 2)
+    return dx * dx + dy * dy
+end
+
+# A corridor two tiles wide from the middle of one room to the middle of another, along x
+# then y, or y then x
+func corridor(map, a, b, floor_tile)
+    let x0 = a[0] + a[2] / 2
+    let y0 = a[1] + a[3] / 2
+    let x1 = b[0] + b[2] / 2
+    let y1 = b[1] + b[3] / 2
+    if chance(50) then
+        dig_line(map, x0, y0, x1, y0, floor_tile)
+        dig_line(map, x1, y0, x1, y1, floor_tile)
+    else
+        dig_line(map, x0, y0, x0, y1, floor_tile)
+        dig_line(map, x0, y1, x1, y1, floor_tile)
+    end
+end
+
+func dig_line(map, x0, y0, x1, y1, floor_tile)
+    let x = x0
+    let y = y0
+    while true do
+        for dy = 0 to 1 do
+            for dx = 0 to 1 do
+                let i = (y + dy) * DW + x + dx
+                if map[i] == -1 then map[i] = floor_tile end
+            end
+        end
+        if x == x1 and y == y1 then break end
+        x = x + sign(x1 - x)
+        y = y + sign(y1 - y)
+    end
+end
+
+# The monsters, chests and (in the lair) the villain in a cave just made
+func dungeon_ents(kind)
+    let ents = []
+    let minions = THREAT_MINIONS[threat]
+    for n = 0 to len(rooms) - 1 do
+        let r = rooms[n]
+        if n != start_room and not (kind == 1 and n == 0) then
+            for k = 1 to 1 + rint(3) do
+                let name = pick(minions)
+                if kind == 0 and chance(35) then name = pick(["slime", "bat"]) end
+                push(ents, new_monster(name, tile_x(r[0] + 1 + rint(r[2] - 2)), tile_y(r[1] + 1 + rint(r[3] - 2))))
+            end
+        end
+        if n != 0 and n != start_room and chance(40) then
+            let c = new_ent("chest", tile_x(r[0] + rint(r[2])), tile_y(r[1]), "d" + kind + "_" + n)
+            c[E_EXTRA] = pick(["gold", "potion"])
+            push(ents, c)
+        end
+    end
+    let r0 = rooms[0]
+    let mx = tile_x(r0[0] + r0[2] / 2)
+    let my = tile_y(r0[1] + r0[3] / 2)
+    if kind == 0 then
+        # the relic, and what guards it: one of the villain's creatures, four times as strong
+        let c = new_ent("chest", mx, my - 8, "relic")
+        c[E_EXTRA] = "relic"
+        push(ents, c)
+        let g = new_monster(minions[0], mx + 24, my + 16)
+        g[E_HP] = g[E_HP] * 4
+        g[E_EXTRA] = "guardian"
+        push(ents, g)
+    else
+        let b = new_ent("boss", mx, my, threat)
+        b[E_HP] = 24
+        push(ents, b)
+    end
+    return ents
+end
+
+# ---------------------------------------------------------------------------
+# Pictures and sounds
+# ---------------------------------------------------------------------------
+
+let tile_sheets = []   # the land in the four lights (see the top of the file)
+let spr_sheets = []
+let boss_pic = nil
+let hud_pic = nil
+let logo_pic = nil
+let pictures_ok = true
+let GLOW = []          # tiles that shine by their own light: drawn bright in the dark
+
+func load_picture(name)
+    let data = rdb(FOLDER + name + ".bmp")
+    if data == nil or imgsz(data) == nil then pictures_ok = false end
+    return data
+end
+
+func load_pictures()
+    tile_sheets = []
+    spr_sheets = []
+    for shade = 0 to 3 do
+        push(tile_sheets, load_picture("tiles" + shade))
+        push(spr_sheets, load_picture("spr" + shade))
+    end
+    boss_pic = load_picture("boss")
+    hud_pic = load_picture("hud")
+    logo_pic = load_picture("logo")
+    GLOW = list(TILE_COUNT, false)
+    mark_all(GLOW, [T_TORCH, T_TORCH + 1, T_FIRE, T_FIRE + 1, T_WINLIT, T_SHRINE, T_GATE], true)
+end
+
+# The sound effects and music: the names of their files, and what sload gave back for each
+let SOUND_NAMES = ["swing", "hit", "hurt", "kill", "coin", "item", "talk", "stairs", "heal",
+                   "chest", "select", "confirm", "horn", "bell", "thief", "gate", "roar", "death",
+                   "cut", "fire", "save", "quest"]
+let MUSIC_NAMES = ["title", "day", "night", "dungeon", "boss", "ending"]
+let sounds = []
+let musics = []
+let sound_card = false
+let music_now = ""
+let music_voice = -1
+
+func load_sounds()
+    sounds = []
+    for name in SOUND_NAMES do push(sounds, sload(FOLDER + name + ".wav")) end
+    musics = []
+    for name in MUSIC_NAMES do push(musics, sload(FOLDER + name + ".wav")) end
+    let probe = sounds[index_of(SOUND_NAMES, "select")]
+    sound_card = probe != nil and splay(probe, false, 0) >= 0
+end
+
+# Play a sound effect (nothing happens without a sound card)
+func sfx(name)
+    if not sound_card then return end
+    let s = sounds[index_of(SOUND_NAMES, name)]
+    if s != nil then splay(s, false, 80) end
+end
+
+# Change the music (the same tune carries on)
+func music(name)
+    if name == music_now then return end
+    music_now = name
+    if not sound_card then return end
+    if music_voice >= 0 then sstop(music_voice) end
+    music_voice = -1
+    let m = index_of(MUSIC_NAMES, name)
+    if m >= 0 and musics[m] != nil then music_voice = splay(musics[m], true, 45) end
+end
+
+# ---------------------------------------------------------------------------
+# The screen
+# ---------------------------------------------------------------------------
+
+let SCREEN_W = 0
+let SCREEN_H = 0
+let S = 4              # how many screen pixels each pixel of the picture is
+let VW = 256           # the picture's size, in its own pixels
+let VH = 192
+let TS = 64            # a tile's size on the screen
+let TXT = 2            # the size of writing (1 is 8 x 16 screen pixels a letter)
+let CW = 16            # a letter's width and a line's height on the screen
+let LH = 34
+
+func screen_setup()
+    SCREEN_W = gw()
+    SCREEN_H = gh()
+    S = bigger(1, smaller(SCREEN_W / 256, SCREEN_H / 192))
+    VW = SCREEN_W / S
+    VH = SCREEN_H / S
+    TS = TILE * S
+    TXT = bigger(1, S / 2)
+    CW = 8 * TXT
+    LH = 16 * TXT + 2
+end
+
+# Writing with a dark shadow under it, so it shows on anything
+func say_at(x, y, words, colour, size)
+    text(x + size, y + size, words, 0x000000, size)
+    text(x, y, words, colour, size)
+end
+
+func centre(y, words, colour, size)
+    say_at((SCREEN_W - len(words) * 8 * size) / 2, y, words, colour, size)
+end
+
+# A box for words: dark, with a purple edge
+func panel(x, y, w, h)
+    rect(x, y, w, h, PANEL_EDGE)
+    rect(x + S, y + S, w - 2 * S, h - 2 * S, PANEL)
+end
+
+# One of the little signs (hud.bmp) at x, y in the picture's pixels
+func hud_icon(n, x, y)
+    imgcol(hud_pic, x * S, y * S, 8 * S, 8 * S, n * 8, n * 8 + 8, 1, true)
+end
+
+# A sprite as big as `size` picture pixels, at screen x, y (for portraits and the title)
+func sprite_at(n, x, y, size, flip)
+    let u = n * TILE
+    if flip then
+        imgcol(spr_sheets[0], x, y, size * S, size * S, u + TILE, u, 1, true)
+    else
+        imgcol(spr_sheets[0], x, y, size * S, size * S, u, u + TILE, 1, true)
+    end
+end
+
+# ---------------------------------------------------------------------------
+# The state of a game
+# ---------------------------------------------------------------------------
+
+let place = "world"    # "world", "cave" or "lair"
+let map = []           # the map you are on, its size, its light map and what is on it
+let MW = W
+let MH = H
+let light = []
+let ents = []
+let cave_map = []
+let lair_map = []
+
+let px = 0.0           # you: where your feet are, which way you face
+let py = 0.0
+let pdir = 0
+let walked = 0         # milliseconds spent walking, for your steps
+let moving = false
+let attack_until = 0
+let swing_id = 0
+let hp = 8             # in half hearts
+let max_hp = 8
+let invuln_until = 0
+let gold = 5
+let potions = 1
+let has_sword = false  # the steel sword: twice the damage
+let has_relic = false
+let has_locket = false
+let has_charm = false
+let cursed = false     # took the shrine's offerings
+let quest = 0          # 0 hear what is wrong, 1 find the sage, 2 fetch the relic, 3 to the lair, 4 over
+let game_ms = 0        # time played (the clock of day and night)
+let day = 1
+let night = false
+let raid_on = false
+let raid_left = 0
+let village_hp = 3
+let rep = 0            # how the village thinks of you
+let stolen = 0         # crates emptied without being seen (found out at dawn)
+let caught = false
+let beggar_state = "" # "", "helped", "refused"
+let locket_known = false
+let past_known = false
+let lost_rewarded = false
+let raids_won = 0
+let raids_lost = 0
+let opened = []        # the chests and crates opened
+let burnt = 0          # how many of the village's houses have burned
+let ending = ""
+let boss_awake = false
+let boss_hp_max = 24
+let left_stairs = false
+let messages = []      # [words, when], the newest last
+let journal = []       # every message, for the journal
+let banner = ""        # a place's name shown big as you arrive
+let banner_until = 0
+let cam_x = 0.0
+let cam_y = 0.0
+let particles = []     # [x, y, x speed, y speed, until, colour, size]
+let shake_until = 0
+let rain_until = 0
+let next_rain = 0
+let amb = 1.0          # how light it is everywhere, and which sheet that is drawn from
+let amb_sheet = 0
+let dark = false       # is anything lit by lamps? (night, or underground)
+let lantern_r2 = 5776.0
+let flicker = 0.01
+let view_fires = []    # fires and chimneys on the screen this frame, for sparks and smoke
+let prompt = ""        # what E would do, shown at the bottom
+let objective = ""
+let frame_ms = 33
+let last_frame = 0
+let fps_frames = 0
+let fps_at = 0
+let fps = 0
+let saved_once = false
+
+# Add a message to the log on the screen (and the journal)
+func tell(words)
+    words = fill(words)
+    push(messages, [words, time()])
+    log_at = 0
+    push(journal, words)
+    if len(messages) > 4 then remove(messages, 0) end
+    if len(journal) > 40 then remove(journal, 0) end
+    note_event("tell: " + words)
+end
+
+# ---------------------------------------------------------------------------
+# Drawing the world
+# ---------------------------------------------------------------------------
+
+# The camera follows you, but stops at the map's edges
+func place_camera()
+    cam_x = clamp(px - VW / 2, 0, MW * TILE - VW)
+    cam_y = clamp(py - 8 - VH / 2, 0, MH * TILE - VH)
+    if time() < shake_until then
+        cam_x = cam_x + random(5) - 2
+        cam_y = cam_y + random(5) - 2
+    end
+end
+
+# How lit a point is, and from which sheet it is drawn (in light_sheet): the brightest of the
+# darkness, your lantern and the light map, as for tiles in draw_tiles
+let light_sheet = 0
+
+func light_at(x, y)
+    light_sheet = amb_sheet
+    if not dark then return 1 end
+    let level = amb
+    let dx = x - px
+    let dy = y - py
+    let d2 = dx * dx + dy * dy
+    if d2 < lantern_r2 then
+        let l = 1.0 - d2 / lantern_r2
+        if l > level then
+            level = l
+            light_sheet = 1
+        end
+    end
+    let tx = clamp(floor(x / TILE), 0, MW - 1)
+    let ty = clamp(floor(y / TILE), 0, MH - 1)
+    let l = light[ty * MW + tx] * flicker
+    if l > level then
+        level = l
+        light_sheet = 1
+    end
+    return level
+end
+
+# The tiles on the screen. Each is one imgcol() call: the tile's columns of the sheet, as big
+# as a tile on the screen, at its light
+func draw_tiles()
+    let cx = floor(cam_x)
+    let cy = floor(cam_y)
+    let tx0 = cx / TILE
+    let ty0 = cy / TILE
+    let sx0 = -(cx % TILE) * S
+    let sy0 = -(cy % TILE) * S
+    let cols = VW / TILE + 2
+    let rows = VH / TILE + 2
+    let now = time()
+    let frame3 = now / 260 % 3
+    let frame2 = now / 170 % 2
+    let windows = dark and place == "world"
+    let day_sheet = tile_sheets[amb_sheet]
+    view_fires = []
+    for r = 0 to rows - 1 do
+        let ty = ty0 + r
+        if ty < MH then
+            let sy = sy0 + r * TS
+            let row = ty * MW
+            let dy = ty * TILE + 8 - py
+            let dy2 = dy * dy
+            for c = 0 to cols - 1 do
+                let tx = tx0 + c
+                if tx < MW then
+                    let i = row + tx
+                    let t = map[i]
+                    let a = ANIM[t]
+                    if a == 3 then
+                        t = t + frame3
+                    elif a == 2 then
+                        t = t + (frame2 + tx) % 2
+                        push(view_fires, [tx * TILE + 8, ty * TILE + 4])
+                    elif t == T_ROOFR then
+                        push(view_fires, [tx * TILE + 9, ty * TILE + 2, true])
+                    end
+                    let sx = sx0 + c * TS
+                    if not dark then
+                        imgcol(day_sheet, sx, sy, TS, TS, t * TILE, t * TILE + TILE, 1, false)
+                    else
+                        if windows and t == T_WALLWIN then t = T_WINLIT end
+                        let level = amb
+                        let sheet = amb_sheet
+                        if GLOW[t] then
+                            level = 1
+                            sheet = 1
+                        else
+                            let dx = tx * TILE + 8 - px
+                            let d2 = dx * dx + dy2
+                            if d2 < lantern_r2 then
+                                let l = 1.0 - d2 / lantern_r2
+                                if l > level then
+                                    level = l
+                                    sheet = 1
+                                end
+                            end
+                            let lm = light[i]
+                            if lm > 0 then
+                                let l = lm * flicker
+                                if l > level then
+                                    level = l
+                                    sheet = 1
+                                end
+                            end
+                        end
+                        imgcol(tile_sheets[sheet], sx, sy, TS, TS, t * TILE, t * TILE + TILE, level, false)
+                    end
+                end
+            end
+        end
+    end
+end
+
+# A sprite (16 x 16) with its top left at x, y in the world, lit as the world is there
+func draw_sprite(n, x, y, flip, level, sheet)
+    let sx = (floor(x) - floor(cam_x)) * S
+    let sy = (floor(y) - floor(cam_y)) * S
+    if sx < -TS or sy < -TS or sx > SCREEN_W or sy > SCREEN_H then return end
+    let u = n * TILE
+    if flip then
+        imgcol(spr_sheets[sheet], sx, sy, TS, TS, u + TILE, u, level, true)
+    else
+        imgcol(spr_sheets[sheet], sx, sy, TS, TS, u, u + TILE, level, true)
+    end
+end
+
+# Which of a person's six pictures to show, facing `dir`, stepping or not
+func person_frame(base, dir, stepping)
+    let n = base
+    if dir == 1 then n = base + 2 end
+    if dir >= 2 then n = base + 4 end
+    if stepping then n = n + 1 end
+    return n
+end
+
+# Everything on the map that is on the screen, the furthest up first, so nearer things stand
+# in front
+func draw_ents()
+    let order = []
+    let left = cam_x - 40
+    let right = cam_x + VW + 40
+    let top = cam_y - 40
+    let bottom = cam_y + VH + 48
+    for e in ents do
+        if e[E_X] > left and e[E_X] < right and e[E_Y] > top and e[E_Y] < bottom then
+            # insert it among the others by its feet's height (a few at most, so this is quick)
+            let k = len(order)
+            while k > 0 and order[k - 1][E_Y] > e[E_Y] do k = k - 1 end
+            insert(order, k, e)
+        end
+    end
+    let you_drawn = false
+    let now = time()
+    for e in order do
+        if not you_drawn and e[E_Y] > py then
+            draw_player()
+            you_drawn = true
+        end
+        draw_ent(e, now)
+    end
+    if not you_drawn then draw_player() end
+end
+
+func draw_ent(e, now)
+    let kind = e[E_KIND]
+    let x = e[E_X]
+    let y = e[E_Y]
+    # something just hit blinks
+    if now < e[E_HURT] and now / 60 % 2 == 0 then return end
+    let level = light_at(x, y - 6)
+    let sheet = light_sheet
+    if kind == "npc" then
+        let p = e[E_DATA]
+        draw_sprite(person_frame(people[p][P_SPRITE], e[E_DIR], e[E_ANIM] / 180 % 2 == 1), x - 8, y - 15, e[E_DIR] == 2, level, sheet)
+        if has_news(p) then
+            draw_sprite(S_MARK, x - 8, y - 30 - now / 200 % 2, false, 1, 0)
+        end
+    elif kind == "mon" then
+        let m = monster_info(e[E_DATA])
+        let bob = 0
+        if m[6] then bob = floor(sin(now / 160.0 + x) * 2) end
+        if m[5] == "person" then
+            draw_sprite(person_frame(m[4], e[E_DIR], e[E_ANIM] / 160 % 2 == 1), x - 8, y - 15 + bob, e[E_DIR] == 2, level, sheet)
+        else
+            draw_sprite(m[4] + (now + floor(x) * 7) / 220 % 2, x - 8, y - 15 + bob, e[E_DIR] == 2, level, sheet)
+        end
+        # eyes that shine in the dark
+        if dark and level < 0.5 then
+            let ex = (floor(x) - floor(cam_x)) * S
+            let ey = (floor(y) - 9 + bob - floor(cam_y)) * S
+            rect(ex - 2 * S, ey, S, S, 0xFF3020)
+            rect(ex + S, ey, S, S, 0xFF3020)
+        end
+        if e[E_EXTRA] == "guardian" then
+            # the guardian is marked by a ring of light under it
+            rect((floor(x) - 6 - floor(cam_x)) * S, (floor(y) + 1 - floor(cam_y)) * S, 12 * S, S, 0xB98BE0)
+        end
+    elif kind == "boss" then
+        let frame = now / 400 % 2
+        let sx = (floor(x) - 16 - floor(cam_x)) * S
+        let sy = (floor(y) - 30 - floor(cam_y)) * S
+        let u = (threat * 2 + frame) * 32
+        imgcol(boss_pic, sx, sy, 32 * S, 32 * S, u, u + 32, bigger(level, 0.7), true)
+    elif kind == "chest" then
+        let n = S_CHEST
+        if e[E_STATE] == 1 then n = S_CHESTOPEN end
+        draw_sprite(n, x - 8, y - 13, false, level, sheet)
+    elif kind == "crate" then
+        draw_sprite(S_CRATE, x - 8, y - 13, false, level, sheet)
+    elif kind == "sign" then
+        draw_sprite(S_SIGN, x - 8, y - 14, false, level, sheet)
+    elif kind == "item" then
+        let n = S_COIN
+        if e[E_DATA] == "heart" then n = S_HEART end
+        if e[E_DATA] == "potion" then n = S_POTION end
+        draw_sprite(n, x - 8, y - 14 - now / 250 % 2, false, bigger(level, 0.6), 0)
+    elif kind == "shot" then
+        draw_sprite(S_FIREBALL, x - 8, y - 12, e[E_VX] < 0, 1, 0)
+    elif kind == "fx" then
+        draw_sprite(e[E_DATA] + (now - e[E_TIMER]) / 120 % 2, x - 8, y - 14, false, 1, 0)
+    elif kind == "grave" then
+        draw_sprite(S_BONES, x - 8, y - 14, false, level, sheet)
+    end
+end
+
+func draw_player()
+    let now = time()
+    if now < invuln_until and now / 70 % 2 == 0 then return end
+    let level = light_at(px, py - 6)
+    let attacking = now < attack_until
+    let stepping = moving and walked / 150 % 2 == 1
+    draw_sprite(person_frame(S_PLAYER, pdir, stepping or attacking), px - 8, py - 15, pdir == 2, level, light_sheet)
+    if attacking then
+        # the sword's swing, in front of you
+        let n = S_SLASH_SIDE
+        let sx = px - 8 + STEP_X[pdir] * 11
+        let sy = py - 13 + STEP_Y[pdir] * 11
+        if pdir == 0 then n = S_SLASH_DOWN end
+        if pdir == 1 then n = S_SLASH_UP end
+        draw_sprite(n, sx, sy, pdir == 2, 1, 0)
+    end
+end
+
+# Sparks, smoke, fireflies, rain: small squares that move and fade
+func add_particle(x, y, vx, vy, life, colour, size)
+    if len(particles) < 120 then push(particles, [x, y, vx, vy, time() + life, colour, size]) end
+end
+
+func burst(x, y, colour, count)
+    for k = 1 to count do
+        add_particle(x, y, (random(100) - 50) / 1.0, (random(100) - 70) / 1.0, 250 + random(300), colour, 1)
+    end
+end
+
+func update_particles(dt)
+    let now = time()
+    let secs = dt / 1000.0
+    let k = 0
+    while k < len(particles) do
+        let p = particles[k]
+        if now > p[4] then
+            remove(particles, k)
+        else
+            p[0] = p[0] + p[2] * secs
+            p[1] = p[1] + p[3] * secs
+            k = k + 1
+        end
+    end
+    # new ones: sparks over fires, smoke from chimneys, fireflies at night, rain
+    for f in view_fires do
+        if len(f) == 3 then
+            if random(100) < 4 then add_particle(f[0] + random(3), f[1], 3 + random(6), -10 - random(8), 2200, 0x8A8494, 2) end
+        elif random(100) < 7 then
+            add_particle(f[0] - 3 + random(7), f[1], random(11) - 5, -18 - random(20), 700 + random(500), pick([0xFFD060, 0xFF8040, 0xFFF4A3]), 1)
+        end
+    end
+    if place == "world" and night and random(100) < 6 then
+        add_particle(cam_x + random(VW), cam_y + random(VH), random(13) - 6, random(9) - 4, 1500 + random(1500), 0xD4EF7A, 1)
+    end
+    if place != "world" and random(100) < 5 then
+        add_particle(cam_x + random(VW), cam_y + random(VH), random(5) - 2, -3 - random(4), 2000, 0x6A6480, 1)
+    end
+    if place == "world" and lair_near() and random(100) < 20 then
+        add_particle(cam_x + random(VW), cam_y + VH, random(9) - 4, -20 - random(20), 2500, 0xB98BE0, 1)
+    end
+    if raining() then
+        for n = 1 to 4 do
+            add_particle(cam_x + random(VW + 40), cam_y - 4, -40, 260, 900, 0x8AA8D8, 0)
+        end
+    end
+end
+
+func draw_particles()
+    let cx = floor(cam_x)
+    let cy = floor(cam_y)
+    for p in particles do
+        let x = (floor(p[0]) - cx) * S
+        let y = (floor(p[1]) - cy) * S
+        if p[6] == 0 then
+            line(x, y, x - S, y + 4 * S, p[5])     # a raindrop: a short slanted streak
+        else
+            rect(x, y, p[6] * S, p[6] * S, p[5])
+        end
+    end
+end
+
+func raining()
+    return place == "world" and time() < rain_until
+end
+
+func lair_near()
+    let dx = px / TILE - lair_x
+    let dy = py / TILE - lair_y
+    return dx * dx + dy * dy < 200
+end
+
+# ---------------------------------------------------------------------------
+# Moving about
+# ---------------------------------------------------------------------------
+
+# Is the point x, y (in pixels) inside something solid? Flying things only stop at walls,
+# trees and mountains
+func blocked(x, y, fly)
+    if x < 0 or y < 0 then return true end
+    let tx = floor(x / TILE)
+    let ty = floor(y / TILE)
+    if tx >= MW or ty >= MH then return true end
+    let t = map[ty * MW + tx]
+    if fly then return SOLID[t] and not FLYOVER[t] end
+    return SOLID[t]
+end
+
+# Can something with its feet at x, y stand there? Its feet are a box 10 pixels wide and 6 high
+func box_free(x, y, fly)
+    return not (blocked(x - 5, y - 5, fly) or blocked(x + 4, y - 5, fly) or blocked(x - 5, y, fly) or blocked(x + 4, y, fly))
+end
+
+# The chests, crates and signs on the map you are on: they never move, so they are listed
+# once (by find_things) rather than looked for among everything each time you take a step
+let things = []
+
+func find_things()
+    things = []
+    for e in ents do
+        let k = e[E_KIND]
+        if k == "chest" or k == "crate" or k == "sign" then push(things, e) end
+    end
+end
+
+# Is there a chest, crate or sign in the way?
+func thing_in_way(x, y)
+    for e in things do
+        if abs(e[E_X] - x) < 11 and abs(e[E_Y] - 3 - y) < 7 then return true end
+    end
+    return false
+end
+
+func you_can_stand(x, y)
+    return box_free(x, y, false) and not thing_in_way(x, y)
+end
+
+# Move yourself by dx, dy, a direction at a time, so you slide along walls. Moving into a
+# corner that is only just in the way nudges you round it
+func move_you(dx, dy)
+    if dx != 0 then
+        if you_can_stand(px + dx, py) then
+            px = px + dx
+        elif dy == 0 and you_can_stand(px + dx, py - 5) then
+            py = py - 1
+        elif dy == 0 and you_can_stand(px + dx, py + 5) then
+            py = py + 1
+        end
+    end
+    if dy != 0 then
+        if you_can_stand(px, py + dy) then
+            py = py + dy
+        elif dx == 0 and you_can_stand(px - 5, py + dy) then
+            px = px - 1
+        elif dx == 0 and you_can_stand(px + 5, py + dy) then
+            px = px + 1
+        end
+    end
+end
+
+# Move a monster or a person the same way (they don't nudge round corners)
+func move_ent(e, dx, dy, fly)
+    if dx != 0 and box_free(e[E_X] + dx, e[E_Y], fly) then e[E_X] = e[E_X] + dx end
+    if dy != 0 and box_free(e[E_X], e[E_Y] + dy, fly) then e[E_Y] = e[E_Y] + dy end
+end
+
+# Which way something faces when it moves by dx, dy
+func facing(dx, dy, old)
+    if abs(dx) > abs(dy) then
+        if dx < 0 then return 2 end
+        return 3
+    end
+    if dy < 0 then return 1 end
+    if dy > 0 then return 0 end
+    return old
+end
+
+# ---------------------------------------------------------------------------
+# You
+# ---------------------------------------------------------------------------
+
+let push_x = 0.0       # being knocked back
+let push_y = 0.0
+let want_x = 0         # which way you are trying to go this frame (-1, 0, 1)
+let want_y = 0
+
+func update_you(dt)
+    let secs = dt / 1000.0
+    let now = time()
+    moving = want_x != 0 or want_y != 0
+    if moving then
+        let speed = SPEED
+        let under = map[clamp(floor(py / TILE), 0, MH - 1) * MW + clamp(floor(px / TILE), 0, MW - 1)]
+        if under == T_SWAMP or under == T_REEDS then speed = speed * 0.7 end
+        if now < attack_until then speed = speed * 0.45 end
+        if want_x != 0 and want_y != 0 then speed = speed * 0.72 end
+        if now >= attack_until then pdir = facing(want_x, want_y * 1.01, pdir) end
+        move_you(want_x * speed * secs, want_y * speed * secs)
+        walked = walked + dt
+    end
+    if abs(push_x) + abs(push_y) > 1 then
+        move_you(push_x * secs, push_y * secs)
+        push_x = push_x * 0.8
+        push_y = push_y * 0.8
+    end
+    if now < attack_until - 100 then hit_ahead() end
+
+    # what is under your feet: a way in, or out
+    let t = map[clamp(floor((py - 3) / TILE), 0, MH - 1) * MW + clamp(floor(px / TILE), 0, MW - 1)]
+    if place == "world" and t == T_CAVE then
+        enter_cave("cave")
+    elif place == "world" and t == T_GATEOPEN then
+        enter_cave("lair")
+    elif place != "world" then
+        if t != T_STAIRS then left_stairs = true end
+        # the stairs lead out when you walk up them (not when you only cross them)
+        if t == T_STAIRS and left_stairs and want_y < 0 then leave_cave() end
+    end
+
+    # picking things up
+    let k = 0
+    while k < len(ents) do
+        let e = ents[k]
+        if e[E_KIND] == "item" and abs(e[E_X] - px) < 10 and abs(e[E_Y] - py) < 10 then
+            let what = e[E_DATA]
+            if what == "coin" then
+                gold = gold + 3
+                sfx("coin")
+            elif what == "heart" then
+                hp = smaller(max_hp, hp + 2)
+                sfx("heal")
+            else
+                potions = potions + 1
+                sfx("coin")
+            end
+            remove(ents, k)
+        else
+            k = k + 1
+        end
+    end
+end
+
+# Swing your sword (if you aren't already)
+func swing()
+    let now = time()
+    if now < attack_until + 60 then return end
+    attack_until = now + 280
+    swing_id = swing_id + 1
+    sfx("swing")
+end
+
+# During a swing: whatever is just in front of you is hit, once a swing
+func hit_ahead()
+    let hx = px + STEP_X[pdir] * 13
+    let hy = py - 6 + STEP_Y[pdir] * 13
+    let damage = 1
+    if has_sword then damage = 2 end
+    if demo then damage = damage * 2 end
+    let k = 0
+    while k < len(ents) do
+        let e = ents[k]
+        let kind = e[E_KIND]
+        let reach = 13
+        if kind == "boss" then reach = 22 end
+        if (kind == "mon" or kind == "boss") and e[E_SWING] != swing_id and abs(e[E_X] - hx) < reach and abs(e[E_Y] - 6 - hy) < reach then
+            e[E_SWING] = swing_id
+            if kind == "boss" and not boss_awake then
+                k = k + 1
+            else
+                hurt_ent(e, damage)
+                if e[E_HP] <= 0 and kind == "mon" then
+                    kill_monster(k)
+                else
+                    k = k + 1
+                end
+            end
+        else
+            k = k + 1
+        end
+    end
+    # bushes are cut down
+    let tx = floor(hx / TILE)
+    let ty = floor(hy / TILE)
+    if tx >= 0 and ty >= 0 and tx < MW and ty < MH and map[ty * MW + tx] == T_BUSH then
+        map[ty * MW + tx] = T_GRASS2
+        burst(tx * TILE + 8, ty * TILE + 8, 0x4F9A3F, 10)
+        sfx("cut")
+        if random(100) < 18 then push(ents, new_ent("item", tile_x(tx), tile_y(ty), pick(["coin", "heart"]))) end
+    end
+end
+
+func hurt_ent(e, damage)
+    e[E_HP] = e[E_HP] - damage
+    e[E_HURT] = time() + 220
+    let dx = e[E_X] - px
+    let dy = e[E_Y] - py
+    let d = bigger(1.0, sqrt(dx * dx + dy * dy))
+    e[E_VX] = dx / d * 150
+    e[E_VY] = dy / d * 150
+    if e[E_KIND] == "boss" then
+        e[E_VX] = e[E_VX] / 4
+        e[E_VY] = e[E_VY] / 4
+    end
+    burst(e[E_X], e[E_Y] - 8, 0xFFF4A3, 6)
+    sfx("hit")
+end
+
+# A monster beaten: a puff of smoke, perhaps a coin or a heart, and what it means for the story
+func kill_monster(k)
+    let e = ents[k]
+    remove(ents, k)
+    sfx("kill")
+    let fx = new_ent("fx", e[E_X], e[E_Y], S_POOF)
+    fx[E_TIMER] = time()
+    push(ents, fx)
+    let roll = random(100)
+    if roll < 22 then
+        push(ents, new_ent("item", e[E_X], e[E_Y], "coin"))
+    elif roll < 32 and hp < max_hp then
+        push(ents, new_ent("item", e[E_X], e[E_Y], "heart"))
+    end
+    let role = e[E_EXTRA]
+    if role == "raider" and raid_on then
+        raid_left = raid_left - 1
+        if raid_left <= 0 then raid_won() end
+    elif role == "guardian" then
+        tell("The guardian of " + cave_name + " falls.")
+        note_event("event: guardian beaten")
+    elif role == "lostguard" and people[lost][P_STATE] == "lost" and count_role("lostguard") == 0 then
+        tell(people[lost][P_NAME] + " is safe. Talk to them.")
+        note_event("event: lost one freed")
+    end
+end
+
+func count_role(role)
+    let n = 0
+    for e in ents do
+        if e[E_KIND] == "mon" and e[E_EXTRA] == role then n = n + 1 end
+    end
+    return n
+end
+
+func hurt_you(damage, fx, fy)
+    let now = time()
+    if now < invuln_until then return end
+    invuln_until = now + 900
+    let dx = px - fx
+    let dy = py - fy
+    let d = bigger(1.0, sqrt(dx * dx + dy * dy))
+    push_x = dx / d * 220
+    push_y = dy / d * 220
+    shake_until = now + 200
+    sfx("hurt")
+    if demo then return end   # the demo can't lose
+    if cursed then damage = damage + 1 end
+    hp = hp - damage
+end
+
+func drink()
+    if potions <= 0 then
+        tell("You have no potions.")
+    elif hp >= max_hp then
+        tell("You are not hurt.")
+    else
+        potions = potions - 1
+        hp = smaller(max_hp, hp + 6)
+        sfx("heal")
+        burst(px, py - 8, 0xE0554A, 12)
+        tell("You drink a potion.")
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Monsters, people and the rest
+# ---------------------------------------------------------------------------
+
+func update_ents(dt)
+    let now = time()
+    let secs = dt / 1000.0
+    let k = 0
+    while k < len(ents) do
+        let e = ents[k]
+        let kind = e[E_KIND]
+        let gone = false
+        if kind == "mon" then
+            if abs(e[E_X] - px) < 320 and abs(e[E_Y] - py) < 260 or e[E_EXTRA] == "raider" then
+                update_monster(e, secs, now)
+            end
+        elif kind == "npc" then
+            if abs(e[E_X] - px) < 320 and abs(e[E_Y] - py) < 260 then update_person(e, secs, now) end
+        elif kind == "boss" then
+            update_boss(e, secs, now)
+            if e[E_HP] <= 0 then gone = true end
+        elif kind == "shot" then
+            e[E_X] = e[E_X] + e[E_VX] * secs
+            e[E_Y] = e[E_Y] + e[E_VY] * secs
+            let dx = e[E_X] - px
+            let dy = e[E_Y] - py
+            if dx * dx + dy * dy < 80 then
+                hurt_you(2, e[E_X], e[E_Y])
+                gone = true
+            elif now > e[E_TIMER] or blocked(e[E_X], e[E_Y], true) then
+                gone = true
+            end
+            if random(100) < 40 then add_particle(e[E_X], e[E_Y] - 6, 0, -10, 300, 0xFF8040, 1) end
+        elif kind == "fx" then
+            if now > e[E_TIMER] + 240 then gone = true end
+        end
+        if gone then
+            remove(ents, k)
+            if kind == "boss" then boss_beaten() end
+        else
+            k = k + 1
+        end
+    end
+end
+
+func update_monster(e, secs, now)
+    let m = monster_info(e[E_DATA])
+    let fly = m[6]
+    # knocked back after a hit
+    if now < e[E_HURT] then
+        move_ent(e, e[E_VX] * secs, e[E_VY] * secs, fly)
+        return
+    end
+    let dx = px - e[E_X]
+    let dy = py - e[E_Y]
+    let d2 = dx * dx + dy * dy
+    let sight = 92
+    if night or place != "world" then sight = 130 end
+    let speed = m[2]
+    if night then speed = speed * 1.15 end
+    let gx = 0.0
+    let gy = 0.0
+    if d2 < sight * sight then
+        # it has seen you: straight at you
+        gx = dx
+        gy = dy
+    elif e[E_EXTRA] == "raider" then
+        gx = tile_x(home_x) - e[E_X]
+        gy = tile_y(home_y + 3) - e[E_Y]
+        if gx * gx + gy * gy < 900 then
+            gx = 0
+            gy = 0
+        end
+    else
+        # wandering near where it lives, now and then stopping
+        if now > e[E_TIMER] then
+            e[E_TIMER] = now + 700 + random(1500)
+            if random(100) < 35 then
+                e[E_VX] = 0
+                e[E_VY] = 0
+            else
+                let d = random(4)
+                e[E_VX] = STEP_X[d]
+                e[E_VY] = STEP_Y[d]
+                let hx = e[E_HX] - e[E_X]
+                let hy = e[E_HY] - e[E_Y]
+                if hx * hx + hy * hy > 7000 then
+                    e[E_VX] = sign(hx)
+                    e[E_VY] = sign(hy)
+                end
+            end
+        end
+        gx = e[E_VX]
+        gy = e[E_VY]
+        speed = speed * 0.5
+    end
+    let d = sqrt(gx * gx + gy * gy)
+    if d > 0.5 then
+        let mx = gx / d * speed * secs
+        let my = gy / d * speed * secs
+        if fly then my = my + sin(now / 150.0 + e[E_HX]) * speed * secs * 0.8 end
+        move_ent(e, mx, my, fly)
+        e[E_DIR] = facing(mx, my, e[E_DIR])
+        e[E_ANIM] = e[E_ANIM] + floor(secs * 1000)
+    end
+    if d2 < 110 then hurt_you(m[3], e[E_X], e[E_Y]) end
+end
+
+# People stroll about near where they stand, and turn to face you when you come close
+func update_person(e, secs, now)
+    let p = e[E_DATA]
+    let dx = px - e[E_X]
+    let dy = py - e[E_Y]
+    if dx * dx + dy * dy < 1300 then
+        e[E_DIR] = facing(dx, dy, e[E_DIR])
+        return
+    end
+    if people[p][P_ROLE] == "lost" and people[p][P_STATE] == "lost" then return end
+    if now > e[E_TIMER] then
+        e[E_TIMER] = now + 1500 + random(2500)
+        let d = random(6)
+        if d < 4 then
+            e[E_VX] = STEP_X[d]
+            e[E_VY] = STEP_Y[d]
+        else
+            e[E_VX] = 0
+            e[E_VY] = 0
+        end
+        let hx = e[E_HX] - e[E_X]
+        let hy = e[E_HY] - e[E_Y]
+        if hx * hx + hy * hy > 500 then
+            e[E_VX] = sign(hx)
+            e[E_VY] = sign(hy)
+        end
+    end
+    if e[E_VX] != 0 or e[E_VY] != 0 then
+        move_ent(e, e[E_VX] * 14 * secs, e[E_VY] * 14 * secs, false)
+        e[E_DIR] = facing(e[E_VX], e[E_VY], e[E_DIR])
+        e[E_ANIM] = e[E_ANIM] + floor(secs * 1000)
+    end
+end
+
+# The villain: walks at you, throws fire, calls for help, and gets faster when hurt
+func update_boss(e, secs, now)
+    if not boss_awake then return end
+    if now < e[E_HURT] then
+        move_ent(e, e[E_VX] * secs, e[E_VY] * secs, false)
+        return
+    end
+    let dx = px - e[E_X]
+    let dy = py - e[E_Y]
+    let d = bigger(1.0, sqrt(dx * dx + dy * dy))
+    let angry = e[E_HP] < boss_hp_max / 2
+    let speed = 22.0
+    if angry then speed = 34.0 end
+    if d > 20 then move_ent(e, dx / d * speed * secs, dy / d * speed * secs, false) end
+    if d < 16 then hurt_you(2, e[E_X], e[E_Y]) end
+    if now > e[E_TIMER] then
+        # fire: three bolts, fanned out at you
+        e[E_TIMER] = now + 2600
+        if angry then e[E_TIMER] = now + 1700 end
+        let a = atan2(dy, dx)
+        for k = -1 to 1 do
+            let shot = new_ent("shot", e[E_X], e[E_Y] - 10, "")
+            shot[E_VX] = cos(a + k * 0.35) * 95
+            shot[E_VY] = sin(a + k * 0.35) * 95
+            shot[E_TIMER] = now + 3500
+            push(ents, shot)
+        end
+        sfx("fire")
+    end
+    if now > e[E_ANIM] then
+        # help: two of the villain's creatures, if there aren't many about
+        e[E_ANIM] = now + 9000
+        if count_role("summoned") < 4 then
+            for k = 0 to 1 do
+                let m = new_monster(pick(THREAT_MINIONS[threat]), e[E_X] - 20 + k * 40, e[E_Y] + 10)
+                m[E_EXTRA] = "summoned"
+                push(ents, m)
+                burst(m[E_X], m[E_Y] - 8, 0xB98BE0, 10)
+            end
+            sfx("roar")
+        end
+    end
+    if random(100) < 30 then add_particle(e[E_X] - 14 + random(28), e[E_Y] - random(30), 0, -15, 600, 0xB98BE0, 1) end
+end
+
+# ---------------------------------------------------------------------------
+# Day and night, and what happens while you are away
+# ---------------------------------------------------------------------------
+
+let MORNING = DAY_MS / 12   # a game starts this far into the first day
+
+# How far through the day it is, from 0 (midnight... well, the start of the morning) to 1
+func day_share()
+    return ((game_ms + MORNING) % DAY_MS) * 1.0 / DAY_MS
+end
+
+func update_time(dt)
+    game_ms = game_ms + dt
+    let f = day_share()
+    let now_night = f >= NIGHT_FROM and f < NIGHT_TO
+    if now_night and not night then
+        night = true
+        nightfall()
+    elif night and not now_night then
+        night = false
+        dawn()
+    end
+    day = (game_ms + MORNING) / DAY_MS + 1
+    # how light it is
+    if place != "world" then
+        dark = true
+        amb = 0.24
+        amb_sheet = 3
+    elif f < 0.55 then
+        dark = false
+        amb = 1.0
+        amb_sheet = 0
+    elif f < 0.63 then
+        dark = false
+        amb = 1.0
+        amb_sheet = 1
+    elif f < NIGHT_FROM then
+        dark = true
+        amb = 1.0 - (f - 0.63) / (NIGHT_FROM - 0.63) * 0.45
+        amb_sheet = 2
+    elif f < NIGHT_TO then
+        dark = true
+        amb = 0.55
+        amb_sheet = 3
+    else
+        dark = true
+        amb = 0.6 + (f - NIGHT_TO) / (1 - NIGHT_TO) * 0.4
+        amb_sheet = 2
+    end
+    if raining() then
+        dark = true
+        amb = amb * 0.78
+    end
+    flicker = (88 + random(13)) / 10000.0
+    lantern_r2 = LANTERN * LANTERN
+    if cursed then lantern_r2 = lantern_r2 * 0.5 end
+    # now and then it rains for a while
+    if game_ms > next_rain then
+        rain_until = game_ms + 25000 + random(30000)
+        next_rain = rain_until + 100000 + random(120000)
+        if place == "world" then tell("It starts to rain.") end
+    end
+    if place == "world" then
+        if night then
+            if raid_on and near_home() then music("boss") else music("night") end
+        else
+            music("day")
+        end
+    end
+end
+
+func near_home()
+    let dx = px / TILE - home_x
+    let dy = py / TILE - home_y
+    return dx * dx + dy * dy < 300
+end
+
+func nightfall()
+    sfx("bell")
+    tell("Night falls over " + vale_name + ".")
+    note_event("event: night " + day)
+    if day >= 2 and village_hp > 0 and quest < 4 then start_raid() end
+end
+
+# The villain's creatures come for the village: from all round it, a few more each night
+func start_raid()
+    raid_on = true
+    let count = smaller(3 + day, 8)
+    raid_left = count
+    for n = 0 to count - 1 do
+        let a = n * 6.283 / count
+        let tx = home_x + floor(cos(a) * 11)
+        let ty = home_y + floor(sin(a) * 9)
+        # step in towards the village until it is on open ground
+        let tries = 0
+        while tries < 10 and SOLID[world[clamp(ty, 1, H - 2) * W + clamp(tx, 1, W - 2)]] do
+            tx = tx - sign(tx - home_x)
+            ty = ty - sign(ty - home_y)
+            tries = tries + 1
+        end
+        let m = new_monster(pick(THREAT_MINIONS[threat]), tile_x(clamp(tx, 1, W - 2)), tile_y(clamp(ty, 1, H - 2)))
+        m[E_EXTRA] = "raider"
+        push(world_ents, m)
+    end
+    sfx("horn")
+    tell("A war horn sounds near " + home_name + "! The village is under attack.")
+    note_event("event: raid on night " + day)
+end
+
+func raid_won()
+    raid_on = false
+    raids_won = raids_won + 1
+    rep = rep + 2
+    gold = gold + 10
+    sfx("item")
+    tell("You drove off the raiders! " + home_name + " cheers your name. (+10 gold)")
+    note_event("event: raid defended")
+end
+
+func dawn()
+    let today = day + 1
+    tell("Day " + today + " dawns.")
+    note_event("event: dawn of day " + today)
+    if raid_on then
+        # the raiders are still there: they burn a house, take someone and are gone
+        raid_on = false
+        raids_lost = raids_lost + 1
+        village_hp = village_hp - 1
+        let k = 0
+        while k < len(world_ents) do
+            if world_ents[k][E_EXTRA] == "raider" then remove(world_ents, k) else k = k + 1 end
+        end
+        burn_house()
+        if village_hp <= 0 then
+            while burnt < len(houses) do burn_house() end
+            tell(home_name + " has burned. Its people have fled to " + hamlet_name + ".")
+            note_event("event: village razed")
+        else
+            let taken = take_villager()
+            if taken >= 0 then
+                tell("In the night, raiders burned a house in " + home_name + " and took " + people[taken][P_NAME] + ".")
+            else
+                tell("In the night, raiders burned a house in " + home_name + ".")
+            end
+            note_event("event: raid lost")
+        end
+    end
+    if quest < 4 then
+        blight_radius = smaller(16, blight_radius + 2)
+        spread_blight(blight_radius)
+    end
+    if people[lost][P_STATE] == "lost" and today >= 3 then
+        lost_dies()
+        tell("Word comes from the wild: " + people[lost][P_NAME] + " was found, too late.")
+        note_event("event: lost one died")
+    end
+    if stolen > 0 then
+        tell("In " + home_name + " they say someone has been stealing.")
+        stolen = 0
+    end
+    if beggar_state == "" and today >= 3 and people[beggar][P_STATE] == "here" then
+        people[beggar][P_STATE] = "gone"
+        remove_person(beggar)
+    end
+end
+
+# The next house of the village burns: its roof and walls go black
+func burn_house()
+    if burnt >= len(houses) then return end
+    let h = houses[burnt]
+    world[h[1] * W + h[0]] = T_BURNROOF
+    world[h[1] * W + h[0] + 1] = T_BURNROOF
+    world[(h[1] + 1) * W + h[0]] = T_BURNWALL
+    world[(h[1] + 1) * W + h[0] + 1] = T_BURNWALL
+    burnt = burnt + 1
+    world_light = light_map(world, W, H)
+    if place == "world" then light = world_light end
+end
+
+# Someone from the village is taken: a villager or the guard, never the one who asked for help
+# or the merchant
+func take_villager()
+    for p = 0 to len(people) - 1 do
+        let role = people[p][P_ROLE]
+        if people[p][P_TOWN] == 0 and people[p][P_STATE] == "here" and (role == "villager" or role == "guard") then
+            people[p][P_STATE] = "taken"
+            remove_person(p)
+            return p
+        end
+    end
+    return -1
+end
+
+func remove_person(p)
+    let k = 0
+    while k < len(world_ents) do
+        let e = world_ents[k]
+        if e[E_KIND] == "npc" and e[E_DATA] == p then remove(world_ents, k) else k = k + 1 end
+    end
+end
+
+# The lost one is found dead: bones where they were, and their guards go
+func lost_dies()
+    people[lost][P_STATE] = "dead"
+    remove_person(lost)
+    push(world_ents, new_ent("grave", tile_x(lost_x), tile_y(lost_y), lost))
+    let k = 0
+    while k < len(world_ents) do
+        if world_ents[k][E_EXTRA] == "lostguard" then remove(world_ents, k) else k = k + 1 end
+    end
+end
+
+# The lost one, saved, goes home to the village
+func lost_goes_home()
+    people[lost][P_STATE] = "saved"
+    for e in world_ents do
+        if e[E_KIND] == "npc" and e[E_DATA] == lost then
+            e[E_X] = tile_x(home_x - 3)
+            e[E_Y] = tile_y(home_y - 1)
+            e[E_HX] = e[E_X]
+            e[E_HY] = e[E_Y]
+        end
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Going underground
+# ---------------------------------------------------------------------------
+
+func enter_cave(which)
+    fade_out()
+    sfx("stairs")
+    let kind = 0
+    if which == "lair" then kind = 1 end
+    map = make_dungeon(kind)
+    ents = dungeon_ents(kind)
+    for e in ents do
+        if e[E_KIND] == "chest" and (index_of(opened, e[E_DATA]) >= 0 or (e[E_EXTRA] == "relic" and has_relic)) then e[E_STATE] = 1 end
+    end
+    place = which
+    MW = DW
+    MH = DH
+    light = light_map(map, MW, MH)
+    find_things()
+    px = tile_x(stairs_x)
+    py = tile_y(stairs_y + 1)
+    pdir = 0
+    left_stairs = false
+    boss_awake = false
+    particles = []
+    if which == "lair" then
+        show_banner(capital(lair_name))
+    else
+        show_banner(capital(cave_name))
+    end
+    music("dungeon")
+    note_event("event: enter " + which)
+end
+
+func leave_cave()
+    fade_out()
+    sfx("stairs")
+    let was = place
+    back_to_world()
+    if was == "lair" then
+        px = tile_x(lair_x)
+        py = tile_y(lair_y + 1)
+    else
+        px = tile_x(cave_x)
+        py = tile_y(cave_y + 1)
+    end
+    pdir = 0
+    note_event("event: leave " + was)
+end
+
+func back_to_world()
+    place = "world"
+    map = world
+    MW = W
+    MH = H
+    light = world_light
+    ents = world_ents
+    find_things()
+    particles = []
+    music_now = ""
+end
+
+func show_banner(words)
+    banner = words
+    banner_until = time() + 2500
+end
+
+# ---------------------------------------------------------------------------
+# Words in boxes: talking, reading, choosing
+# ---------------------------------------------------------------------------
+
+let BOX_H = 68         # the box's height, in picture pixels
+
+# The keys pressed since last asked, as what they mean in a box: "ok", "up", "down", "back"
+func press()
+    let got = ""
+    while haskey() do
+        let k = key()
+        if k == KEY_ENTER or k == ord(" ") or k == ord("e") or k == ord("E") or k == ord("j") or k == ord("J") then
+            got = "ok"
+        elif k == KEY_UP or k == ord("w") or k == ord("W") then
+            got = "up"
+        elif k == KEY_DOWN or k == ord("s") or k == ord("S") then
+            got = "down"
+        elif k == KEY_ESCAPE then
+            got = "back"
+        end
+    end
+    return got
+end
+
+# How many letters fit across the box, and how many lines down it
+func box_columns(portrait)
+    let width = SCREEN_W - 12 * S - 20 * S
+    if portrait != -1 then width = width - 56 * S end
+    return width / CW
+end
+
+func box_rows()
+    return (BOX_H * S - 16 * S - LH - 4) / LH
+end
+
+# Draw the box: a portrait (a sprite number, or 1000 + a villain), who is speaking, the
+# first `shown` letters of `lines`, and the choices, if any, once all the words are shown
+func draw_box(name, portrait, lines, shown, options, chosen)
+    let bh = BOX_H * S
+    let bx = 6 * S
+    let by = SCREEN_H - bh - 6 * S
+    let bw = SCREEN_W - 12 * S
+    panel(bx, by, bw, bh)
+    let tx = bx + 10 * S
+    if portrait != -1 then
+        rect(bx + 6 * S, by + 8 * S, 52 * S, 52 * S, 0x2B2D52)
+        if portrait >= 1000 then
+            let u = ((portrait - 1000) * 2 + time() / 400 % 2) * 32
+            imgcol(boss_pic, bx + 8 * S, by + 10 * S, 48 * S, 48 * S, u, u + 32, 1, true)
+        else
+            sprite_at(portrait, bx + 8 * S, by + 10 * S, 48, false)
+        end
+        tx = bx + 64 * S
+    end
+    let ty = by + 8 * S
+    if name != "" then
+        say_at(tx, ty, name, GOLD, TXT)
+        ty = ty + LH + 4
+    end
+    let left = shown
+    let total = 0
+    for one_line in lines do
+        total = total + len(one_line)
+        if left > 0 then
+            let part = one_line
+            if len(one_line) > left then part = sub(one_line, 0, left) end
+            say_at(tx, ty, part, INK, TXT)
+            left = left - len(one_line)
+        end
+        ty = ty + LH
+    end
+    if shown >= total then
+        if len(options) > 0 then
+            for i = 0 to len(options) - 1 do
+                if i == chosen then
+                    say_at(tx, ty, "> " + options[i], GOLD, TXT)
+                else
+                    say_at(tx, ty, "  " + options[i], DIM, TXT)
+                end
+                ty = ty + LH
+            end
+        elif time() / 300 % 2 == 0 then
+            say_at(bx + bw - 14 * S, by + bh - 6 * S - LH, "v", GOLD, TXT)
+        end
+    end
+end
+
+# Show words in the box, a page at a time, typed out a few letters a frame; with options,
+# the last page asks, and the choice's number is given back
+func show_words(name, portrait, words, options, tag)
+    words = fill(words)
+    note_event("say: " + name + ": " + sub(words, 0, smaller(len(words), 70)))
+    let lines = wrap_words(words, box_columns(portrait))
+    let rows = box_rows()
+    let pages = []
+    let page = []
+    for k = 0 to len(lines) - 1 do
+        let room = rows
+        # the last page leaves room for the choices
+        if len(lines) - k <= rows - len(options) then room = rows - len(options) end
+        if len(page) >= room then
+            push(pages, page)
+            page = []
+        end
+        push(page, lines[k])
+    end
+    push(pages, page)
+    let chosen = 0
+    for n = 0 to len(pages) - 1 do
+        let opts = []
+        if n == len(pages) - 1 then opts = options end
+        chosen = box_loop(name, portrait, pages[n], opts, tag)
+    end
+    last_frame = time()
+    return chosen
+end
+
+func box_loop(name, portrait, lines, options, tag)
+    let total = 0
+    for one_line in lines do total = total + len(one_line) end
+    let shown = 0
+    let chosen = 0
+    let done_at = 0
+    press()
+    while true do
+        draw_scene()
+        draw_box(name, portrait, lines, shown, options, chosen)
+        gshow()
+        frame(30)
+        let p = press()
+        if shown < total then
+            shown = shown + 3
+            if shown % 6 < 3 then sfx("talk") end
+            if p == "ok" then shown = total end
+            if shown >= total then done_at = time() end
+        elif demo then
+            if time() > done_at + 500 then
+                if len(options) > 0 then return demo_choice(tag, options) end
+                return 0
+            end
+        elif len(options) > 0 then
+            if p == "up" then
+                chosen = (chosen + len(options) - 1) % len(options)
+                sfx("select")
+            elif p == "down" then
+                chosen = (chosen + 1) % len(options)
+                sfx("select")
+            elif p == "ok" then
+                sfx("confirm")
+                return chosen
+            end
+        elif p == "ok" or p == "back" then
+            return 0
+        end
+    end
+end
+
+func say(name, portrait, words)
+    show_words(name, portrait, words, [], "")
+end
+
+func ask(name, portrait, words, options, tag)
+    return show_words(name, portrait, words, options, tag)
+end
+
+# "to the north-east", from one tile to another
+func way(fx, fy, tx, ty)
+    let d = direction(fx, fy, tx, ty)
+    if d == "nearby" then return "close by" end
+    return "to the " + d
+end
+
+# ---------------------------------------------------------------------------
+# What is in front of you, and using it
+# ---------------------------------------------------------------------------
+
+# The point just in front of you
+func ahead_x()
+    return px + STEP_X[pdir] * 12
+end
+
+func ahead_y()
+    return py - 5 + STEP_Y[pdir] * 12
+end
+
+# The thing (person, chest, crate, sign) nearest the point in front of you, or nil
+func thing_ahead()
+    let ax = ahead_x()
+    let ay = ahead_y()
+    let best = nil
+    let best_d = 300
+    for e in ents do
+        let k = e[E_KIND]
+        if k == "npc" or k == "chest" or k == "crate" or k == "sign" or k == "grave" then
+            let dx = e[E_X] - ax
+            let dy = e[E_Y] - 5 - ay
+            let d = dx * dx + dy * dy
+            if d < best_d then
+                best = e
+                best_d = d
+            end
+        end
+    end
+    return best
+end
+
+func tile_ahead()
+    let tx = floor(ahead_x() / TILE)
+    let ty = floor(ahead_y() / TILE)
+    if tx < 0 or ty < 0 or tx >= MW or ty >= MH then return -1 end
+    return map[ty * MW + tx]
+end
+
+# What E would do, for the hint at the bottom of the screen
+func update_prompt()
+    prompt = ""
+    let e = thing_ahead()
+    if e != nil then
+        let k = e[E_KIND]
+        if k == "npc" then prompt = "Talk" end
+        if k == "chest" and e[E_STATE] == 0 then prompt = "Open" end
+        if k == "crate" and e[E_STATE] == 0 then prompt = "Search" end
+        if k == "sign" then prompt = "Read" end
+        if k == "grave" then prompt = "Look" end
+        return
+    end
+    let t = tile_ahead()
+    if t == T_SHRINE then prompt = "Pray" end
+    if t == T_GATE then prompt = "Touch the seal" end
+    if t == T_WELL then prompt = "Drink" end
+end
+
+func use_ahead()
+    let e = thing_ahead()
+    if e != nil then
+        let k = e[E_KIND]
+        if k == "npc" then
+            talk_to(e[E_DATA])
+        elif k == "chest" then
+            open_chest(e)
+        elif k == "crate" then
+            search_crate(e)
+        elif k == "sign" then
+            say("", S_SIGN, e[E_DATA])
+        elif k == "grave" then
+            say("", S_BONES, "Here lies {lost}. Someone has laid wild flowers on the stones.")
+        end
+        return
+    end
+    let t = tile_ahead()
+    if t == T_SHRINE then
+        pray()
+    elif t == T_GATE then
+        touch_gate()
+    elif t == T_WELL then
+        if hp < max_hp then
+            hp = smaller(max_hp, hp + 1)
+            sfx("heal")
+        end
+        say("", -1, "The well water is cold and sweet.")
+    end
+end
+
+func open_chest(e)
+    if e[E_STATE] == 1 then
+        say("", S_CHESTOPEN, "It is empty.")
+        return
+    end
+    e[E_STATE] = 1
+    push(opened, e[E_DATA])
+    sfx("chest")
+    let what = e[E_EXTRA]
+    if what == "gold" then
+        let g = 10 + random(16)
+        gold = gold + g
+        sfx("coin")
+        tell("The chest holds " + g + " gold.")
+    elif what == "potion" then
+        potions = potions + 1
+        tell("You find a potion in the chest.")
+    elif what == "relic" then
+        has_relic = true
+        quest = 3
+        sfx("item")
+        note_event("event: relic found")
+        say("", relic_sprite, "You found {relic}! " + RELIC_WHY[threat])
+        say("", relic_sprite, "Now take it to {lair}, " + way(cave_x, cave_y, lair_x, lair_y) + " of the cave.")
+        set_objective()
+    elif what == "locket" then
+        has_locket = true
+        locket_known = true
+        sfx("item")
+        note_event("event: locket found")
+        say("", S_LOCKET, "A silver locket. Inside is a tiny painting of a face, and a name: {K}.")
+    end
+end
+
+func search_crate(e)
+    if e[E_STATE] == 1 then
+        say("", S_CRATE, "Empty.")
+        return
+    end
+    let owner = e[E_EXTRA]
+    let c = ask("", S_CRATE, "A crate of " + people[owner][P_NAME] + "'s, with coins in it. They aren't yours.", ["Leave it be", "Take the coins"], "crate")
+    if c == 0 then return end
+    e[E_STATE] = 1
+    push(opened, e[E_DATA])
+    gold = gold + e[E_HP]
+    # seen? anyone close by in daylight
+    let seen_by = -1
+    for o in ents do
+        if o[E_KIND] == "npc" and people[o[E_DATA]][P_ROLE] != "lost" and not night then
+            let dx = o[E_X] - px
+            let dy = o[E_Y] - py
+            if dx * dx + dy * dy < 100 * 100 then seen_by = o[E_DATA] end
+        end
+    end
+    if seen_by >= 0 then
+        caught = true
+        rep = rep - 3
+        sfx("thief")
+        tell(people[seen_by][P_NAME] + " saw you! \"Thief!\"")
+        note_event("event: caught stealing")
+    else
+        stolen = stolen + 1
+        rep = rep - 1
+        sfx("coin")
+        tell("You take " + e[E_HP] + " gold. Nobody saw.")
+        note_event("event: stole unseen")
+    end
+end
+
+func pray()
+    let options = ["Pray", "Take the offerings", "Leave"]
+    if cursed then options = ["Pray", "Give back the offerings (15 gold)", "Leave"] end
+    let c = ask("", -1, "An old shrine to the light. Before it sits a bowl of coins, left by travellers.", options, "shrine")
+    if c == 0 then
+        if cursed then
+            say("", -1, "The stone is cold under your hands. Nothing answers.")
+        else
+            hp = max_hp
+            sfx("heal")
+            burst(px, py - 8, 0x9EE6F0, 16)
+            let ok = save_game()
+            if ok then
+                say("", -1, "You kneel and pray. Warmth fills you, and your wounds close. (Your journey is saved.)")
+            else
+                say("", -1, "You kneel and pray. Warmth fills you, and your wounds close.")
+            end
+        end
+    elif c == 1 and not cursed then
+        gold = gold + 15
+        cursed = true
+        rep = rep - 1
+        sfx("thief")
+        note_event("event: shrine robbed")
+        say("", -1, "You take the coins. The shrine's light dims, and so does your lantern. Something here will not forget.")
+    elif c == 1 then
+        if gold >= 15 then
+            gold = gold - 15
+            cursed = false
+            sfx("save")
+            say("", -1, "You put the coins back. The shrine glows again, and your lantern burns brighter.")
+        else
+            say("", -1, "You don't have 15 gold.")
+        end
+    end
+end
+
+func touch_gate()
+    if has_relic then
+        sfx("gate")
+        shake_until = time() + 900
+        world[lair_y * W + lair_x] = T_GATEOPEN
+        world_light = light_map(world, W, H)
+        light = world_light
+        burst(tile_x(lair_x), tile_y(lair_y) - 8, 0xB98BE0, 30)
+        note_event("event: gate opened")
+        say("", relic_sprite, "You raise {relic}. The seal cracks like ice, and the gate grinds open.")
+    else
+        say("", -1, "A wall of violet light bars the gate. It hums under your hand. A sword is no use here.")
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Talking to people
+# ---------------------------------------------------------------------------
+
+let mourned = false
+let confessed = false
+
+# Does someone have something new to say? (They get a "!" over their head)
+func has_news(p)
+    let role = people[p][P_ROLE]
+    if role == "giver" then
+        if quest == 0 then return true end
+        if people[lost][P_STATE] == "saved" and not lost_rewarded then return true end
+        if complicit and past_known and not confessed then return true end
+    elif role == "sage" then
+        return quest == 1
+    elif role == "lost" then
+        return people[p][P_STATE] == "lost" and count_role("lostguard") == 0
+    elif role == "beggar" then
+        return beggar_state == ""
+    end
+    return false
+end
+
+func talk_to(p)
+    let role = people[p][P_ROLE]
+    people[p][P_TALKED] = people[p][P_TALKED] + 1
+    if role == "giver" then
+        talk_giver(p)
+    elif role == "sage" then
+        talk_sage(p)
+    elif role == "merchant" then
+        talk_merchant(p)
+    elif role == "lost" then
+        talk_lost(p)
+    elif role == "beggar" then
+        talk_beggar(p)
+    else
+        talk_villager(p)
+    end
+end
+
+func talk_giver(p)
+    let name = who(p)
+    let face = people[p][P_SPRITE]
+    if quest == 0 then
+        say(name, face, "Lamplighter! Thank the stars you came. Have you heard? " + villain_title + " " + THREAT_DEED[threat] + ".")
+        say(name, face, "The old stories say only {relic} can stand against them. " + RELIC_WHY[threat])
+        say(name, face, "{sage}, the sage who lives in {hamlet}, will know where it lies. {hamlet} is " + way(home_x, home_y, hamlet_x, hamlet_y) + " of here. Follow the road.")
+        if people[lost][P_STATE] == "lost" then
+            say(name, face, "And... my {rel}, {lost}, went out into the wild " + way(home_x, home_y, lost_x, lost_y) + " two days ago, and hasn't come back. If you see them, please, bring them home.")
+        end
+        say(name, face, "Go now, while it is light. Keep your lantern lit, and come back if you need us.")
+        quest = 1
+        set_objective()
+        sfx("quest")
+        note_event("event: quest given")
+        return
+    end
+    if people[lost][P_STATE] == "saved" and not lost_rewarded then
+        lost_rewarded = true
+        has_charm = true
+        max_hp = max_hp + 2
+        hp = hp + 2
+        gold = gold + 15
+        rep = rep + 2
+        sfx("item")
+        say(name, face, "You brought {lost} home! I don't have the words. Take this charm; it was my mother's, and it kept her safe all her life. And this, for the road.")
+        tell("You get the charm (one more heart) and 15 gold.")
+        note_event("event: lost one rewarded")
+        return
+    end
+    if people[lost][P_STATE] == "dead" and not mourned then
+        mourned = true
+        say(name, face, "They found my {rel}... I should have gone myself. I should have gone myself.")
+        return
+    end
+    if complicit and past_known and not confessed then
+        let c = ask(name, face, "You look at me strangely, lamplighter. What is it?", ["Is it true you " + fill(WRONG[threat]) + "?", "Nothing."], "confess")
+        if c == 0 then
+            confessed = true
+            say(name, face, "...Yes. I was young, and afraid, and the others were so sure. I have been sorry every day since. If we live through this, I will tell {V} so myself.")
+            return
+        end
+    end
+    if village_hp <= 0 then
+        say(name, face, "{home} is ashes. We will build it again, if there is anything left to build it for.")
+    elif caught then
+        say(name, face, "Everyone has heard what you did. Is this who lights our lamps now? Just... finish what you started.")
+    elif quest == 1 then
+        say(name, face, "Find {sage} in {hamlet}, " + way(home_x, home_y, hamlet_x, hamlet_y) + " of here. Hurry.")
+    elif quest == 2 then
+        say(name, face, "{relic} is in {cave}? Then go, and may the light go with you.")
+    else
+        say(name, face, "You have {relic}! Then {lair} is where it must go, " + way(home_x, home_y, lair_x, lair_y) + ". Be careful, lamplighter.")
+    end
+end
+
+# Who the villain was, and what was lost (from the sage, or the traveller)
+func tell_past(name, face)
+    say(name, face, BACKSTORY[threat])
+    if complicit then
+        say(name, face, "And {giver}... {giver} " + WRONG[threat] + ". Ask them, if you dare.")
+    end
+    say(name, face, "They say a locket of {K}'s lies in {ruin}, " + way(hamlet_x, hamlet_y, ruin_x, ruin_y) + " of {hamlet}. If {V} saw it again... who knows.")
+    past_known = true
+    locket_known = true
+    note_event("event: past told")
+end
+
+func talk_sage(p)
+    let name = who(p)
+    let face = people[p][P_SPRITE]
+    if quest == 0 then
+        say(name, face, "A lamplighter, so far from home? {giver} will be looking for you, child. Go and see them first.")
+        return
+    end
+    if quest == 1 then
+        say(name, face, "So {home} has sent its lamplighter at last. You have come about {relic}.")
+        say(name, face, "It was hidden long ago in {cave}, " + way(hamlet_x, hamlet_y, cave_x, cave_y) + " of here. Something still guards it. Take care down there; take your lantern.")
+        quest = 2
+        set_objective()
+        sfx("quest")
+        note_event("event: sage told")
+    elif quest == 2 then
+        say(name, face, "{cave} is " + way(hamlet_x, hamlet_y, cave_x, cave_y) + " of here. What guards {relic} will not give it up easily.")
+    else
+        say(name, face, "You have it. Then go to {lair}, and end this, one way or another.")
+    end
+    let c = ask(name, face, "Is there anything else?", ["Who is " + villain + "?", "Farewell."], "sage")
+    if c == 0 then tell_past(name, face) end
+end
+
+func talk_merchant(p)
+    let name = who(p)
+    let face = people[p][P_SPRITE]
+    let potion = 8
+    let sword = 30
+    let hello = "Welcome, lamplighter! Potions to mend you, and a good blade for the road."
+    if caught then
+        potion = 16
+        sword = 60
+        hello = "You. Prices have gone up. For thieves."
+    end
+    let options = ["A potion (" + potion + " gold)"]
+    if not has_sword then push(options, "A steel sword (" + sword + " gold)") end
+    push(options, "Nothing, thanks")
+    let c = ask(name, face, hello, options, "shop")
+    if c == len(options) - 1 then return end
+    let cost = potion
+    if c == 1 then cost = sword end
+    if gold < cost then
+        say(name, face, "Come back when you have the gold.")
+    elif c == 0 then
+        gold = gold - cost
+        potions = potions + 1
+        sfx("coin")
+        tell("You buy a potion.")
+    else
+        gold = gold - cost
+        has_sword = true
+        sfx("item")
+        say(name, face, "Good steel, that. It will bite twice as deep as your old blade.")
+    end
+end
+
+func talk_lost(p)
+    let name = who(p)
+    let face = people[p][P_SPRITE]
+    if people[p][P_STATE] == "lost" then
+        if count_role("lostguard") > 0 then
+            say(name, face, "Help! They've had me trapped here for days!")
+            return
+        end
+        say(name, face, "You came! Did {giver} send you? I'll run straight home, I promise. Thank you, lamplighter!")
+        lost_goes_home()
+        rep = rep + 1
+        sfx("item")
+        tell("{lost} has gone home to {home}.")
+        note_event("event: rescued")
+    else
+        say(name, face, "I'm never going out alone again. Thank you for finding me.")
+    end
+end
+
+func talk_beggar(p)
+    let name = who(p)
+    let face = people[p][P_SPRITE]
+    if beggar_state == "" then
+        let c = ask(name, face, "Spare a few coins for a hungry traveller, friend? Five would buy a hot meal.", ["Give 5 gold", "Sorry, not now"], "beggar")
+        if c == 0 then
+            if gold < 5 then
+                say(name, face, "You have barely enough for yourself. Never mind, friend.")
+                return
+            end
+            gold = gold - 5
+            rep = rep + 1
+            beggar_state = "helped"
+            sfx("coin")
+            note_event("event: traveller helped")
+            say(name, face, "Bless you! Let me give you something back: a story, about the one they call " + villain_title + ".")
+            tell_past(name, face)
+        else
+            beggar_state = "refused"
+            say(name, face, "Safe roads, then.")
+        end
+    elif beggar_state == "helped" then
+        say(name, face, "May your lamp never go out, lamplighter.")
+    else
+        say(name, face, "The traveller looks away.")
+    end
+end
+
+func talk_villager(p)
+    let name = who(p)
+    let face = people[p][P_SPRITE]
+    let role = people[p][P_ROLE]
+    let lines = []
+    if role == "hamletfolk" then
+        lines = ["{sage} knows more about the old days than anyone. Sits by that fire all day.",
+                 "Folk say lights move in " + lair_name + " at night. I don't go that way.",
+                 "{home}'s lamplighter, here? Things must be bad."]
+        if village_hp <= 0 then lines = ["The folk from {home} are sleeping in our barns. We'll manage."] end
+    elif role == "guard" then
+        lines = ["I keep watch at night, but there are too many of them. If you hear the horn, come running.",
+                 "Stay on the roads, lamplighter. The wild isn't safe after dark."]
+        if raids_won > 0 then lines = ["You held the village when it mattered. I won't forget it."] end
+    else
+        lines = ["Have you seen the sky over " + lair_name + "? It's the colour of a bruise.",
+                 "My grandmother said " + vale_name + " was never this dark, not even in winter.",
+                 "The merchant has potions, if you have the gold.",
+                 "Light the lamps tonight, lamplighter. Please."]
+        if burnt > 0 then lines = ["They burned the house next to ours. We're sleeping by the well now."] end
+        if caught then lines = ["Keep away from my things, thief."] end
+    end
+    say(name, face, lines[(people[p][P_TALKED] - 1) % len(lines)])
+end
+
+# ---------------------------------------------------------------------------
+# The quest, the villain, and the endings
+# ---------------------------------------------------------------------------
+
+func set_objective()
+    if quest == 0 then
+        objective = "Talk to " + people[giver][P_NAME] + " by the well in " + home_name + "."
+    elif quest == 1 then
+        objective = "Find " + people[sage][P_NAME] + " in " + hamlet_name + ", " + way(home_x, home_y, hamlet_x, hamlet_y) + "."
+    elif quest == 2 then
+        objective = "Fetch " + relic_name + " from " + cave_name + ", " + way(hamlet_x, hamlet_y, cave_x, cave_y) + " of " + hamlet_name + "."
+    elif quest == 3 then
+        objective = "Take " + relic_name + " to " + lair_name + ", " + way(home_x, home_y, lair_x, lair_y) + "."
+    else
+        objective = ""
+    end
+end
+
+# The places on the map, and whether you have been near them
+let seen = [true, false, false, false, false, false]
+
+func discover()
+    if place != "world" then return end
+    let spots = [[home_x, home_y], [hamlet_x, hamlet_y], [cave_x, cave_y], [lair_x, lair_y], [ruin_x, ruin_y], [shrine_x, shrine_y]]
+    let names = [home_name, hamlet_name, capital(cave_name), capital(lair_name), capital(ruin_name), "The shrine"]
+    let tx = px / TILE
+    let ty = py / TILE
+    for k = 0 to 5 do
+        let dx = spots[k][0] - tx
+        let dy = spots[k][1] - ty
+        if not seen[k] and dx * dx + dy * dy < 64 then
+            seen[k] = true
+            show_banner(names[k])
+        end
+    end
+end
+
+# In the lair: walk into the villain's hall and they turn to face you
+func check_boss()
+    if place != "lair" or boss_awake or len(rooms) == 0 then return end
+    let r = rooms[0]
+    let tx = floor(px / TILE)
+    let ty = floor(py / TILE)
+    if tx >= r[0] and tx < r[0] + r[2] and ty >= r[1] and ty < r[1] + r[3] - 1 then encounter() end
+end
+
+func the_boss()
+    for e in ents do
+        if e[E_KIND] == "boss" then return e end
+    end
+    return nil
+end
+
+func encounter()
+    boss_awake = true
+    music("boss")
+    sfx("roar")
+    shake_until = time() + 600
+    let face = 1000 + threat
+    note_event("event: villain met")
+    say(villain_title, face, BOSS_INTRO[threat])
+    let options = ["I'm here to stop you.", "Why are you doing this?"]
+    if has_locket then push(options, "Show them {K}'s locket.") end
+    for k = 0 to len(options) - 1 do options[k] = fill(options[k]) end
+    let c = ask(villain_title, face, "Well, lamplighter?", options, "boss")
+    if c == 2 then
+        say(villain_title, face, BOSS_MERCY[threat])
+        ending = "mercy"
+        return
+    end
+    if c == 1 then
+        if not past_known then
+            say(villain_title, face, "Why? Ask {home}. Ask them what they did.")
+        else
+            say(villain_title, face, "You know already. I see it in your face. Then you know they deserve this.")
+        end
+        let j = ask(villain_title, face, BOSS_JOIN[threat], ["Join " + villain + ".", "Never."], "join")
+        if j == 0 then
+            ending = "join"
+            return
+        end
+    end
+    say(villain_title, face, "Then let us see how long your little lamp burns.")
+    let b = the_boss()
+    if b != nil then
+        b[E_TIMER] = time() + 2500
+        b[E_ANIM] = time() + 7000
+    end
+    last_frame = time()
+end
+
+func boss_beaten()
+    sfx("kill")
+    shake_until = time() + 800
+    burst(px, py - 30, 0xB98BE0, 30)
+    note_event("event: villain beaten")
+    say(villain_title, 1000 + threat, BOSS_DEFEAT[threat])
+    if village_hp <= 0 then
+        ending = "ashes"
+    elif rep <= -4 then
+        ending = "unwelcome"
+    else
+        ending = "bearer"
+    end
+end
+
+# The ending's name and what it says: what happened to the vale, and to the people you met
+func ending_text()
+    let title = ""
+    let story = []
+    let after = []
+    if ending == "join" then
+        title = "The Shadow's Heir"
+        push(story, "You knelt. One by one the lamps of {home} went out, and no one lit them again.")
+        push(story, "In {vale} they still tell of the lamplighter who chose the dark. They tell it quietly, and never after sundown.")
+    elif ending == "mercy" then
+        title = "The Mended Heart"
+        push(story, "{V} wept, and the blight drew back from the land like a tide going out. By spring there was grass round {lair} again.")
+        if complicit and confessed then push(story, "{giver} walked to {lair} alone one morning, to say sorry at last. They talked until dark.") end
+    elif ending == "ashes" then
+        title = "Ashes and Embers"
+        push(story, "{V} fell, and the dark lifted. But it came too late for {home}: there was nothing left of it but ash and charcoal.")
+        push(story, "Its people crowded into {hamlet}, and in the evenings you lit the lamps there instead.")
+    elif ending == "unwelcome" then
+        title = "The Unwelcome Hero"
+        push(story, "{V} fell, and the dark lifted. But when you came home, {home} barred its doors.")
+        push(story, "They had not forgotten the thief. Someone else lights the lamps now, and you walk the roads alone.")
+    else
+        title = "The Lantern Bearer"
+        push(story, "{V} fell, and the dark lifted from {vale} like mist in the morning sun.")
+        push(story, "That night {home} lit every lamp it had, and they sang your name round the well until dawn.")
+    end
+    if ending != "join" and ending != "ashes" then
+        if burnt > 0 then push(after, home_name + " lost " + burnt + " house(s) to the raids, and built them again.") end
+        if burnt == 0 then push(after, "Not one roof in {home} was lost.") end
+    end
+    if people[lost][P_STATE] == "saved" then push(after, "{lost} came home, and never went into the wild alone again.") end
+    if people[lost][P_STATE] == "dead" then push(after, "They buried {lost} under the old oak by the well.") end
+    if people[lost][P_STATE] == "lost" then push(after, "{lost} found their own way home in the end, thin and frightened.") end
+    if beggar_state == "helped" then push(after, "Years later a traveller came back with a cart of lamp oil, and would take no money for it.") end
+    if caught or rep < 0 then push(after, "Some in {home} still lock their doors when you pass.") end
+    if cursed then push(after, "The shrine's light never came back.") end
+    return [title, story, after]
+end
+
+# ---------------------------------------------------------------------------
+# The screen as you play: the world and the signs over it
+# ---------------------------------------------------------------------------
+
+func draw_scene()
+    place_camera()
+    draw_tiles()
+    draw_ents()
+    draw_particles()
+    draw_hud()
+end
+
+let log_lines = []     # the message lines on the screen, and when they were worked out
+let log_at = 0
+
+func draw_hud()
+    let now = time()
+    # hearts, coins, potions and what you carry
+    for i = 0 to max_hp / 2 - 1 do
+        let icon = U_EMPTY
+        if hp >= i * 2 + 2 then
+            icon = U_HEART
+        elif hp == i * 2 + 1 then
+            icon = U_HALF
+        end
+        hud_icon(icon, 4 + i * 9, 4)
+    end
+    hud_icon(U_COIN, 4, 14)
+    say_at(14 * S, 13 * S, str(gold), INK, TXT)
+    hud_icon(U_POTION, 34, 14)
+    say_at(44 * S, 13 * S, str(potions), INK, TXT)
+    let x = 58
+    for item in [[has_sword, U_SWORD], [has_relic, U_RELIC], [has_locket, U_LOCKET], [has_charm, U_CHARM], [cursed, U_SKULL]] do
+        if item[0] then
+            hud_icon(item[1], x, 14)
+            x = x + 10
+        end
+    end
+    # the time of day
+    if place == "world" then
+        let icon = U_SUN
+        if night then icon = U_MOON end
+        hud_icon(icon, VW - 46, 4)
+    end
+    say_at((VW - 36) * S, 3 * S, "Day " + day, INK, TXT)
+    # what to do next
+    if objective != "" then
+        hud_icon(U_ARROW, 4, 24)
+        say_at(14 * S, 24 * S, objective, BLUE, 1)
+    end
+    if raid_on then say_at(14 * S, 24 * S + 18, "Raiders in " + home_name + ": " + raid_left, RED, 1) end
+    # the villain's strength
+    let b = nil
+    if boss_awake then b = the_boss() end
+    if b != nil then
+        let w = 120 * S
+        let bx = (SCREEN_W - w) / 2
+        rect(bx - S, (VH - 14) * S - S, w + 2 * S, 6 * S, 0x000000)
+        rect(bx, (VH - 14) * S, w * bigger(0, b[E_HP]) / boss_hp_max, 4 * S, 0xA8323E)
+        centre((VH - 26) * S, villain_title, GOLD, 1)
+    end
+    # the latest messages, fading after a while (worked out again only a few times a second)
+    if now > log_at + 250 then
+        log_at = now
+        log_lines = []
+        for m in messages do
+            if now - m[1] < 9000 then
+                for l in wrap_words(m[0], (SCREEN_W - 12 * S) / 8) do push(log_lines, [l, now - m[1]]) end
+            end
+        end
+        while len(log_lines) > 4 do remove(log_lines, 0) end
+    end
+    let lines = log_lines
+    let y = SCREEN_H - 6 * S - len(lines) * 18
+    if boss_awake then y = y - 20 * S end
+    for l in lines do
+        let colour = INK
+        if l[1] > 6500 then colour = DIM end
+        say_at(6 * S, y, l[0], colour, 1)
+        y = y + 18
+    end
+    # what E would do, the place you just came to, and the seed
+    if prompt != "" then say_at(SCREEN_W - (len(prompt) + 6) * 8 - 6 * S, SCREEN_H - 30 * S, "[E] " + prompt, GOLD, 1) end
+    if now < banner_until then centre(36 * S, banner, INK, TXT * 2) end
+    say_at(SCREEN_W - 14 * 8 - 4 * S, SCREEN_H - 20, "seed " + world_seed, DIM, 1)
+    if testing then say_at(SCREEN_W - 8 * 8 - 4 * S, 14 * S, "" + fps + " fps", DIM, 1) end
+end
+
+# A screen gently going dark
+func fade_out()
+    for k = 1 to 5 do
+        gtint(0, 0, SCREEN_W, SCREEN_H, 0x000000, 0.4)
+        gshow()
+        frame(30)
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Menus and screens
+# ---------------------------------------------------------------------------
+
+# Was any key pressed? (they are all read)
+func any_key()
+    let got = false
+    while haskey() do
+        key()
+        got = true
+    end
+    return got
+end
+
+# A list to choose from, in a box in the middle of the screen: the number chosen, or -1 for
+# Escape
+func menu(title, options)
+    let chosen = 0
+    press()
+    while true do
+        draw_scene()
+        let longest = len(title)
+        for o in options do longest = bigger(longest, len(o) + 2) end
+        let w = longest * CW + 24 * S
+        let h = (len(options) + 1) * LH + 20 * S
+        let x = (SCREEN_W - w) / 2
+        let y = (SCREEN_H - h) / 2
+        panel(x, y, w, h)
+        say_at(x + 12 * S, y + 8 * S, title, GOLD, TXT)
+        for i = 0 to len(options) - 1 do
+            let colour = DIM
+            let mark = "  "
+            if i == chosen then
+                colour = INK
+                mark = "> "
+            end
+            say_at(x + 12 * S, y + 8 * S + (i + 1) * LH + 4, mark + options[i], colour, TXT)
+        end
+        gshow()
+        frame(30)
+        let p = press()
+        if p == "up" then
+            chosen = (chosen + len(options) - 1) % len(options)
+            sfx("select")
+        elif p == "down" then
+            chosen = (chosen + 1) % len(options)
+            sfx("select")
+        elif p == "ok" then
+            sfx("confirm")
+            last_frame = time()
+            return chosen
+        elif p == "back" then
+            last_frame = time()
+            return -1
+        end
+    end
+end
+
+func pause_menu()
+    while true do
+        let c = menu("Paused", ["Back to the game", "Journal", "Map", "Save the game", "Quit to the title", "Quit Lantern"])
+        if c <= 0 then return "" end
+        if c == 1 then show_journal() end
+        if c == 2 then show_map() end
+        if c == 3 then
+            if save_game() then
+                tell("Your journey is saved.")
+                sfx("save")
+            else
+                tell("The game could not be saved.")
+            end
+            return ""
+        end
+        if c == 4 then return "title" end
+        if c == 5 then return "quit" end
+    end
+end
+
+# What you know so far, as sentences
+func facts()
+    let f = []
+    if quest >= 1 then
+        push(f, villain_title + " " + THREAT_DEED[threat] + ".")
+        push(f, "Only " + relic_name + " can stop them.")
+    end
+    if quest == 1 then push(f, people[sage][P_NAME] + " in " + hamlet_name + " knows where it is.") end
+    if quest == 2 then push(f, capital(relic_name) + " lies in " + cave_name + ".") end
+    if has_relic then push(f, "You carry " + relic_name + ". " + capital(lair_name) + " waits, " + way(home_x, home_y, lair_x, lair_y) + " of " + home_name + ".") end
+    let state = people[lost][P_STATE]
+    if state == "lost" and quest >= 1 then push(f, fill("{lost}, {giver}'s {rel}, is lost in the wild, " + way(home_x, home_y, lost_x, lost_y) + " of {home}.")) end
+    if state == "saved" then push(f, fill("You brought {lost} home.")) end
+    if state == "dead" then push(f, fill("{lost} was found too late.")) end
+    if past_known then push(f, fill(BACKSTORY[threat])) end
+    if locket_known and not has_locket then push(f, fill("A locket of {K}'s lies in {ruin}.")) end
+    if has_locket then push(f, fill("You carry {K}'s locket.")) end
+    if village_hp <= 0 then
+        push(f, home_name + " has burned.")
+    elif burnt > 0 then
+        push(f, "Raiders have burned " + burnt + " house(s) in " + home_name + ".")
+    end
+    let word = "their lamplighter"
+    if rep >= 4 then word = "a hero" end
+    if rep < 0 then word = "someone to watch" end
+    if rep <= -4 or caught then word = "a thief" end
+    push(f, home_name + " thinks of you as " + word + ".")
+    return f
+end
+
+func show_journal()
+    any_key()
+    while true do
+        draw_scene()
+        let x = 10 * S
+        let y = 10 * S
+        panel(x - 4 * S, y - 4 * S, SCREEN_W - 12 * S, SCREEN_H - 12 * S)
+        say_at(x + 4 * S, y, "Journal", GOLD, TXT)
+        say_at(x + 4 * S + 10 * CW, y + 8, capital(vale_name) + "   day " + day + "   seed " + world_seed, DIM, 1)
+        y = y + LH + 4 * S
+        # what you carry
+        let things = [[true, U_COIN, gold + " gold"], [true, U_POTION, potions + " potion(s)"],
+                      [true, U_SWORD, has_sword and "a steel sword" or "your old sword"],
+                      [has_relic, U_RELIC, relic_name], [has_locket, U_LOCKET, kin_name + "'s locket"],
+                      [has_charm, U_CHARM, "a charm (one more heart)"],
+                      [cursed, U_SKULL, "the shrine's curse (a dim lantern; you are hurt more)"]]
+        for t in things do
+            if t[0] then
+                hud_icon(t[1], (x / S) + 4, y / S)
+                say_at(x + 16 * S, y, t[2], INK, 1)
+                y = y + 10 * S
+            end
+        end
+        y = y + 4 * S
+        say_at(x + 4 * S, y, "What you know", GOLD, 1)
+        y = y + 20
+        let width = (SCREEN_W - 40 * S) / 8
+        for fact in facts() do
+            for l in wrap_words(fact, width) do
+                if y < SCREEN_H - 90 * S then
+                    say_at(x + 8 * S, y, l, INK, 1)
+                    y = y + 18
+                end
+            end
+            y = y + 4
+        end
+        y = SCREEN_H - 84 * S
+        say_at(x + 4 * S, y, "Lately", GOLD, 1)
+        y = y + 20
+        let first = bigger(0, len(journal) - 8)
+        for k = first to len(journal) - 1 do
+            say_at(x + 8 * S, y, sub(journal[k], 0, smaller(len(journal[k]), width)), DIM, 1)
+            y = y + 18
+        end
+        gshow()
+        frame(20)
+        if any_key() then
+            last_frame = time()
+            return
+        end
+    end
+end
+
+# The map of the vale: a picture of it a pixel a tile, built as a BMP (like Maze 3D's map)
+# and drawn big, with the places you know and where you are
+func put_number(data, at, n)
+    data[at] = n % 256
+    data[at + 1] = n / 256 % 256
+    data[at + 2] = n / 65536 % 256
+    data[at + 3] = n / 16777216
+end
+
+func map_picture()
+    let row = W * 3     # 240 bytes a row, already a multiple of 4 (BMP rows must be)
+    let pic = bytes(54 + row * H)
+    pic[0] = ord("B")
+    pic[1] = ord("M")
+    put_number(pic, 2, 54 + row * H)
+    put_number(pic, 10, 54)
+    put_number(pic, 14, 40)
+    put_number(pic, 18, W)
+    put_number(pic, 22, H)
+    pic[26] = 1
+    pic[28] = 24
+    for y = 0 to H - 1 do
+        let at = 54 + (H - 1 - y) * row
+        for x = 0 to W - 1 do
+            let c = MAPCOL[world[y * W + x]]
+            pic[at] = c[2]
+            pic[at + 1] = c[1]
+            pic[at + 2] = c[0]
+            at = at + 3
+        end
+    end
+    return pic
+end
+
+func show_map()
+    let pic = map_picture()
+    let m = smaller((SCREEN_W - 20 * S) / W, (SCREEN_H - 40 * S) / H)
+    let mx = (SCREEN_W - W * m) / 2
+    let my = (SCREEN_H - H * m) / 2 + 6 * S
+    let spots = [[home_x, home_y, home_name, true], [hamlet_x, hamlet_y, hamlet_name, quest >= 1 or seen[1]],
+                 [cave_x, cave_y, capital(cave_name), quest >= 2 or seen[2]],
+                 [lair_x, lair_y, capital(lair_name), quest >= 3 or seen[3]],
+                 [ruin_x, ruin_y, capital(ruin_name), locket_known or seen[4]],
+                 [shrine_x, shrine_y, "Shrine", seen[5]]]
+    any_key()
+    while true do
+        gclear(NIGHT_SKY)
+        centre(6 * S, capital(vale_name), GOLD, TXT)
+        rect(mx - S, my - S, W * m + 2 * S, H * m + 2 * S, PANEL_EDGE)
+        image(pic, mx, my, W * m, H * m)
+        for s in spots do
+            if s[3] then
+                let sx = mx + s[0] * m + m / 2
+                let sy = my + s[1] * m + m / 2
+                rect(sx - 2 * S, sy - 2 * S, 4 * S, 4 * S, 0x000000)
+                rect(sx - S, sy - S, 2 * S, 2 * S, GOLD)
+                say_at(sx + 4 * S, sy - 8, s[2], INK, 1)
+            end
+        end
+        if place == "world" and time() / 300 % 2 == 0 then
+            let yx = mx + floor(px / TILE) * m
+            let yy = my + floor(py / TILE) * m
+            rect(yx - S, yy - S, m + 2 * S, m + 2 * S, 0xFFFFFF)
+        end
+        centre(SCREEN_H - 14 * S, "Any key to close", DIM, 1)
+        gshow()
+        frame(20)
+        if any_key() then
+            last_frame = time()
+            return
+        end
+    end
+end
+
+# The title: the very vale you are about to play, drifting by in the late afternoon sun
+func title_screen()
+    music("title")
+    let chosen = 0
+    let start = time()
+    press()
+    while true do
+        let options = ["New journey"]
+        if isf(SAVE_FILE) then push(options, "Continue") end
+        push(options, "Choose a seed")
+        push(options, "Quit")
+        let t = (time() - start) / 1000.0
+        cam_x = (sin(t / 17.0) * 0.5 + 0.5) * (W * TILE - VW)
+        cam_y = (cos(t / 23.0) * 0.5 + 0.5) * (H * TILE - VH)
+        px = cam_x + VW / 2
+        py = cam_y + VH / 2
+        dark = false
+        amb_sheet = 1
+        draw_tiles()
+        update_particles(33)
+        draw_particles()
+        let size = imgsz(logo_pic)
+        let zoom = bigger(1, (SCREEN_W * 7 / 10) / size[0])
+        let lw = size[0] * zoom
+        gtint(0, 20 * S, SCREEN_W, size[1] * zoom + 26 * S, 0x000000, 0.45)
+        imgcol(logo_pic, (SCREEN_W - lw) / 2, 26 * S, lw, size[1] * zoom, 0, size[0], 1, true)
+        centre(26 * S + size[1] * zoom + 4 * S, "a tale of " + vale_name, INK, TXT)
+        let h = len(options) * LH + 16 * S
+        let w = 22 * CW
+        let x = (SCREEN_W - w) / 2
+        let y = SCREEN_H / 2 + 10 * S
+        panel(x, y, w, h)
+        for i = 0 to len(options) - 1 do
+            let colour = DIM
+            let mark = "  "
+            if i == chosen then
+                colour = GOLD
+                mark = "> "
+            end
+            say_at(x + 10 * S, y + 8 * S + i * LH, mark + options[i], colour, TXT)
+        end
+        centre(SCREEN_H - 12 * S, "Seed " + world_seed + "    Arrows and Enter to choose", INK, 1)
+        gshow()
+        frame(30)
+        let p = press()
+        if p == "up" then
+            chosen = (chosen + len(options) - 1) % len(options)
+            sfx("select")
+        elif p == "down" then
+            chosen = (chosen + 1) % len(options)
+            sfx("select")
+        elif p == "back" then
+            return "quit"
+        elif p == "ok" then
+            sfx("confirm")
+            let o = options[chosen]
+            if o == "New journey" then return "new" end
+            if o == "Continue" then return "continue" end
+            if o == "Quit" then return "quit" end
+            let s = enter_seed()
+            if s > 0 then
+                weaving()
+                world_seed = s
+                make_world(s)
+                back_to_world()
+                music("title")
+            end
+            chosen = 0
+        end
+    end
+end
+
+func weaving()
+    gclear(NIGHT_SKY)
+    centre(SCREEN_H / 2 - 8 * S, "Weaving a new world...", DIM, TXT)
+    gshow()
+end
+
+# Type a seed: its digits, then Enter (Escape gives up)
+func enter_seed()
+    let typed = ""
+    any_key()
+    while true do
+        gclear(NIGHT_SKY)
+        centre(SCREEN_H / 2 - 30 * S, "Choose a seed", GOLD, TXT)
+        centre(SCREEN_H / 2 - 16 * S, "The same seed always makes the same vale.", DIM, 1)
+        let cursor = " "
+        if time() / 400 % 2 == 0 then cursor = "_" end
+        centre(SCREEN_H / 2, typed + cursor, INK, TXT * 2)
+        centre(SCREEN_H / 2 + 26 * S, "Type the numbers, then Enter. Escape to go back.", DIM, 1)
+        gshow()
+        frame(20)
+        while haskey() do
+            let k = key()
+            if k >= ord("0") and k <= ord("9") and len(typed) < 9 then
+                typed = typed + chr(k)
+                sfx("select")
+            elif k == KEY_BACKSPACE and len(typed) > 0 then
+                typed = sub(typed, 0, len(typed) - 1)
+            elif k == KEY_ENTER and typed != "" and int(typed) > 0 then
+                return int(typed)
+            elif k == KEY_ESCAPE then
+                return -1
+            end
+        end
+    end
+end
+
+func intro()
+    say("", -1, capital(vale_name) + ". Every dusk you light the lamps of {home}, as your mother did, and her mother before her.")
+    say("", -1, "But the nights have grown long and strange. " + villain_title + " " + THREAT_DEED[threat] + ".")
+    say("", -1, "This morning, word came from " + who(giver) + ": come to the well. It is urgent.")
+    tell("Arrows or WASD walk, Space swings, E talks. Tab: journal, M: map, Esc: pause.")
+end
+
+# The end: the vale at dawn behind the story of what became of it
+func ending_screen()
+    music("ending")
+    let words = ending_text()
+    note_event("ending: " + words[0])
+    note_event("THE END")
+    back_to_world()
+    music_now = "ending"
+    px = tile_x(home_x)
+    py = tile_y(home_y)
+    quest = 4
+    let start = time()
+    any_key()
+    while true do
+        place_camera()
+        dark = ending == "join"
+        amb = 0.5
+        amb_sheet = 3
+        if not dark then amb_sheet = 1 end
+        draw_tiles()
+        update_particles(33)
+        draw_particles()
+        let x = 20 * S
+        let w = SCREEN_W - 40 * S
+        panel(x, 16 * S, w, SCREEN_H - 32 * S)
+        let y = 26 * S
+        centre(y, words[0], GOLD, TXT * 2)
+        y = y + 40 * S
+        let width = (w - 20 * S) / 8
+        for part in [words[1], words[2]] do
+            for paragraph in part do
+                for l in wrap_words(fill(paragraph), width) do
+                    say_at(x + 10 * S, y, l, INK, 1)
+                    y = y + 18
+                end
+                y = y + 8
+            end
+            y = y + 4 * S
+        end
+        let held = raids_won + raids_lost
+        centre(SCREEN_H - 40 * S, "Seed " + world_seed + "    " + day + " day(s)    raids held: " + raids_won + " of " + held, DIM, 1)
+        centre(SCREEN_H - 30 * S, "THE END    (Enter for the title)", DIM, 1)
+        gshow()
+        frame(30)
+        if demo and time() > start + 4000 then return end
+        if time() > start + 1500 and press() == "ok" then return end
+    end
+end
+
+# You fell: try again from the last save, from the start of this world, or go back to the
+# title
+func death_screen()
+    sfx("death")
+    music("")
+    let start = time()
+    while time() < start + 1500 do
+        gtint(0, 0, SCREEN_W, SCREEN_H, 0x300010, 0.12)
+        gshow()
+        frame(30)
+    end
+    let options = ["Start this world again", "Back to the title"]
+    if isf(SAVE_FILE) then options = ["Wake at your last prayer (load)", "Start this world again", "Back to the title"] end
+    let c = menu("You have fallen.", options)
+    if c < 0 then c = len(options) - 1 end
+    let o = options[c]
+    if o == "Back to the title" then return "title" end
+    if o == "Start this world again" then return "again" end
+    return "load"
+end
+
+# ---------------------------------------------------------------------------
+# Saving: the seed makes the world again, so only what has changed is kept
+# ---------------------------------------------------------------------------
+
+func flag(b)
+    if b then return "1" end
+    return "0"
+end
+
+func save_game()
+    if demo then return false end
+    let sx = px
+    let sy = py
+    if place == "cave" then
+        sx = tile_x(cave_x)
+        sy = tile_y(cave_y + 1)
+    elif place == "lair" then
+        sx = tile_x(lair_x)
+        sy = tile_y(lair_y + 1)
+    end
+    let states = []
+    for p in people do push(states, p[P_STATE]) end
+    let lines = ["lantern 1", "seed=" + world_seed, "x=" + floor(sx), "y=" + floor(sy),
+                 "hp=" + hp, "max_hp=" + max_hp, "gold=" + gold, "potions=" + potions,
+                 "sword=" + flag(has_sword), "relic=" + flag(has_relic), "locket=" + flag(has_locket),
+                 "charm=" + flag(has_charm), "cursed=" + flag(cursed), "quest=" + quest,
+                 "time=" + game_ms, "village=" + village_hp, "rep=" + rep, "caught=" + flag(caught),
+                 "beggar=" + beggar_state, "locket_known=" + flag(locket_known), "past=" + flag(past_known),
+                 "rewarded=" + flag(lost_rewarded), "won=" + raids_won, "lost=" + raids_lost,
+                 "burnt=" + burnt, "blight=" + blight_radius, "raid=" + flag(raid_on),
+                 "gate=" + flag(world[lair_y * W + lair_x] == T_GATEOPEN),
+                 "mourned=" + flag(mourned), "confessed=" + flag(confessed),
+                 "opened=" + join(opened, ","), "people=" + join(states, ","),
+                 "seen=" + flag(seen[1]) + flag(seen[2]) + flag(seen[3]) + flag(seen[4]) + flag(seen[5])]
+    let ok = wrf(SAVE_FILE, join(lines, "\n") + "\n")
+    if ok then
+        sync()
+        note_event("event: saved")
+    end
+    return ok
+end
+
+# A saved value by its name ("" if it isn't there)
+let saved_keys = []
+let saved_values = []
+
+func saved(name)
+    let k = index_of(saved_keys, name)
+    if k < 0 then return "" end
+    return saved_values[k]
+end
+
+func saved_number(name)
+    let n = int(saved(name))
+    if n == nil then return 0 end
+    return n
+end
+
+func load_game()
+    let text = rdf(SAVE_FILE)
+    if text == nil then return false end
+    saved_keys = []
+    saved_values = []
+    for one_line in split(text, "\n") do
+        let at = find(one_line, "=")
+        if at > 0 then
+            push(saved_keys, sub(one_line, 0, at))
+            push(saved_values, sub(one_line, at + 1, len(one_line) - at - 1))
+        end
+    end
+    if saved_number("seed") <= 0 then return false end
+    weaving()
+    world_seed = saved_number("seed")
+    make_world(world_seed)
+    reset_state()
+    px = saved_number("x")
+    py = saved_number("y")
+    hp = saved_number("hp")
+    max_hp = saved_number("max_hp")
+    gold = saved_number("gold")
+    potions = saved_number("potions")
+    has_sword = saved("sword") == "1"
+    has_relic = saved("relic") == "1"
+    has_locket = saved("locket") == "1"
+    has_charm = saved("charm") == "1"
+    cursed = saved("cursed") == "1"
+    quest = saved_number("quest")
+    game_ms = saved_number("time")
+    village_hp = saved_number("village")
+    rep = saved_number("rep")
+    caught = saved("caught") == "1"
+    beggar_state = saved("beggar")
+    locket_known = saved("locket_known") == "1"
+    past_known = saved("past") == "1"
+    lost_rewarded = saved("rewarded") == "1"
+    raids_won = saved_number("won")
+    raids_lost = saved_number("lost")
+    mourned = saved("mourned") == "1"
+    confessed = saved("confessed") == "1"
+    # the world as it was: houses burned, blight spread, the gate open
+    let b = saved_number("burnt")
+    while burnt < b do burn_house() end
+    blight_radius = bigger(5, saved_number("blight"))
+    spread_blight(blight_radius)
+    if saved("gate") == "1" then
+        world[lair_y * W + lair_x] = T_GATEOPEN
+        world_light = light_map(world, W, H)
+    end
+    if saved("opened") != "" then opened = split(saved("opened"), ",") end
+    for e in world_ents do
+        if (e[E_KIND] == "chest" or e[E_KIND] == "crate") and index_of(opened, e[E_DATA]) >= 0 then e[E_STATE] = 1 end
+    end
+    let states = split(saved("people"), ",")
+    for p = 0 to smaller(len(states), len(people)) - 1 do
+        let s = states[p]
+        if s == "taken" or s == "gone" then
+            people[p][P_STATE] = s
+            remove_person(p)
+        elif s == "dead" then
+            lost_dies()
+        elif s == "saved" then
+            lost_goes_home()
+        end
+    end
+    if people[lost][P_STATE] != "lost" then
+        let k = 0
+        while k < len(world_ents) do
+            if world_ents[k][E_EXTRA] == "lostguard" then remove(world_ents, k) else k = k + 1 end
+        end
+    end
+    let s = saved("seen")
+    for k = 1 to 5 do
+        if len(s) >= k then seen[k] = sub(s, k - 1, 1) == "1" end
+    end
+    back_to_world()
+    let f = day_share()
+    night = f >= NIGHT_FROM and f < NIGHT_TO
+    day = (game_ms + MORNING) / DAY_MS + 1
+    if saved("raid") == "1" and night then start_raid() end
+    set_objective()
+    tell("Welcome back, lamplighter.")
+    note_event("event: loaded")
+    return true
+end
+
+# Everything about a game back to how it starts
+func reset_state()
+    hp = 8
+    max_hp = 8
+    gold = 5
+    potions = 1
+    has_sword = false
+    has_relic = false
+    has_locket = false
+    has_charm = false
+    cursed = false
+    quest = 0
+    game_ms = 0
+    day = 1
+    night = false
+    raid_on = false
+    raid_left = 0
+    village_hp = 3
+    rep = 0
+    stolen = 0
+    caught = false
+    beggar_state = ""
+    locket_known = false
+    past_known = false
+    lost_rewarded = false
+    raids_won = 0
+    raids_lost = 0
+    opened = []
+    burnt = 0
+    ending = ""
+    boss_awake = false
+    messages = []
+    journal = []
+    particles = []
+    mourned = false
+    confessed = false
+    seen = [true, false, false, false, false, false]
+    rain_until = 0
+    next_rain = 150000 + random(120000)
+    attack_until = 0
+    invuln_until = 0
+    push_x = 0.0
+    push_y = 0.0
+    music_now = ""
+end
+
+func new_game()
+    reset_state()
+    back_to_world()
+    px = tile_x(home_x - 1)
+    py = tile_y(home_y + 3)
+    pdir = 1
+    set_objective()
+    note_event("event: new game, seed " + world_seed)
+    draw_scene()
+    intro()
+    last_frame = time()
+end
+
+# ---------------------------------------------------------------------------
+# The demo: the game playing itself, for the tests
+# ---------------------------------------------------------------------------
+#
+# It decides where to go next from how far the story has got (demo_goal), finds the way there
+# with a "step map" (how many steps every tile is from the goal, counted outwards from it), and
+# walks downhill on it, a tile at a time. It fights whatever comes close, talks to whoever it
+# came to see, and chooses in conversations what demo_choice says. It can't be hurt.
+
+let demo_end = "fight"     # how it answers the villain: "fight", "mercy" or "join"
+let demo_action = ""
+let demo_person = 0
+let demo_goal = [-1, -1, ""]
+let demo_said = ""
+let demo_steps = []
+let demo_steps_at = 0
+let demo_next_swing = 0
+let demo_was = [0.0, 0.0, 0]
+let demo_wiggle_until = 0
+let demo_wiggle = 0
+
+func demo_choice(tag, options)
+    if tag == "boss" then
+        if demo_end == "mercy" and len(options) > 2 then return 2 end
+        if demo_end == "join" then return 1 end
+        return 0
+    end
+    if tag == "join" then
+        if demo_end == "join" then return 0 end
+        return 1
+    end
+    if tag == "sage" then
+        if demo_end == "mercy" then return 0 end
+        return 1
+    end
+    if tag == "shop" or tag == "confess" then return len(options) - 1 end
+    return 0
+end
+
+# The entity of a person, or a chest by its name
+func find_npc(p)
+    for e in ents do
+        if e[E_KIND] == "npc" and e[E_DATA] == p then return e end
+    end
+    return nil
+end
+
+func find_chest(name)
+    for e in ents do
+        if e[E_KIND] == "chest" and e[E_DATA] == name then return e end
+    end
+    return nil
+end
+
+# Where to go next, as [tile x, tile y, "walk" onto it, or "use" what is there]
+func demo_target()
+    if place == "cave" then
+        let c = find_chest("relic")
+        if not has_relic and c != nil then return [floor(c[E_X] / TILE), floor(c[E_Y] / TILE), "use"] end
+        return [stairs_x, stairs_y, "walk"]
+    end
+    if place == "lair" then
+        let b = the_boss()
+        if b != nil then return [floor(b[E_X] / TILE), floor(b[E_Y] / TILE), "walk"] end
+        return [stairs_x, stairs_y, "walk"]
+    end
+    if quest == 0 then return person_target(giver) end
+    if people[lost][P_STATE] == "lost" and quest >= 1 then
+        if count_role("lostguard") > 0 then return [lost_x, lost_y, "walk"] end
+        return person_target(lost)
+    end
+    if people[lost][P_STATE] == "saved" and not lost_rewarded then return person_target(giver) end
+    if quest == 1 then return person_target(sage) end
+    if demo_end == "mercy" and not has_locket then
+        let c = find_chest("w0")
+        return [floor(c[E_X] / TILE), floor(c[E_Y] / TILE), "use"]
+    end
+    if quest == 2 then return [cave_x, cave_y, "walk"] end
+    if world[lair_y * W + lair_x] == T_GATE then return [lair_x, lair_y, "use"] end
+    return [lair_x, lair_y, "walk"]
+end
+
+func person_target(p)
+    let e = find_npc(p)
+    if e == nil then return [home_x, home_y + 3, "walk"] end
+    return [floor(e[E_X] / TILE), floor((e[E_Y] - 4) / TILE), "use", p]
+end
+
+# How many steps every tile of the map is from the goal (-1: can't get there)
+func step_map(gx, gy)
+    let steps = list(MW * MH, -1)
+    let goal = gy * MW + gx
+    # chests, crates and signs are in the way as much as walls are
+    let in_way = list(MW * MH, false)
+    for e in ents do
+        let k = e[E_KIND]
+        if k == "chest" or k == "crate" or k == "sign" then
+            in_way[floor((e[E_Y] - 3) / TILE) * MW + floor(e[E_X] / TILE)] = true
+        end
+    end
+    steps[goal] = 0
+    let queue = [goal]
+    let n = 0
+    while n < len(queue) do
+        let at = queue[n]
+        n = n + 1
+        let x = at % MW
+        let y = at / MW
+        for d = 0 to 3 do
+            let nx = x + STEP_X[d]
+            let ny = y + STEP_Y[d]
+            if nx >= 0 and ny >= 0 and nx < MW and ny < MH then
+                let next = ny * MW + nx
+                # (the stairs out of a cave are a way only to themselves)
+                if steps[next] < 0 and not SOLID[map[next]] and not in_way[next] and map[next] != T_STAIRS then
+                    steps[next] = steps[at] + 1
+                    push(queue, next)
+                end
+            end
+        end
+    end
+    return steps
+end
+
+func demo_think()
+    want_x = 0
+    want_y = 0
+    demo_action = ""
+    let now = time()
+    # anything to fight close by?
+    let foe = nil
+    let foe_d = 30 * 30
+    for e in ents do
+        if e[E_KIND] == "mon" or (e[E_KIND] == "boss" and boss_awake) then
+            let dx = e[E_X] - px
+            let dy = e[E_Y] - py
+            let d = dx * dx + dy * dy
+            if e[E_KIND] == "boss" then d = d - 300 end
+            if d < foe_d then
+                foe = e
+                foe_d = d
+            end
+        end
+    end
+    if foe != nil then
+        let dx = foe[E_X] - px
+        let dy = foe[E_Y] - py
+        pdir = facing(dx, dy, pdir)
+        if now > demo_next_swing then
+            demo_action = "swing"
+            demo_next_swing = now + 320
+        end
+        if abs(dx) > abs(dy) and abs(dx) > 14 then want_x = sign(dx) end
+        if abs(dy) >= abs(dx) and abs(dy) > 14 then want_y = sign(dy) end
+        return
+    end
+    let goal = demo_target()
+    let said = place + " " + goal[0] + "," + goal[1] + " " + goal[2]
+    if said != demo_said then
+        demo_said = said
+        note_event("demo: to " + said + " at " + game_ms / 1000 + " s")
+        demo_steps_at = 0
+    end
+    if now > demo_steps_at then
+        demo_steps = step_map(goal[0], goal[1])
+        demo_steps_at = now + 1500
+    end
+    let tx = floor(px / TILE)
+    let ty = floor((py - 3) / TILE)
+    let gx = goal[0] * TILE + 8
+    let gy = goal[1] * TILE + 11
+    if goal[2] == "use" then
+        # next to it (above, below or beside, not on a corner): line up with it, face it, use it
+        let ox = goal[0] - tx
+        let oy = goal[1] - ty
+        if abs(ox) + abs(oy) == 1 then
+            let cx = tx * TILE + 8
+            let cy = ty * TILE + 11
+            if ox == 0 and abs(px - cx) > 3 then
+                want_x = sign(cx - px)
+            elif oy == 0 and abs(py - cy) > 3 then
+                want_y = sign(cy - py)
+            else
+                pdir = facing(ox, oy, pdir)
+                demo_action = "use"
+                # someone it came to see: talk to them, not to whoever else is standing by
+                if len(goal) > 3 then
+                    demo_action = "talk"
+                    demo_person = goal[3]
+                end
+            end
+            return
+        end
+        # (people walk about: one close enough is as good as next to them)
+        if len(goal) > 3 and abs(gx - px) < 18 and abs(gy - py) < 20 then
+            pdir = facing(gx - px, gy - py, pdir)
+            demo_action = "talk"
+            demo_person = goal[3]
+            return
+        end
+    end
+    # downhill on the step map: the neighbouring tile nearest the goal
+    let here = demo_steps[ty * MW + tx]
+    let best = -1
+    let best_steps = here
+    if here < 0 then best_steps = 999999 end
+    for d = 0 to 3 do
+        let nx = tx + STEP_X[d]
+        let ny = ty + STEP_Y[d]
+        if nx >= 0 and ny >= 0 and nx < MW and ny < MH then
+            let s = demo_steps[ny * MW + nx]
+            if s >= 0 and s < best_steps then
+                best = d
+                best_steps = s
+            end
+        end
+    end
+    let aim_x = tx * TILE + 8
+    let aim_y = ty * TILE + 11
+    if best >= 0 then
+        aim_x = (tx + STEP_X[best]) * TILE + 8
+        aim_y = (ty + STEP_Y[best]) * TILE + 11
+        # get into the middle of this tile before turning, so as not to catch on corners
+        if STEP_X[best] != 0 and abs(py - (ty * TILE + 11)) > 2 then aim_x = px end
+        if STEP_Y[best] != 0 and abs(px - (tx * TILE + 8)) > 2 then aim_y = py end
+    elif here == 0 or best_steps == 999999 then
+        aim_x = gx
+        aim_y = gy
+    end
+    let dx = aim_x - px
+    let dy = aim_y - py
+    if abs(dx) > 1 then want_x = sign(dx) end
+    if abs(dy) > 1 then want_y = sign(dy) end
+    # stuck? (people walking into the way, say) step aside for a moment
+    if now > demo_was[2] + 1500 then
+        if abs(px - demo_was[0]) + abs(py - demo_was[1]) < 2 then
+            demo_wiggle_until = now + 400
+            demo_wiggle = random(4)
+        end
+        demo_was = [px, py, now]
+    end
+    if now < demo_wiggle_until then
+        want_x = STEP_X[demo_wiggle]
+        want_y = STEP_Y[demo_wiggle]
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Playing
+# ---------------------------------------------------------------------------
+
+# One game, until it ends, you fall, or you quit: "ending", "dead", "title" or "quit"
+func play()
+    last_frame = time()
+    fps_at = time()
+    fps_frames = 0
+    set_objective()
+    while true do
+        let now = time()
+        frame_ms = clamp(now - last_frame, 1, 80)
+        last_frame = now
+        want_x = 0
+        want_y = 0
+        let action = ""
+        while haskey() do
+            let k = key()
+            if k == KEY_ESCAPE then
+                action = "pause"
+            elif k == ord(" ") or k == ord("j") or k == ord("J") then
+                action = "swing"
+            elif k == ord("e") or k == ord("E") or k == KEY_ENTER then
+                action = "use"
+            elif k == KEY_TAB or k == ord("i") or k == ord("I") then
+                action = "journal"
+            elif k == ord("m") or k == ord("M") then
+                action = "map"
+            elif k == ord("q") or k == ord("Q") then
+                action = "drink"
+            end
+        end
+        if demo then
+            demo_think()
+            if action != "pause" then action = demo_action end
+        else
+            if keydown(KEY_LEFT) or keydown("a") then want_x = -1 end
+            if keydown(KEY_RIGHT) or keydown("d") then want_x = want_x + 1 end
+            if keydown(KEY_UP) or keydown("w") then want_y = -1 end
+            if keydown(KEY_DOWN) or keydown("s") then want_y = want_y + 1 end
+        end
+        if action == "pause" then
+            let r = pause_menu()
+            if r != "" then return r end
+        elif action == "journal" then
+            show_journal()
+        elif action == "map" then
+            show_map()
+        elif action == "swing" then
+            swing()
+        elif action == "use" then
+            use_ahead()
+        elif action == "talk" then
+            talk_to(demo_person)
+        elif action == "drink" then
+            drink()
+        end
+        update_time(frame_ms)
+        update_you(frame_ms)
+        update_ents(frame_ms)
+        update_particles(frame_ms)
+        discover()
+        check_boss()
+        if ending != "" then return "ending" end
+        if hp <= 0 then return "dead" end
+        update_prompt()
+        draw_scene()
+        gshow()
+        frame(30)
+        fps_frames = fps_frames + 1
+        if now - fps_at >= 5000 then
+            fps = fps_frames * 1000 / (now - fps_at)
+            fps_frames = 0
+            fps_at = now
+            note_event("fps " + fps + " in " + place)
+        end
+    end
+end
+
+# Play, and after you fall, carry on as you choose: "title" or "quit" in the end
+func play_on()
+    while true do
+        let r = play()
+        if r == "ending" then
+            ending_screen()
+            if demo then return "quit" end
+            return "title"
+        elif r == "dead" then
+            let d = death_screen()
+            if d == "title" then return "title" end
+            if d == "load" and load_game() then
+                # carry on from the save
+            else
+                weaving()
+                make_world(world_seed)
+                new_game()
+            end
+        else
+            return r
+        end
+    end
+end
+
+# ---------------------------------------------------------------------------
+# The program
+# ---------------------------------------------------------------------------
+
+tile_kinds()
+
+let mode = ""
+if len(args) > 0 then mode = args[0] end
+let demo = mode == "demo"
+let testing = mode == "demo" or mode == "seed" or mode == "world"
+let arg_seed = -1
+if len(args) > 1 and int(args[1]) != nil then arg_seed = int(args[1]) end
+for a in args do
+    if a == "mercy" or a == "join" then demo_end = a end
+    if a == "fast" then
+        DAY_MS = 60000
+        MORNING = DAY_MS / 12
+    end
+end
+
+# "lantern world 1 2 3": make those worlds, say what is in them, and stop (for the tests)
+if mode == "world" then
+    for k = 1 to len(args) - 1 do
+        world_seed = int(args[k])
+        let started = time()
+        make_world(world_seed)
+        let took = time() - started
+        let missing = check_reachable()
+        print("world " + world_seed + ": " + world_checksum() + " (made in " + took + " ms)")
+        print("story " + world_seed + ": " + villain_title + ", " + relic_name + ", " + home_name + ", " + hamlet_name + ", " + who(giver))
+        if len(missing) == 0 then
+            print("reach " + world_seed + ": ok")
+        else
+            print("reach " + world_seed + ": missing " + join(missing, " "))
+        end
+    end
+    print("worlds done")
+    exit()
+end
+
+if not gopen() then
+    print("Lantern needs a graphics screen.")
+    exit()
+end
+gbuf(true)
+screen_setup()
+gclear(NIGHT_SKY)
+centre(SCREEN_H / 2, "Lighting the lamps...", DIM, TXT)
+gshow()
+load_pictures()
+if not pictures_ok then
+    gclose()
+    print("Lantern can't find its pictures in " + FOLDER + ": install it with pkg install lantern.")
+    exit()
+end
+load_sounds()
+note_event("lantern: ready, sound card " + sound_card + ", screen " + SCREEN_W + " x " + SCREEN_H)
+
+let running = true
+let next_seed = arg_seed
+while running do
+    if next_seed <= 0 then next_seed = 1 + random(999999) end
+    weaving()
+    world_seed = next_seed
+    make_world(world_seed)
+    back_to_world()
+    let choice = "new"
+    if arg_seed <= 0 then
+        choice = title_screen()
+    end
+    arg_seed = -1
+    next_seed = -1
+    if choice == "quit" then
+        running = false
+    else
+        if choice == "continue" then
+            if not load_game() then new_game() end
+        else
+            new_game()
+        end
+        if play_on() == "quit" then running = false end
+    end
+end
+
+sstop()
+gclose()
+print("Thanks for playing Lantern.")
