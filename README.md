@@ -74,6 +74,7 @@ I've decided to use inline assmembly in C with the GCC GNU99 standard for the mo
 - [x] Scrollback. (Page Up / Page Down in the terminal look back through the last 400 lines of output)
 - [x] Games groundwork. (a back buffer for smooth drawing, held keys, and a mixer playing up to 8 sounds at once)
 - [x] Video. (PLY plays MPEG-1 .mpg videos full screen with their sound in step, using pl_mpeg; see docs/VIDEO.md)
+- [x] HTTPS. (GET, httpget and the browser fetch https:// pages over TLS 1.2 using BearSSL, with the site's certificate checked against a built-in list of root authorities; see docs/NETWORK.md)
 - [x] An OS that explains itself. (WHY explains problems, commands and functions, SRC shows the code, /src/ holds it all, and SHOW narrates what a command did inside)
 - [x] AerLang at the prompt. (variables, sums and code right in the terminal, "did you mean", and cmd() for a command's output)
 - [x] Programs ask first. (apps ask before reading your files or changing any, PERM remembers the answers)
@@ -82,6 +83,7 @@ I've decided to use inline assmembly in C with the GCC GNU99 standard for the mo
 - [x] Decimal numbers in AerLang. (3.14, 7 / 2.0, sqrt, sin, cos, atan2, floor, round, PI, on the x87 FPU)
 - [x] A 3D game demo. (MAZE3D, a first-person maze drawn with ray casting, with mouse look, a pitch black dungeon of textured stone walls, flagstone floors and cobbled ceilings seen by the beam of your flashlight, ghosts that chase you, made-up mazes up to 55 x 55, and its own chiptune music and sound effects, written in AerLang to show what it can do)
 - [x] A horror game. (FOUR KNOCKS, a story told in a pitch black observatory over a borehole: a thing that hunts you by ear, heard on your left or right as it moves (stereo panning), seen only in your flashlight's beam, pre-rendered 3D models, lightning, static and fades drawn by new AerLang built-ins, and every sound, voice and picture made by scripts in tools/; `pkg install knocks`)
+- [x] A procedural adventure. (LANTERN, a top-down pixel art adventure in a new valley every game, made from a seed: noise for the land, Dijkstra's shortest paths for its roads and bridges, rooms and corridors for its caves, and a story made from parts, with day and night lit by your lantern, raids, rescues, theft that is noticed and five endings; every tile, sprite and note made by scripts in tools/; `pkg install lantern`)
 - [x] A database. (AerDB: tables of rows in one file, a little SQL, the SQL command and dbopen / dbrun / dbquery in AerLang)
 - [x] Ethernet network driver. (Intel e1000, sealed messages only, and a firewall that blocks everything until FW ALLOW; see docs/NETWORK.md)
 - [ ] More in the pipeline coming soon..

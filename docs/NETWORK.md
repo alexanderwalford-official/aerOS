@@ -1,10 +1,11 @@
 # The network
 
 AerOS's network does three jobs: sending short messages that can't be read or changed on the
-way (sealed), fetching web pages over plain HTTP, and letting other computers connect to a
+way (sealed), fetching web pages over HTTP or HTTPS, and letting other computers connect to a
 program in AerOS (a web server, say). Each only talks to computers you have allowed, and the
 firewall starts with everything blocked. Sealed messages are never sent in the clear; TCP
-always is, because web servers and browsers know nothing of seals (see "TCP and web pages").
+is, because web servers and browsers know nothing of seals (see "TCP and web pages"), unless
+it is wrapped in TLS: `https://` pages are encrypted (see "HTTPS").
 
 ```
 +----------------------------------------+   +------------------------------------+
@@ -255,7 +256,8 @@ have allowed it (in the background, only with an "always").
 `Connection: close`, reads everything until the server closes the connection, and only then takes
 the answer apart: the status line, the headers (`Content-Type`, `Content-Length`,
 `Transfer-Encoding`, `Location`), and the body, put back together first if it was chunked.
-Redirects (301, 302, 303, 307, 308) to another `http://` address are followed up to 5 times.
+Redirects (301, 302, 303, 307, 308) to another `http://` or `https://` address are followed up to
+5 times.
 Pages are limited to 16 MB (`HTTP_BODY_MAX`). The answer is read into a buffer that doubles as
 it fills, and the body is then moved to its start and the buffer shrunk to fit, so a big page
 never needs room for two copies of itself.
@@ -265,9 +267,59 @@ this way can be saved with `wrf` or drawn straight away with `image`. The `brows
 (`packages/browser.aer`) is a text web browser built on it: it reads the HTML itself, a tag at
 a time, and shows pictures (BMP, PNG, GIF and JPEG) on the graphics screen.
 
-There is no TLS, so `https://` is turned away with a clear message, and a page can be read or
-changed on the way. That is the right trade for things that are checked once they arrive (a
-package with a signature, for example), and the wrong one for anything private.
+### HTTPS (`sys/tls.c`)
+
+`https://` addresses (port 443) work the same way, with the TCP connection wrapped in TLS first.
+The TLS itself is [BearSSL](https://bearssl.org) (Thomas Pornin, MIT licence, in
+`src/lib/bearssl/`), a small TLS client written for machines with no operating system. Only
+what a client needs is kept, and `sys/tls.c` is the glue: it moves BearSSL's bytes over
+`tcp_send` / `tcp_receive`, seeds its random number generator from `crypto_random`, gives it the
+date from the CMOS clock, and lists the certificate authorities it trusts.
+
+What AerOS checks before it sends anything:
+
+* the server's certificate chain leads to one of the **built-in root authorities** (below),
+  and every signature in it is good (RSA, or ECDSA on P-256, P-384 or P-521)
+* none of the certificates has **expired**, or isn't valid yet. This uses AerOS's clock, so a
+  computer with the wrong date refuses every site (`SYSINFO` shows the clock, which AerOS
+  reads from the computer's own, so it is set in the BIOS)
+* the certificate is **for the name asked for**: `https://example.com/` needs a certificate for
+  example.com (a name in it, or a `*.example.com` wildcard). Addresses like `https://10.0.2.2/`
+  only work if the certificate lists that text as a name
+* the server proves it holds the certificate's private key, by signing the key exchange
+
+If any of that fails there is no page: `get` says why (`the site's certificate has expired...`,
+`...is for a different name...`, `...isn't from an authority AerOS trusts (self-signed, or an
+unknown one)`), and `httpget` gives nil.
+
+What it does not do: **TLS 1.2 only** (no TLS 1.3, which a site may insist on one day; no older
+versions, which are broken), only ECDHE key exchange with AES-GCM or ChaCha20-Poly1305 (every
+maintained server has them), no certificate revocation, no client certificates, no session
+resuming. A connection takes about 55 KB of memory while it is open, and a handshake can take a few
+seconds on a slow machine.
+
+**The firewall works as for any web page**: an https fetch needs a web rule for port 443,
+`fw web example.com 443`. A redirect from `http://` to `https://` (or back) is a different port,
+so it needs a rule for that port too: `fw web example.com` and `fw web example.com 443`.
+
+**The built-in roots.** `sys/tls_roots.c` holds 21 widely used root authorities (Let's Encrypt,
+Google Trust Services, DigiCert, GlobalSign, Sectigo/USERTrust, SSL.com, Amazon and Microsoft),
+made from Mozilla's list by `tools/gen_tls_roots.py`. A site signed by any other authority is
+refused. To add one, put its name (as Mozilla's list spells it) in `ROOTS` in the script, then
+regenerate the file from a fresh copy of the list:
+
+```
+curl -o cacert.pem https://curl.se/ca/cacert.pem
+python3 tools/gen_tls_roots.py cacert.pem
+```
+
+(needs Python's `cryptography` package) and build AerOS again. `tools/test/tests/test_https.py`
+checks all of this with a certificate authority of its own, in a copy of the kernel that trusts
+only that one.
+
+Plain `http://` is still not encrypted: a page can be read or changed on the way. That is the
+right trade for things that are checked once they arrive (a package with a signature, for
+example), and the wrong one for anything private. Use `https://` for those.
 
 ## Inside the stack
 
@@ -300,8 +352,8 @@ each descriptor pointing at a 2 KB buffer. See the top of `drivers/net/e1000.c`.
 * **DNS.** `FW ALLOW example.com 5000` (or `FW WEB example.com`) asks the DNS server for the address once, when the rule
   is made, and says so on the screen, because DNS has no encryption. Nothing else uses DNS:
   `MSG example.com 5000 hi` uses the address saved in the rule.
-* **Web pages.** Everything sent and received over a web rule's TCP connections is plain text,
-  as HTTP is: see "TCP and web pages" above.
+* **Web pages.** Over `http://`, everything sent and received over a web rule's TCP connections
+  is plain text: see "TCP and web pages" above. `https://` (port 443) is encrypted: see "HTTPS".
 * **No DHCP.** Asking the network for an address would mean sending before anything is
   allowed, so the address is set by hand (`NET IP`), with QEMU's usual one to start.
 
@@ -314,8 +366,8 @@ each descriptor pointing at a 2 KB buffer. See the top of `drivers/net/e1000.c`.
   the same key everywhere: use a different password for each rule.
 * **Keys on the disk.** `/acc/firewall` holds the keys. Programs can't read it, but anyone at the
   terminal, or with the disk, can.
-* **No HTTPS, IPv6, fragments or broadcast messages.** Web pages, and anything a server in AerOS
-  sends, go in the clear, and a sealed message is one packet.
+* **No IPv6, fragments or broadcast messages, and no TLS 1.3 or HTTPS server.** Plain `http://`
+  pages, and anything a server in AerOS sends, go in the clear, and a sealed message is one packet.
 * **One piece at a time.** A server sends each piece of an answer only once the last is
   acknowledged: fine for pages, slow for big files. (Threads inside a program, still to come, would let each visitor have
   its own.)

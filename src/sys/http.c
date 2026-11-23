@@ -4,11 +4,13 @@
     http_get, step by step:
 
         parse_url        "http://example.com:8080/a/b"  ->  host, port, path
-        fetch_once       connect (tcp_connect), send the request (tcp_send), read everything
-                         until the server closes the connection (read_answer), then take the
-                         answer apart: the status line, the headers (header_value), and the body,
-                         put back together first if it came in chunks (dechunk)
-        (a redirect)     fetch_once again, at the address in the Location header
+        fetch_once       connect (tcp_connect, and for https:// the encryption on top of it,
+                         tls_open), send the request, read everything until the server closes
+                         the connection (read_answer), then take the answer apart: the status
+                         line, the headers (header_value), and the body, put back together first
+                         if it came in chunks (dechunk)
+        (a redirect)     fetch_once again, at the address in the Location header (which may
+                         change between http:// and https://)
 
     Reading the whole answer before looking at it, rather than as it arrives, keeps every step
     simple: each works on text that is all there. The request asks for "Connection: close", so
@@ -18,6 +20,7 @@
 #include "http.h"
 #include "net.h"
 #include "tcp.h"
+#include "tls.h"
 #include "boot.h"
 #include "trace.h"
 #include "../lib/aer_string.h"
@@ -33,12 +36,36 @@
 
 // the parts of an address like http://example.com:8080/notes.txt
 typedef struct {
+    bool secure;                // https:// (encrypted, TLS: sys/tls.h)
     char host[FW_NAME_MAX];     // "example.com"
-    uint16_t port;              // 8080 (80 if it doesn't say)
+    uint16_t port;              // 8080 (80 for http://, 443 for https://, if it doesn't say)
     char path[PATH_MAX];        // "/notes.txt" ("/" if it doesn't say)
 } url_t;
 
 // ---- small helpers ------------------------------------------------------------------------------
+
+// A connection to a server: plain TCP, or TCP with TLS on top for https:// (tls is NULL if not)
+typedef struct {
+    int tcp;
+    tls_connection_t* tls;
+} link_t;
+
+// send all of data, encrypted if the connection is
+static int link_send (link_t* link, const void* data, size_t length) {
+    return link->tls != NULL ? tls_send(link->tls, data, length) : tcp_send(link->tcp, data, length);
+}
+
+// wait up to `ms` for data from the server (decrypted if the connection is encrypted): see
+// tcp_receive, which tls_receive answers just like
+static int link_receive (link_t* link, void* out, size_t size, uint32_t ms) {
+    return link->tls != NULL ? tls_receive(link->tls, out, size, ms) : tcp_receive(link->tcp, out, size, ms);
+}
+
+// close the connection (the encryption first, if there is any)
+static void link_close (link_t* link) {
+    tls_close(link->tls);
+    tcp_close(link->tcp);
+}
 
 // does text start with prefix, ignoring capitals?
 static bool starts_with (const char* text, const char* prefix) {
@@ -47,14 +74,16 @@ static bool starts_with (const char* text, const char* prefix) {
 
 // ---- the address --------------------------------------------------------------------------------
 
-// Take an address apart: "http://" (or nothing), then the host, maybe ":port", then the path
+// Take an address apart: "http://" or "https://" (or nothing: http), then the host, maybe
+// ":port", then the path
 static int parse_url (const char* text, url_t* url) {
     memset(url, 0, sizeof(url_t));
     url->port = 80;
     if (starts_with(text, "https://")) {
-        return HTTP_ERR_HTTPS;
-    }
-    if (starts_with(text, "http://")) {
+        text += slen("https://");
+        url->secure = true;
+        url->port = 443;
+    } else if (starts_with(text, "http://")) {
         text += slen("http://");
     } else if (strstr(text, "://") != NULL) {
         return HTTP_ERR_URL; // ftp:// or something else AerOS doesn't speak
@@ -103,7 +132,7 @@ static int parse_url (const char* text, url_t* url) {
 
 // Read everything the server sends until it closes the connection, into *answer (malloc'd, with
 // a '\0' after it, so text functions can be used on it). NET_OK, or an error
-static int read_answer (int connection, char** answer, size_t* length) {
+static int read_answer (link_t* link, char** answer, size_t* length) {
     size_t size = 16 * 1024;
     char* buffer = malloc(size + 1);
     size_t have = 0;
@@ -128,7 +157,7 @@ static int read_answer (int connection, char** answer, size_t* length) {
             }
             buffer = bigger;
         }
-        int got = tcp_receive(connection, buffer + have, size - have, RECEIVE_WAIT_MS);
+        int got = link_receive(link, buffer + have, size - have, RECEIVE_WAIT_MS);
         if (got == 0) {
             break; // the server closed the connection: that's all of it
         }
@@ -240,29 +269,37 @@ static int fetch_once (const url_t* url, http_response_t* out, char* location, s
     if (!fw_resolve(url->host, url->port, &address)) {
         return NET_ERR_BLOCKED;
     }
-    int connection = tcp_connect(address, url->port);
-    if (connection < 0) {
-        return connection;
+    link_t link = { tcp_connect(address, url->port), NULL };
+    if (link.tcp < 0) {
+        return link.tcp;
+    }
+    // https: the encryption starts first, and checks who is at the other end (sys/tls.h)
+    if (url->secure) {
+        int secured = tls_open(link.tcp, url->host, &link.tls);
+        if (secured != NET_OK) {
+            tcp_close(link.tcp);
+            return secured;
+        }
     }
 
     // the request: the path, and the host it is on (one computer can serve many names), with the
-    // port when it isn't the usual 80
+    // port when it isn't the usual one (80, or 443 for https)
     char request[REQUEST_MAX];
     char port_part[8] = "";
-    if (url->port != 80) {
+    if (url->port != (url->secure ? 443 : 80)) {
         sfmt(port_part, sizeof(port_part), ":%u", url->port);
     }
     sfmt(request, sizeof(request),
          "GET %s HTTP/1.1\r\nHost: %s%s\r\nUser-Agent: AerOS/%s\r\nAccept: */*\r\nConnection: close\r\n\r\n",
          url->path, url->host, port_part, AEROS_VERSION);
     TRACE("asking %s for %s", url->host, url->path);
-    int result = tcp_send(connection, request, slen(request));
+    int result = link_send(&link, request, slen(request));
     char* answer = NULL;
     size_t length = 0;
     if (result == NET_OK) {
-        result = read_answer(connection, &answer, &length);
+        result = read_answer(&link, &answer, &length);
     }
-    tcp_close(connection);
+    link_close(&link);
     if (result != NET_OK) {
         return result;
     }
@@ -383,11 +420,10 @@ void http_free (http_response_t* response) {
 // what a code means (see http.h)
 const char* http_strerror (int error) {
     switch (error) {
-        case HTTP_ERR_URL:        return "that isn't an http:// address (e.g. http://example.com/page)";
-        case HTTP_ERR_HTTPS:      return "AerOS can't do HTTPS yet: try the http:// address";
+        case HTTP_ERR_URL:        return "that isn't an http:// or https:// address (e.g. https://example.com/page)";
         case HTTP_ERR_BAD_ANSWER: return "the server's answer didn't make sense, or was cut short";
         case HTTP_ERR_TOO_BIG:    return "it is bigger than AerOS will fetch (16 MB)";
         case HTTP_ERR_REDIRECTS:  return "the page moved too many times";
-        default:                  return net_strerror(error);
+        default:                  return tls_strerror(error);   // (which passes on what it does not know)
     }
 }

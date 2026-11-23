@@ -74,8 +74,10 @@ password:
 
 ```
 fw web example.com                     allow fetching pages from example.com (port 80)
+fw web example.com 443                and https:// pages from it (port 443)
 fw web 10.0.2.2 8080                   or from an address, on another port
 get http://example.com/                show a page
+get https://example.com/               show an https page (encrypted)
 get http://example.com/notes.txt n.txt save one in a file
 ```
 
@@ -83,9 +85,15 @@ get http://example.com/notes.txt n.txt save one in a file
 such page"). A page that has moved is followed to its new address, if a web rule allows that
 too. From a program, `httpget(url)` gives back the page's text, or nil.
 
-Web pages aren't sealed: anything fetched can be read, or changed, on the way. That's fine for
+`https://` pages are encrypted, and AerOS checks the site's certificate: it must come from one of
+the authorities AerOS has built in, be in date (so the clock must be right), and be for that
+name. If not, you get no page, and `get` says why. (TLS 1.2 only; see NETWORK.md.) Each of
+`http://` and `https://` needs its own web rule, as they use different ports, and a redirect
+from one to the other needs the rule for where it goes.
+
+`http://` pages aren't sealed: anything fetched can be read, or changed, on the way. That's fine for
 public pages, and for files that are checked once they arrive, but don't fetch anything private
-this way. A web rule only allows fetching pages, never sealed messages, and a rule with a
+that way: use https. A web rule only allows fetching pages, never sealed messages, and a rule with a
 password never allows web pages: the two kinds don't stand in for each other.
 
 ### Browsing

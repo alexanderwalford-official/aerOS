@@ -133,10 +133,11 @@ src/
     busy.c                busy(): long loops call it so a spinner can turn (see sys/ui.h)
     mp3.c + minimp3/      MP3 decoding
     mpg.c + pl_mpeg/      MPEG-1 video and MP2 sound decoding (pl_mpeg, MIT)
+    bearssl/              TLS 1.2 for HTTPS (BearSSL, MIT); sys/tls.c connects it to AerOS
     inflate.c             undoing deflate (zlib) compression, for PNG pictures
     fpu.c                 switches the x87 FPU on, for decimal numbers (AerLang's, the decoders')
     aer_math.c            sqrt, sin, cos, atan2, floor on the x87, and decimals to text and back
-    shim/                 <string.h> and <stdlib.h> for the decoders, pointing at the files above
+    shim/                 <string.h>, <stdlib.h> and <limits.h> for the decoders and BearSSL, pointing at the files above
     aer_comp.c            runs a process's line of code (the built-in "instructions")
 
   db/                   AerDB, the database (see the top of aerdb.h)

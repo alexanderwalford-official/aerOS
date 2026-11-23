@@ -151,7 +151,9 @@ in AerOS:                 verify(package, signature, packagekey())   true / fals
 ```
 
 That is what lets packages come over plain HTTP, which anyone in between could change: they can
-change the package, but they can't make the signature fit it.
+change the package, but they can't make the signature fit it. (A package server can use
+`https://` too, which also hides what is fetched: AerOS checks the server's certificate with
+BearSSL, see "HTTPS" in [NETWORK.md](NETWORK.md). The signature is checked either way.)
 
 How it works, briefly (the top of `ed25519.c` has more): points on a curve can be added, so a
 point B can be multiplied by a number. The private key is a secret number a, and the public key

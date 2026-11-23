@@ -259,8 +259,9 @@ prompt it puts away everything it can. `MEM` shows what app mode did for the las
 **Network** (sealed messages, to and from computers the firewall allows: see NETWORK.md)
 `nsend(host, port, text)` true if it was sent (host is an address, or a name a rule was made
 for) · `nrecv(port, ms)` wait up to ms milliseconds: the message, or nil ·
-`httpget(url)` fetch a web page (http:// only) from a computer a web rule (`FW WEB`) allows: its
-text if the status was 2xx, or nil
+`httpget(url)` fetch a web page (http://, or https://, which is encrypted and has the site's
+certificate checked: see NETWORK.md) from a computer a web rule (`FW WEB`, with port 443 for
+https) allows: its text if the status was 2xx, or nil (also if the certificate was refused)
 
 **TCP** (plain connections both ways: a server, or a client for any protocol; see NETWORK.md,
 "Listening, and a web server", and the `webserve` package, `packages/webserve.aer`, for a
@@ -516,6 +517,18 @@ and fades and the red of the alarm are `gtint`. Its pictures are 3D models rende
 sides by `tools/make_knocks_sprites.py` (ray marching "signed distance functions" with numpy),
 and its sounds, music and voices are made by `tools/make_knocks_sounds.py`. "knocks demo"
 plays it by itself, start to end.
+
+The `lantern` package (Lantern, `pkg install lantern`) is a top-down pixel art adventure drawn
+without any per-pixel AerLang: every tile and sprite is a 16 x 16 picture in a "sheet", a single
+row of them in one 32 bit BMP, and `imgcol(sheet, x, y, 64, 64, n * 16, n * 16 + 16, light, true)`
+draws picture `n` of it four times as big (a strip of columns stretched over a box is all a
+sprite sheet needs; mirrored, with `u0` and `u1` swapped, it faces the other way). About 220
+tiles a frame take 10 milliseconds in QEMU. Its lighting is worked out per tile in AerLang (your
+lantern by distance, and a "light map" of fires and windows) and passed as `light`, with each
+sheet drawn in four tints (day, golden, dusk, night) by `tools/make_lantern_art.py`, so lamplight
+is warm and the dark is blue. Its world is made from a seed with a random number generator
+written in AerLang (so a seed makes the same valley everywhere), value noise for the land and
+Dijkstra's shortest paths for its roads, and "lantern demo" plays a game by itself.
 
 The `viewer` package is a complete app built from these: a picture picker and viewer that
 zooms (`+` / `-`, `0` to fit) by drawing the picture bigger than the screen and moving it

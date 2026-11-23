@@ -281,5 +281,6 @@ And these [packages](commands.md), once installed (`pkg install guess`), are in 
 | `/apps/snake.aer` | a whole game: graphics, a back buffer, held keys, lists, and high scores in a database |
 | `/apps/maze3d.aer` | a 3D maze drawn with ray casting: decimals, sin / cos, textured stone walls and floors lit by a flashlight (imgcol / imgrow / imglight), sprites, mouse look, ghosts that find their way to you, made-up mazes, and sound effects and music mixed with sload / splay |
 | `/apps/knocks.aer` | a horror game on the same ray caster: sprites lit by the flashlight (imgcol's see_through), sounds placed left and right (splay's pan, svol), lightning (imglight's ambient), static and fades (gnoise, gtint), and a monster that hunts by ear along a step map |
+| `/apps/lantern.aer` | a tile and sprite game: one-row sheets drawn a tile at a time with imgcol (a picture's columns n * 16 to n * 16 + 16), lit per tile by a lantern and fires, a world made from a seed with its own random numbers, value noise and Dijkstra's shortest paths, a story made from parts, dialogue boxes, saving, and a demo that plays itself along a step map |
 | `/apps/anim.aer` | spinners, progress bars and moving text |
 | `/apps/webserve.aer` | a web server: TCP, and serving files |

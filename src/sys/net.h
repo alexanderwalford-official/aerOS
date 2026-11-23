@@ -44,10 +44,10 @@
     WHAT IT DOESN'T DO
 
     No IPv6, no DHCP, no fragments: a sealed message must fit in one packet (NET_MESSAGE_MAX
-    bytes). TCP only connects out: nothing can connect to AerOS. No HTTPS (TLS): a web page
-    comes as plain text, which can be read on the way. Nothing arrives in the background:
-    packets are collected whenever AerOS is waiting for one (the card keeps the last 32
-    meanwhile).
+    bytes). TCP only connects out: nothing can connect to AerOS. Only web pages
+    can be encrypted (HTTPS, TLS 1.2: sys/tls.h): a plain http:// page comes as text that can
+    be read on the way. Nothing arrives in the background: packets are collected whenever
+    AerOS is waiting for one (the card keeps the last 32 meanwhile).
 */
 #ifndef NET_H
 #define NET_H
